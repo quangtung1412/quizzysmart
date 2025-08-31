@@ -22,7 +22,6 @@ const AttemptDetailScreen: React.FC<AttemptDetailScreenProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [attemptInfo, setAttemptInfo] = useState<any>(null);
-  const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
     loadAttemptDetails();
@@ -112,21 +111,10 @@ const AttemptDetailScreen: React.FC<AttemptDetailScreenProps> = ({
         </p>
       </div>
 
-      {/* Toggle Details Button */}
-      <div className="mb-6">
-        <button
-          onClick={() => setShowDetails(!showDetails)}
-          className="px-8 py-3 text-sm font-medium text-sky-700 bg-sky-100 border border-transparent rounded-md hover:bg-sky-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500"
-        >
-          {showDetails ? 'Ẩn chi tiết' : 'Xem chi tiết'}
-        </button>
-      </div>
-
       {/* Detailed Results */}
-      {showDetails && (
-        <div className="w-full border-t pt-6">
-          <h3 className="text-xl font-semibold text-slate-700 mb-4">Xem lại bài làm</h3>
-          <div className="space-y-6">
+      <div className="w-full border-t pt-6">
+        <h3 className="text-xl font-semibold text-slate-700 mb-4">Xem lại bài làm</h3>
+        <div className="space-y-6">
             {results.map((result, index) => {
               const { question: q, userAnswer } = result;
               const selectedOption = userAnswer?.selectedOptionIndex;
@@ -178,7 +166,6 @@ const AttemptDetailScreen: React.FC<AttemptDetailScreenProps> = ({
             })}
           </div>
         </div>
-      )}
     </div>
   );
 };
