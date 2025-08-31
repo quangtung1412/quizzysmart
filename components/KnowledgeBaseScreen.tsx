@@ -4,12 +4,14 @@ import { KnowledgeBase } from '../types';
 interface KnowledgeBaseScreenProps {
     bases: KnowledgeBase[];
     onSelect: (baseId: string) => void;
-    onCreate: () => void;
+    onCreate?: () => void; // Made optional since regular users won't have this
     onDelete: (baseId: string) => void;
     onViewHistory: () => void;
+    isAdmin?: boolean; // Add flag to determine if user is admin
+    onBack?: () => void; // Back to test list
 }
 
-const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({ bases, onSelect, onCreate, onDelete, onViewHistory }) => {
+const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({ bases, onSelect, onCreate, onDelete, onViewHistory, isAdmin = false, onBack }) => {
     
     const handleDelete = (e: React.MouseEvent, baseId: string, baseName: string) => {
         e.stopPropagation(); // Prevent onSelect from being called
@@ -21,7 +23,20 @@ const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({ bases, onSele
     return (
         <div className="w-full">
             <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-semibold text-slate-700">Cơ sở kiến thức của bạn</h2>
+                <div className="flex items-center space-x-4">
+                    {onBack && (
+                        <button
+                            onClick={onBack}
+                            className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-md transition-colors"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                            </svg>
+                            <span>Quay lại</span>
+                        </button>
+                    )}
+                    <h2 className="text-2xl font-semibold text-slate-700">Cơ sở kiến thức của bạn</h2>
+                </div>
                 <div className="flex items-center gap-3">
                     <button 
                         onClick={onViewHistory} 
@@ -32,15 +47,17 @@ const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({ bases, onSele
                         </svg>
                         Lịch sử
                     </button>
-                    <button 
-                        onClick={onCreate} 
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-sky-600 border border-transparent rounded-md shadow-sm hover:bg-sky-700"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                        </svg>
-                        Tạo mới
-                    </button>
+                    {isAdmin && onCreate && (
+                        <button 
+                            onClick={onCreate} 
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-sky-600 border border-transparent rounded-md shadow-sm hover:bg-sky-700"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                            </svg>
+                            Tạo mới
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -50,15 +67,22 @@ const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({ bases, onSele
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                     </svg>
                     <h3 className="mt-2 text-sm font-medium text-slate-800">Chưa có cơ sở kiến thức nào</h3>
-                    <p className="mt-1 text-sm text-slate-500">Hãy tạo một cái mới để bắt đầu học.</p>
-                    <div className="mt-6">
-                        <button 
-                            onClick={onCreate} 
-                            className="px-5 py-2 text-sm font-medium text-white bg-sky-600 rounded-md shadow-sm hover:bg-sky-700"
-                        >
-                            Tạo cơ sở kiến thức đầu tiên
-                        </button>
-                    </div>
+                    <p className="mt-1 text-sm text-slate-500">
+                        {isAdmin 
+                            ? 'Hãy tạo một cái mới để bắt đầu học.' 
+                            : 'Hiện tại chưa có cơ sở kiến thức nào. Vui lòng liên hệ admin để thêm nội dung.'
+                        }
+                    </p>
+                    {isAdmin && onCreate && (
+                        <div className="mt-6">
+                            <button 
+                                onClick={onCreate} 
+                                className="px-5 py-2 text-sm font-medium text-white bg-sky-600 rounded-md shadow-sm hover:bg-sky-700"
+                            >
+                                Tạo cơ sở kiến thức đầu tiên
+                            </button>
+                        </div>
+                    )}
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

@@ -28,9 +28,9 @@ Columns (row 1 header optional):
 2. Câu hỏi
 3. Đáp án A
 4. Đáp án B
-5. Đáp án C
-6. Đáp án D
-7. Đáp án đúng (1-4 hoặc A-D)
+5. (Tùy chọn) Đáp án C
+6. (Tùy chọn) Đáp án D
+7. Đáp án đúng (1-4 hoặc A-D) — số/letter phải nằm trong phạm vi số đáp án thực tế (2–4)
 8. Nguồn (optional)
 9. Phân loại (optional)
 

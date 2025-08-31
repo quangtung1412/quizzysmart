@@ -16,14 +16,7 @@ const GoogleIcon = () => (
 
 const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const handleLogin = () => {
-    // Trong một ứng dụng thực tế, bạn sẽ kích hoạt luồng OAuth của Google tại đây.
-    // Đối với ví dụ này, chúng ta sẽ mô phỏng một lần đăng nhập thành công.
-    const mockUser = {
-      name: 'Người dùng',
-      email: 'user@example.com',
-      picture: `https://ui-avatars.com/api/?name=User&background=random&color=fff`,
-    };
-    onLoginSuccess(mockUser);
+    window.location.href = 'http://localhost:3000/auth/google';
   };
 
   return (

@@ -1,25 +1,30 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Question, QuizMode, QuizSettings, UserAnswer, KnowledgeBase, QuizAttempt } from './types';
+import { Question, QuizMode, QuizSettings, UserAnswer, KnowledgeBase, QuizAttempt, AppUser } from './types';
 import { useKnowledgeBaseStore, useAttemptStore } from './src/hooks/usePersistentStores';
 import { shuffleArray } from './src/utils/shuffle';
+import { api } from './src/api';
 import FileUpload from './components/FileUpload';
 import MainMenu from './components/MainMenu';
 import SetupScreen from './components/SetupScreen';
 import QuizScreen from './components/QuizScreen';
 import ResultsScreen from './components/ResultsScreen';
 import LoginScreen from './components/LoginScreen';
+import AdminDashboard from './components/AdminDashboard';
 import KnowledgeBaseScreen from './components/KnowledgeBaseScreen';
 import QuizHistoryScreen from './components/QuizHistoryScreen';
+import TestListScreen from './components/TestListScreen';
+import TestDetailScreen from './components/TestDetailScreen';
+import AttemptDetailScreen from './components/AttemptDetailScreen';
 
 
-type Screen = 'login' | 'knowledgeBase' | 'upload' | 'menu' | 'setup' | 'quiz' | 'results' | 'history';
+type Screen = 'login' | 'testList' | 'testDetail' | 'attemptDetail' | 'knowledgeBase' | 'upload' | 'menu' | 'setup' | 'quiz' | 'results' | 'history' | 'admin';
 
 const App: React.FC = () => {
-  const [user, setUser] = useState<{ name: string; email: string; picture: string } | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [currentScreen, setCurrentScreen] = useState<Screen>('login');
   
-  const { bases: knowledgeBases, setBases: setKnowledgeBases } = useKnowledgeBaseStore(user?.email || null);
-  const { attempts: quizAttempts, setAttempts: setQuizAttempts } = useAttemptStore(user?.email || null);
+  const { bases: knowledgeBases, addBase, removeBase, setBases: setKnowledgeBases } = useKnowledgeBaseStore(user?.email || null);
+  const { attempts: quizAttempts, createAttempt, updateAttempt, setAttempts: setQuizAttempts } = useAttemptStore(user?.email || null);
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<KnowledgeBase | null>(null);
 
   const [allQuestions, setAllQuestions] = useState<Question[]>([]);
@@ -29,6 +34,17 @@ const App: React.FC = () => {
   const [activeQuizQuestions, setActiveQuizQuestions] = useState<Question[]>([]);
   const [userAnswers, setUserAnswers] = useState<UserAnswer[]>([]);
   const [currentAttemptId, setCurrentAttemptId] = useState<string | null>(null);
+  
+  // State for current test information
+  const [currentTestInfo, setCurrentTestInfo] = useState<{
+    name?: string;
+    maxAttempts?: number;
+    currentAttempt?: number;
+  } | null>(null);
+
+  // State for test detail view
+  const [currentTestId, setCurrentTestId] = useState<string | null>(null);
+  const [currentAttemptDetailId, setCurrentAttemptDetailId] = useState<string | null>(null);
 
 
   // Hydrate unfinished attempt after refresh
@@ -57,7 +73,16 @@ const App: React.FC = () => {
 
   const handleLoginSuccess = useCallback((loggedInUser: { name: string; email: string; picture: string }) => {
     setUser(loggedInUser);
-    setCurrentScreen('knowledgeBase');
+    setCurrentScreen('testList');
+  }, []);
+
+  useEffect(() => {
+    api.me().then(r => {
+      if (r.user) {
+        setUser({ name: r.user.name || '', email: r.user.email, picture: r.user.picture || '', role: (r.user as any).role });
+        setCurrentScreen('testList'); // Always go to test list first
+      }
+    }).catch(()=>{});
   }, []);
 
   const handleLogout = useCallback(() => {
@@ -81,24 +106,116 @@ const App: React.FC = () => {
     setSelectedKnowledgeBase(null);
   }, []);
 
+  const handleGoToTestList = useCallback(() => {
+    setCurrentScreen('testList');
+    setQuizMode(null);
+    setQuizSettings(null);
+    setActiveQuizQuestions([]);
+    setUserAnswers([]);
+    setCurrentAttemptId(null); // Clear attempt ID when going back to test list
+    setCurrentTestInfo(null);
+    setCurrentTestId(null);
+    setCurrentAttemptDetailId(null);
+  }, []);
+
+  const handleGoToAdmin = useCallback(() => {
+    setCurrentScreen('admin');
+  }, []);
+
+  const handleViewTestDetails = useCallback((testId: string) => {
+    setCurrentTestId(testId);
+    setCurrentScreen('testDetail');
+  }, []);
+
+  const handleViewAttemptDetails = useCallback((attemptId: string) => {
+    setCurrentAttemptDetailId(attemptId);
+    setCurrentScreen('attemptDetail');
+  }, []);
+
+  const handleBackToTestDetail = useCallback(() => {
+    setCurrentScreen('testDetail');
+    setCurrentAttemptDetailId(null);
+  }, []);
+
+  const handleStartTest = useCallback(async (testId: string) => {
+    if (!user) return;
+    
+    try {
+      // Get test data with questions
+      const testData = await api.getTestById(testId, user.email);
+      
+      // Convert test questions to our Question format
+      const testQuestions: Question[] = testData.questions.map((q: any) => ({
+        id: q.id,
+        question: q.question,
+        options: q.options,
+        correctAnswerIndex: -1, // We don't know the correct answer on client side
+        source: q.source || '',
+        category: q.category || ''
+      }));
+      
+      // Create initial answers
+      const initialAnswers = testQuestions.map((q: Question) => ({ 
+        questionId: q.id, 
+        selectedOptionIndex: null, 
+        isCorrect: null 
+      }));
+      
+      // Create a new attempt for the test
+      const newAttempt = await createAttempt(user.email, {
+        testId: testId, // For test attempts, we use testId instead of knowledgeBaseId
+        knowledgeBaseName: testData.name,
+        mode: QuizMode.Test, // New mode for tests
+        settings: {
+          questionCount: testData.questionCount,
+          timeLimit: testData.timeLimit,
+          categories: []
+        },
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+        userAnswers: initialAnswers,
+        score: null,
+        isTest: true // Flag to identify this as a test attempt
+      } as any);
+      
+      // Set test information for quiz screen
+      setCurrentTestInfo({
+        name: testData.name,
+        maxAttempts: testData.maxAttempts,
+        currentAttempt: testData.currentAttempt
+      });
+      
+      // Set up the quiz state
+      setActiveQuizQuestions(testQuestions);
+      setUserAnswers(initialAnswers);
+      setCurrentAttemptId(newAttempt.id);
+      setQuizMode(QuizMode.Test);
+      setQuizSettings({
+        questionCount: testData.questionCount,
+        timeLimit: testData.timeLimit,
+        categories: []
+      });
+      
+      // Navigate to quiz screen
+      setCurrentScreen('quiz');
+      
+    } catch (error: any) {
+      console.error('Failed to start test:', error);
+      alert(`Không thể bắt đầu làm bài: ${error.message || 'Lỗi không xác định'}`);
+    }
+  }, [user, createAttempt]);
+
   const handleCreateNewRequest = useCallback(() => {
     setCurrentScreen('upload');
   }, []);
 
-  const handleSaveNewBase = useCallback((name: string, questions: Question[]) => {
-    const newBase: KnowledgeBase = {
-      id: Date.now().toString(),
-      name,
-      questions,
-      createdAt: new Date().toISOString(),
-    };
-    const updatedBases = [...knowledgeBases, newBase];
-    setKnowledgeBases(updatedBases);
-  // persistence handled by hook
-    setAllQuestions(questions);
-    setSelectedKnowledgeBase(newBase);
+  const handleSaveNewBase = useCallback(async (name: string, questions: Question[]) => {
+    if (!user) return;
+    const created = await addBase(user.email, { name, questions } as any);
+    setAllQuestions(created.questions);
+    setSelectedKnowledgeBase(created as any);
     setCurrentScreen('menu');
-  }, [knowledgeBases]);
+  }, [user, addBase]);
 
   const handleSelectBase = useCallback((baseId: string) => {
     const selectedBase = knowledgeBases.find(b => b.id === baseId);
@@ -109,12 +226,11 @@ const App: React.FC = () => {
     }
   }, [knowledgeBases]);
 
-  const handleDeleteBase = useCallback((baseId: string) => {
-    const updatedBases = knowledgeBases.filter(b => b.id !== baseId);
-    setKnowledgeBases(updatedBases);
-  const updatedAttempts = quizAttempts.filter(a => a.knowledgeBaseId !== baseId);
-  setQuizAttempts(updatedAttempts);
-  }, [knowledgeBases, quizAttempts]);
+  const handleDeleteBase = useCallback(async (baseId: string) => {
+    await removeBase(baseId);
+    const updatedAttempts = quizAttempts.filter(a => a.knowledgeBaseId !== baseId);
+    setQuizAttempts(updatedAttempts);
+  }, [removeBase, quizAttempts, setQuizAttempts]);
 
 
   const handleModeSelect = useCallback((mode: QuizMode) => {
@@ -122,8 +238,8 @@ const App: React.FC = () => {
     setCurrentScreen('setup');
   }, []);
 
-  const handleStartQuiz = useCallback((settings: QuizSettings) => {
-    if (!selectedKnowledgeBase) return;
+  const handleStartQuiz = useCallback(async (settings: QuizSettings) => {
+    if (!selectedKnowledgeBase || !user) return;
 
     setQuizSettings(settings);
     
@@ -135,45 +251,53 @@ const App: React.FC = () => {
   const selectedQuestions: Question[] = (shuffled as Question[]).slice(0, settings.questionCount);
   const initialAnswers = selectedQuestions.map((q: Question) => ({ questionId: q.id, selectedOptionIndex: null, isCorrect: null }));
     
-    const newAttempt: QuizAttempt = {
-        id: Date.now().toString(),
-        knowledgeBaseId: selectedKnowledgeBase.id,
-        knowledgeBaseName: selectedKnowledgeBase.name,
-        mode: quizMode!,
-        settings,
-        startedAt: new Date().toISOString(),
-        completedAt: null,
-        userAnswers: initialAnswers,
-        score: null,
-    };
-
-  const updatedAttempts = [...quizAttempts, newAttempt];
-  setQuizAttempts(updatedAttempts);
+    const newAttempt = await createAttempt(user.email, {
+      knowledgeBaseId: selectedKnowledgeBase.id,
+      knowledgeBaseName: selectedKnowledgeBase.name,
+      mode: quizMode!,
+      settings,
+      startedAt: new Date().toISOString(),
+      completedAt: null,
+      userAnswers: initialAnswers,
+      score: null,
+    } as any);
     setCurrentAttemptId(newAttempt.id);
     
     setActiveQuizQuestions(selectedQuestions);
     setUserAnswers(initialAnswers);
     setCurrentScreen('quiz');
-  }, [allQuestions, selectedKnowledgeBase, quizMode, quizAttempts]);
+  }, [allQuestions, selectedKnowledgeBase, quizMode, user, createAttempt]);
 
   const handleAnswerUpdate = useCallback((updatedAnswers: UserAnswer[]) => {
       if (!currentAttemptId) return;
+      updateAttempt(currentAttemptId, { userAnswers: updatedAnswers } as any);
+  }, [currentAttemptId, updateAttempt]);
 
-  setQuizAttempts(prev => prev.map(attempt => attempt.id === currentAttemptId ? { ...attempt, userAnswers: updatedAnswers } : attempt));
-  }, [quizAttempts, currentAttemptId]);
-
-  const handleQuizComplete = useCallback((finalAnswers: UserAnswer[]) => {
+  const handleQuizComplete = useCallback(async (finalAnswers: UserAnswer[]) => {
     if(currentAttemptId) {
         const correctCount = finalAnswers.filter(a => a.isCorrect).length;
         const totalCount = finalAnswers.length;
         const score = totalCount > 0 ? parseFloat(((correctCount / totalCount) * 100).toFixed(2)) : 0;
 
-  setQuizAttempts(prev => prev.map(attempt => attempt.id === currentAttemptId ? { ...attempt, userAnswers: finalAnswers, completedAt: new Date().toISOString(), score } : attempt));
-        setCurrentAttemptId(null);
+        try {
+          // Update attempt on server - this will make it available for results API
+          await updateAttempt(currentAttemptId, { userAnswers: finalAnswers, completedAt: new Date().toISOString(), score } as any);
+          
+          // Set user answers for the results screen
+          setUserAnswers(finalAnswers);
+          
+          // Navigate to results screen - don't clear currentAttemptId yet so ResultsScreen can use it
+          setCurrentScreen('results');
+        } catch (error) {
+          console.error('Failed to submit quiz:', error);
+          alert('Có lỗi xảy ra khi nộp bài. Vui lòng thử lại.');
+        }
+    } else {
+      // Fallback if no attempt ID
+      setUserAnswers(finalAnswers);
+      setCurrentScreen('results');
     }
-    setUserAnswers(finalAnswers);
-    setCurrentScreen('results');
-  }, [quizAttempts, currentAttemptId]);
+  }, [currentAttemptId, updateAttempt]);
 
   const handleRestartQuiz = useCallback(() => {
     setCurrentScreen('menu');
@@ -181,6 +305,8 @@ const App: React.FC = () => {
     setQuizSettings(null);
     setActiveQuizQuestions([]);
     setUserAnswers([]);
+    setCurrentAttemptId(null); // Clear attempt ID when restarting
+    setCurrentTestInfo(null);
   }, []);
 
   const handleViewHistory = useCallback(() => setCurrentScreen('history'), []);
@@ -189,16 +315,49 @@ const App: React.FC = () => {
     switch (currentScreen) {
       case 'login':
         return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+      case 'testList':
+        return <TestListScreen 
+                  user={user!} 
+                  onAdminPanel={handleGoToAdmin} 
+                  onKnowledgeBase={handleGoToKnowledgeBase}
+                  onStartTest={handleStartTest}
+                  onViewTestDetails={handleViewTestDetails}
+                />;
+      case 'testDetail':
+        if (!currentTestId) return <TestListScreen 
+                                      user={user!} 
+                                      onAdminPanel={handleGoToAdmin} 
+                                      onKnowledgeBase={handleGoToKnowledgeBase}
+                                      onStartTest={handleStartTest}
+                                      onViewTestDetails={handleViewTestDetails}
+                                    />;
+        return <TestDetailScreen 
+                  testId={currentTestId}
+                  user={user!}
+                  onBack={handleGoToTestList}
+                  onViewAttemptDetails={handleViewAttemptDetails}
+                />;
+      case 'attemptDetail':
+        if (!currentAttemptDetailId) return handleBackToTestDetail();
+        return <AttemptDetailScreen 
+                  attemptId={currentAttemptDetailId}
+                  user={user!}
+                  onBack={handleBackToTestDetail}
+                />;
       case 'knowledgeBase':
         return <KnowledgeBaseScreen 
                   bases={knowledgeBases} 
                   onSelect={handleSelectBase} 
-                  onCreate={handleCreateNewRequest} 
+                  onCreate={user?.role === 'admin' ? handleCreateNewRequest : undefined} 
                   onDelete={handleDeleteBase} 
                   onViewHistory={handleViewHistory}
+                  isAdmin={user?.role === 'admin'}
+                  onBack={handleGoToTestList}
                 />;
+      case 'admin':
+        return <AdminDashboard userEmail={user!.email} onBack={handleGoToTestList} knowledgeBases={knowledgeBases} />;
       case 'history':
-        return <QuizHistoryScreen attempts={quizAttempts} onBack={handleGoToKnowledgeBase} />;
+        return <QuizHistoryScreen attempts={quizAttempts} onBack={handleGoToTestList} />;
       case 'upload':
         return <FileUpload onSaveNewBase={handleSaveNewBase} onBack={handleGoToKnowledgeBase} />;
       case 'menu':
@@ -211,12 +370,21 @@ const App: React.FC = () => {
         return <QuizScreen 
                   questions={activeQuizQuestions} 
                   settings={quizSettings} 
-                  mode={quizMode} 
+                  mode={quizMode}
+                  testName={currentTestInfo?.name}
+                  maxAttempts={currentTestInfo?.maxAttempts}
+                  currentAttempt={currentTestInfo?.currentAttempt}
                   onQuizComplete={handleQuizComplete}
                   onAnswerUpdate={handleAnswerUpdate}
                 />;
       case 'results':
-        return <ResultsScreen questions={activeQuizQuestions} userAnswers={userAnswers} onRestart={handleGoToKnowledgeBase} />;
+        return <ResultsScreen 
+                  questions={activeQuizQuestions} 
+                  userAnswers={userAnswers} 
+                  attemptId={currentAttemptId}
+                  user={user}
+                  onRestart={handleGoToTestList} 
+                />;
       default:
         return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
     }
@@ -224,7 +392,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-slate-50 text-slate-800">
-       <div className="w-full max-w-4xl mx-auto relative">
+       <div className="w-full max-w-8xl mx-auto relative">
         <header className="text-center mb-8">
             <h1 className="text-4xl font-bold text-sky-700">Quiz Master</h1>
             <p className="text-slate-500 mt-2">Tạo bài trắc nghiệm từ file Excel của bạn</p>

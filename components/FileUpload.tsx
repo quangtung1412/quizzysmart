@@ -57,30 +57,36 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
         return NaN;
       };
 
-  const questions: Question[] = json.slice(1).map((row: any[], index: number) => {
-        if (row.filter(cell => cell !== null && cell !== undefined && cell !== '').length < 7) {
+      const questions: Question[] = json.slice(1).map((row: any[], index: number) => {
+        // Row schema expectation: [STT?, Question, OptA, OptB, OptC?, OptD?, Correct, Source?, Category?]
+        // Collect options until hitting empty after at least 2 options or max 4
+        const rawQuestion = row[1]?.toString().trim();
+        if (!rawQuestion) return null;
+
+        const optionCells = [row[2], row[3], row[4], row[5]];
+        const options = optionCells
+          .map(c => (c === null || c === undefined ? '' : c.toString().trim()))
+          .filter(opt => opt.length > 0);
+
+        if (options.length < 2) {
+          console.warn(`Bỏ qua dòng ${index + 2} vì ít hơn 2 đáp án hợp lệ.`);
           return null;
         }
-        
+
+        const correctIdxRaw = getCorrectAnswerIndex(row[6]);
+        if (isNaN(correctIdxRaw) || correctIdxRaw < 0 || correctIdxRaw >= options.length) {
+          console.warn(`Bỏ qua dòng ${index + 2} vì đáp án đúng không hợp lệ.`);
+          return null;
+        }
+
         const questionData: Question = {
           id: uuidv4(),
-          question: row[1]?.toString().trim(),
-          options: [
-            row[2]?.toString().trim(),
-            row[3]?.toString().trim(),
-            row[4]?.toString().trim(),
-            row[5]?.toString().trim(),
-          ],
-          correctAnswerIndex: getCorrectAnswerIndex(row[6]),
+          question: rawQuestion,
+            options,
+          correctAnswerIndex: correctIdxRaw,
           source: row[7]?.toString().trim() || 'Không có',
           category: row[8]?.toString().trim() || 'Chung',
         };
-
-        if (!questionData.question || questionData.options.some(opt => opt === undefined) || isNaN(questionData.correctAnswerIndex)) {
-            console.warn(`Bỏ qua dòng ${index + 2} do thiếu dữ liệu quan trọng.`);
-            return null;
-        }
-
         return questionData;
       }).filter((q): q is Question => q !== null);
 
@@ -154,8 +160,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
        </button>
       <h2 className="text-2xl font-semibold text-slate-700 mb-4">Tạo cơ sở kiến thức mới</h2>
       <p className="text-slate-500 mb-6 max-w-md">
-        Tải lên file Excel (.xlsx, .xls) chứa bộ câu hỏi của bạn.
-        Các cột: STT, Câu hỏi, 4 cột Đáp án, Đáp án đúng (1-4 hoặc A-D), Nguồn, Phân loại.
+        Tải lên file Excel (.xlsx, .xls). Cấu trúc: STT (tùy chọn), Câu hỏi, 2–4 cột Đáp án (A..D), Cột Đáp án đúng (1-4 hoặc A-D), Nguồn (tùy chọn), Phân loại (tùy chọn).
       </p>
 
       <label htmlFor="file-upload" className="w-full max-w-sm cursor-pointer bg-slate-50 border-2 border-dashed border-slate-300 rounded-lg p-8 hover:border-sky-500 hover:bg-sky-50 transition-colors">

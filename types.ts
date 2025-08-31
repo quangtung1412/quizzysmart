@@ -2,7 +2,7 @@ export interface Question {
   id: string; // use string (uuid) to avoid collisions
   question: string;
   options: string[];
-  correctAnswerIndex: number; // 0-3
+  correctAnswerIndex: number; // 0..options.length-1
   source: string;
   category: string;
 }
@@ -14,9 +14,35 @@ export interface KnowledgeBase {
   createdAt: string;
 }
 
+export type UserRole = 'admin' | 'user';
+
+export interface AppUser {
+  id?: string;
+  name: string;
+  email: string;
+  picture: string;
+  role?: UserRole;
+}
+
+export interface AdminTestSummary {
+  id: string;
+  name: string;
+  knowledgeBaseId: string;
+  questionCount: number;
+  createdAt: string;
+}
+
+export interface TestRankingEntry {
+  attemptId: string;
+  userEmail: string;
+  score: number;
+  completedAt: string | null;
+}
+
 export enum QuizMode {
   Study = 'study',
   Exam = 'exam',
+  Test = 'test', // For assigned tests
 }
 
 export interface QuizSettings {

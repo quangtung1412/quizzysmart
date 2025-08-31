@@ -1,70 +1,64 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { KnowledgeBase, QuizAttempt } from '../../types';
-
-// Versioning to allow migrations later
-const STORAGE_VERSION = 1;
-
-interface Persisted<T> { version: number; data: T }
-
-function load<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    const parsed: Persisted<T> | T = JSON.parse(raw);
-    if ((parsed as Persisted<T>).version !== undefined) {
-      const obj = parsed as Persisted<T>;
-      // Potential migrations here if version < STORAGE_VERSION
-      return obj.data;
-    }
-    return parsed as T; // legacy (no wrapper)
-  } catch {
-    return fallback;
-  }
-}
-
-function save<T>(key: string, value: T) {
-  localStorage.setItem(key, JSON.stringify({ version: STORAGE_VERSION, data: value } as Persisted<T>));
-}
+import { api } from '../api';
 
 export function useKnowledgeBaseStore(userEmail: string | null) {
-  const key = userEmail ? `quizmaster_v${STORAGE_VERSION}_bases_${userEmail.toLowerCase()}` : null;
-  const [bases, setBases] = useState<KnowledgeBase[]>(() => (key ? load<KnowledgeBase[]>(key, []) : []));
-  const initialized = useRef(false);
-
+  const [bases, setBases] = useState<KnowledgeBase[]>([]);
   useEffect(() => {
-    if (!key) { setBases([]); return; }
-    // hydrate on user change
-    setBases(load<KnowledgeBase[]>(key, []));
-    initialized.current = true;
-  }, [key]);
+    if (!userEmail) { setBases([]); return; }
+    api.getBases(userEmail).then(data => setBases(data as KnowledgeBase[])).catch(() => setBases([]));
+  }, [userEmail]);
 
-  const updateBases = useCallback((next: KnowledgeBase[] | ((prev: KnowledgeBase[]) => KnowledgeBase[])) => {
-    setBases(prev => {
-      const value = typeof next === 'function' ? (next as any)(prev) : next;
-      if (key) save(key, value);
-      return value;
-    });
-  }, [key]);
+  const addBase = useCallback(async (userEmail: string, base: Omit<KnowledgeBase, 'id' | 'createdAt'>) => {
+    const created = await api.createBase(userEmail, base);
+    const newBase: KnowledgeBase = {
+      id: created.id,
+      name: created.name,
+      createdAt: created.createdAt,
+      questions: created.questions.map((q: any) => ({
+        id: q.id,
+        question: q.question,
+        options: q.options,
+        correctAnswerIndex: q.correctAnswerIndex,
+        source: q.source,
+        category: q.category,
+      }))
+    };
+    setBases(prev => [...prev, newBase]);
+    return newBase;
+  }, []);
 
-  return { bases, setBases: updateBases };
+  const removeBase = useCallback(async (id: string) => {
+    await api.deleteBase(id);
+    setBases(prev => prev.filter(b => b.id !== id));
+  }, []);
+
+  return { bases, addBase, removeBase, setBases };
 }
 
 export function useAttemptStore(userEmail: string | null) {
-  const key = userEmail ? `quizmaster_v${STORAGE_VERSION}_attempts_${userEmail.toLowerCase()}` : null;
-  const [attempts, setAttempts] = useState<QuizAttempt[]>(() => (key ? load<QuizAttempt[]>(key, []) : []));
-
+  const [attempts, setAttempts] = useState<QuizAttempt[]>([]);
   useEffect(() => {
-    if (!key) { setAttempts([]); return; }
-    setAttempts(load<QuizAttempt[]>(key, []));
-  }, [key]);
+    if (!userEmail) { setAttempts([]); return; }
+    api.getAttempts(userEmail).then(data => setAttempts(data as QuizAttempt[])).catch(() => setAttempts([]));
+  }, [userEmail]);
 
-  const updateAttempts = useCallback((next: QuizAttempt[] | ((prev: QuizAttempt[]) => QuizAttempt[])) => {
-    setAttempts(prev => {
-      const value = typeof next === 'function' ? (next as any)(prev) : next;
-      if (key) save(key, value);
-      return value;
-    });
-  }, [key]);
+  const createAttempt = useCallback(async (userEmail: string, attempt: Omit<QuizAttempt, 'id'>) => {
+  const resp: { id: string } = await api.createAttempt(userEmail, attempt);
+  const newAttempt: QuizAttempt = { ...attempt, id: resp.id };
+    setAttempts(prev => [...prev, newAttempt]);
+    return newAttempt;
+  }, []);
 
-  return { attempts, setAttempts: updateAttempts };
+  const updateAttempt = useCallback(async (id: string, patch: Partial<QuizAttempt>) => {
+    // Send only fields server expects
+    const payload: any = {};
+    if (patch.userAnswers) payload.userAnswers = patch.userAnswers.map(a => ({ questionId: a.questionId, selectedOptionIndex: a.selectedOptionIndex, isCorrect: a.isCorrect }));
+    if (patch.score !== undefined) payload.score = patch.score;
+    if (patch.completedAt !== undefined) payload.completedAt = patch.completedAt;
+    await api.updateAttempt(id, payload);
+    setAttempts(prev => prev.map(a => a.id === id ? { ...a, ...patch } as QuizAttempt : a));
+  }, []);
+
+  return { attempts, createAttempt, updateAttempt, setAttempts };
 }
