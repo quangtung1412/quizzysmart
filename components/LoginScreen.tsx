@@ -16,7 +16,13 @@ const GoogleIcon = () => (
 
 const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const handleLogin = () => {
-    window.location.href = 'http://localhost:3000/auth/google';
+    // Determine base URL dynamically (support production domain or current origin)
+  const origin = window.location.origin.replace(/\/$/, '');
+    // If running on file:// or unusual, fallback to env style
+    const isProdDomain = /giadinhnhimsoc\.site$/i.test(location.hostname) || /13\.229\.10\.40/.test(location.hostname);
+  const isDev = origin.includes(':5173');
+  const backendBase = isDev ? 'http://localhost:3000' : origin;
+  window.location.href = backendBase + '/api/auth/google';
   };
 
   return (

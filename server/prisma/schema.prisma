@@ -96,3 +96,39 @@ model TestAssignment {
   assignedAt DateTime @default(now())
   @@unique([testId, userId])
 }
+
+model StudyPlan {
+  id              String            @id @default(cuid())
+  userId          String
+  knowledgeBaseId String
+  knowledgeBaseName String
+  totalDays       Int
+  minutesPerDay   Int
+  questionsPerDay Int
+  currentPhase    String            @default("initial") // 'initial' or 'review'
+  startDate       DateTime
+  endDate         DateTime
+  currentDay      Int               @default(1)
+  newQuestionsLearned Int           @default(0)
+  completedQuestions String          @default("[]") // JSON array of question IDs marked as "easy"
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  questionProgress QuestionProgress[]
+  
+  @@unique([userId, knowledgeBaseId])
+}
+
+model QuestionProgress {
+  id              String     @id @default(cuid())
+  studyPlan       StudyPlan  @relation(fields: [studyPlanId], references: [id], onDelete: Cascade)
+  studyPlanId     String
+  questionId      String
+  difficultyLevel String?    // null = not rated yet, 'easy', 'medium', 'hard'
+  lastReviewed    DateTime?
+  reviewCount     Int        @default(0)
+  nextReviewAfter Int?       // Number of new questions to learn before reviewing this again
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  
+  @@unique([studyPlanId, questionId])
+}

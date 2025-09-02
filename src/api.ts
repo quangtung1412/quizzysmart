@@ -1,4 +1,13 @@
-export const API_BASE = 'http://localhost:3000';
+// Dynamically derive API base (root, WITHOUT trailing / or /api)
+// We append full endpoint paths (which already include /api/...).
+// Dev: frontend :5173 -> backend http://localhost:3000
+// Prod: same origin (assumes reverse proxy exposes /api/* to backend)
+export const API_BASE = ((): string => {
+  if (typeof window === 'undefined') return (process.env.API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const origin = window.location.origin.replace(/\/$/, '');
+  if (origin.includes(':5173')) return 'http://localhost:3000';
+  return origin;
+})();
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(API_BASE + path, {
@@ -11,13 +20,19 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  me: () => request<{ user: any }>('/auth/me'),
-  logout: () => request<{ ok: boolean }>('/auth/logout'),
+  me: () => request<{ user: any }>('/api/auth/me'),
+  logout: () => request<{ ok: boolean }>('/api/auth/logout'),
   getBases: (email: string) => request<any[]>(`/api/bases?email=${encodeURIComponent(email)}`),
   createBase: (email: string, base: any) => request<any>( '/api/bases', { method: 'POST', body: JSON.stringify({ email, base }) }),
   deleteBase: (id: string) => request<{ ok: boolean }>(`/api/bases/${id}`, { method: 'DELETE' }),
   getUserTests: (email: string) => request<any[]>(`/api/tests?email=${encodeURIComponent(email)}`),
-  getTestById: (testId: string, email: string) => request<any>(`/api/tests/${testId}?email=${encodeURIComponent(email)}`),
+  getTestById: (testId: string, email: string, viewOnly?: boolean) => {
+    const params = new URLSearchParams({ email });
+    if (viewOnly) {
+      params.append('viewOnly', 'true');
+    }
+    return request<any>(`/api/tests/${testId}?${params.toString()}`);
+  },
   getTestStatistics: (testId: string, email: string) => request<{
     attempts: any[];
     bestScore: number | null;
@@ -60,4 +75,27 @@ export const api = {
   adminListKnowledgeBases: () => request<any[]>(`/api/admin/knowledge-bases`),
   adminDeleteKnowledgeBase: (baseId: string) => request<{ ok: boolean }>(`/api/admin/knowledge-bases/${baseId}`, { method: 'DELETE' }),
   adminCreateKnowledgeBase: (payload: { name: string; questions: any[] }) => request<{ id: string }>(`/api/admin/knowledge-bases`, { method: 'POST', body: JSON.stringify(payload) }),
+  
+  // Study Plans
+  getStudyPlans: () => request<any[]>(`/api/study-plans`),
+  createStudyPlan: (payload: {
+    knowledgeBaseId: string;
+    knowledgeBaseName: string;
+    totalDays: number;
+    minutesPerDay: number;
+    questionsPerDay: number;
+    startDate: string;
+    endDate: string;
+  }) => request<any>(`/api/study-plans`, { method: 'POST', body: JSON.stringify(payload) }),
+  updateStudyPlan: (id: string, data: any) => request<any>(`/api/study-plans/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteStudyPlan: (id: string) => request<{ success: boolean }>(`/api/study-plans/${id}`, { method: 'DELETE' }),
+  updateQuestionProgress: (studyPlanId: string, payload: {
+    questionId: string;
+    difficultyLevel: string;
+  }) => request<{ questionProgress: any; studyPlan: any }>(`/api/study-plans/${studyPlanId}/question-progress`, { method: 'POST', body: JSON.stringify(payload) }),
+  getTodayQuestions: (studyPlanId: string, maxQuestions?: number) => {
+    const params = new URLSearchParams();
+    if (maxQuestions) params.append('maxQuestions', maxQuestions.toString());
+    return request<{ questions: any[]; studyPlan: any }>(`/api/study-plans/${studyPlanId}/today-questions?${params.toString()}`);
+  }
 };

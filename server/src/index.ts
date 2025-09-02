@@ -7,13 +7,47 @@ import { Strategy as GoogleStrategy, Profile } from 'passport-google-oauth20';
 import { PrismaClient, User } from '@prisma/client';
 
 const prisma = new PrismaClient();
+// Temporary any-cast for newly added models if type generation not up-to-date
+const prismaAny = prisma as any;
 const app = express();
 const bodyLimit = process.env.MAX_BODY_SIZE || '5mb';
 
-app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
+// Allow multiple origins (localhost + production domains/IP) configurable via env
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || [
+  'http://localhost',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://13.229.10.40',
+  'http://13.229.10.40:3000',
+  'https://13.229.10.40',
+  'https://giadinhnhimsoc.site',
+  'https://www.giadinhnhimsoc.site',
+  'http://giadinhnhimsoc.site',
+  'http://www.giadinhnhimsoc.site'
+].join(',')).split(',').map(o => o.trim()).filter(Boolean);
+
+app.use(cors({
+  origin: function(origin, callback) {
+    if (!origin) return callback(null, true); // direct server-to-server / curl
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // allow subdomain patterns for the primary domain
+    if (/\.giadinhnhimsoc\.site$/.test(origin.replace(/^https?:\/\//,''))) return callback(null, true);
+    return callback(new Error('CORS not allowed: ' + origin));
+  },
+  credentials: true
+}));
+app.set('trust proxy', 1); // behind reverse proxy (needed for secure cookies)
 app.use(express.json({ limit: bodyLimit }));
 app.use(express.urlencoded({ extended: true, limit: bodyLimit }));
-app.use(session({ secret: 'dev-secret', resave: false, saveUninitialized: false }));
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'dev-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: 'auto', // auto secure if request is https
+    sameSite: 'lax'
+  }
+}));
 app.use(passport.initialize());
 app.use(passport.session());
 
@@ -27,19 +61,27 @@ passport.deserializeUser(async (id: string, done: (err: any, user?: any) => void
   }
 });
 
-const clientID = process.env.GOOGLE_CLIENT_ID || '';
-const clientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
-const callbackURL = process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3000/auth/google/callback';
+// --- Unified configuration (no production branching) ---
+// Use single set of env vars; fall back to localhost defaults.
+const appBaseUrl = (process.env.APP_BASE_URL || 'http://localhost:5173').replace(/\/$/, '');
+const backendBaseUrl = (process.env.BACKEND_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+const clientID = (process.env.GOOGLE_CLIENT_ID || '').trim();
+const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
+const callbackURL = (process.env.GOOGLE_CALLBACK_URL || `${backendBaseUrl}/api/auth/google/callback`).replace(/\/$/, '');
+
 if (!clientID || !clientSecret) {
-  console.error('Google OAuth env vars missing: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET');
+  console.error('[Config] Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET in .env');
 }
-console.log('[OAuth] Using callback URL:', callbackURL);
+console.log('[Config] APP_BASE_URL =', appBaseUrl);
+console.log('[Config] BACKEND_BASE_URL =', backendBaseUrl);
+console.log('[OAuth] Client ID prefix =', clientID ? clientID.slice(0,8)+'...' : 'MISSING');
+console.log('[OAuth] Callback URL =', callbackURL);
 
 passport.use(new GoogleStrategy(
   {
     clientID: clientID,
     clientSecret: clientSecret,
-  callbackURL
+    callbackURL // will be overridden per-request for proper domain
   },
   async (_accessToken: string, _refreshToken: string, profile: Profile, done: (err: any, user?: User) => void) => {
     try {
@@ -56,12 +98,26 @@ passport.use(new GoogleStrategy(
   }
 ));
 
-app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
-app.get('/auth/google/callback', passport.authenticate('google', { failureRedirect: '/auth/fail' }), (req: Request, res: Response) => {
-  res.redirect('http://localhost:5173/');
+
+// OAuth routes (canonical path /api/auth/...)
+app.get('/api/auth/google', (req, res, next) => {
+  // Build dynamic callback only if no explicit GOOGLE_CALLBACK_URL provided.
+  let dynamicCallback = callbackURL;
+  if (!process.env.GOOGLE_CALLBACK_URL) {
+    const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
+    if (host) {
+      const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'http');
+      dynamicCallback = `${proto}://${host.replace(/\/$/, '')}/api/auth/google/callback`;
+    }
+  }
+  console.log('[OAuth] Start flow callback=', dynamicCallback);
+  return passport.authenticate('google', { scope: ['profile','email'], callbackURL: dynamicCallback } as any)(req, res, next);
+});
+app.get('/api/auth/google/callback', passport.authenticate('google', { failureRedirect: '/api/auth/fail' }), (req: Request, res: Response) => {
+  res.redirect(appBaseUrl + '/');
 });
 
-app.get('/auth/logout', (req: Request, res: Response) => {
+app.get('/api/auth/logout', (req: Request, res: Response) => {
   req.logout(err => {
     if (err) console.error(err);
     req.session.destroy(() => {
@@ -71,7 +127,7 @@ app.get('/auth/logout', (req: Request, res: Response) => {
   });
 });
 
-app.get('/auth/me', (req: Request, res: Response) => {
+app.get('/api/auth/me', (req: Request, res: Response) => {
   if (!req.user) return res.status(401).json({ user: null });
   res.json({ user: req.user });
 });
@@ -197,8 +253,9 @@ app.get('/api/tests', async (req: Request, res: Response) => {
 app.get('/api/tests/:id', async (req: Request, res: Response) => {
   const testId = req.params.id;
   const email = String(req.query.email || '');
+  const viewOnly = req.query.viewOnly === 'true'; // Check if this is for viewing only
   
-  console.log(`[DEBUG] GET /api/tests/${testId} for email: ${email}`);
+  console.log(`[DEBUG] GET /api/tests/${testId} for email: ${email}, viewOnly: ${viewOnly}`);
   
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
@@ -240,8 +297,8 @@ app.get('/api/tests/:id', async (req: Request, res: Response) => {
     }
   });
   
-  // Check if user has reached max attempts (0 = unlimited)
-  if (test.maxAttempts > 0 && existingAttempts >= test.maxAttempts) {
+  // Only check attempt limits if not viewing only
+  if (!viewOnly && test.maxAttempts > 0 && existingAttempts >= test.maxAttempts) {
     console.log(`[DEBUG] User has reached max attempts: ${existingAttempts}/${test.maxAttempts}`);
     return res.status(403).json({ 
       error: `Bạn đã hết lượt thi. Đã thi: ${existingAttempts}/${test.maxAttempts} lượt`,
@@ -252,13 +309,15 @@ app.get('/api/tests/:id', async (req: Request, res: Response) => {
   
   console.log(`[DEBUG] User can take test. Attempts: ${existingAttempts}/${test.maxAttempts}`);
   
-  // Check if test is available (time constraints)
-  const now = new Date();
-  if (test.startTime && new Date(test.startTime) > now) {
-    return res.status(403).json({ error: 'Test has not started yet' });
-  }
-  if (test.endTime && new Date(test.endTime) < now) {
-    return res.status(403).json({ error: 'Test has ended' });
+  // Check if test is available (time constraints) - only for taking tests, not viewing
+  if (!viewOnly) {
+    const now = new Date();
+    if (test.startTime && new Date(test.startTime) > now) {
+      return res.status(403).json({ error: 'Test has not started yet' });
+    }
+    if (test.endTime && new Date(test.endTime) < now) {
+      return res.status(403).json({ error: 'Test has ended' });
+    }
   }
   
   // Get questions for this test based on knowledgeSources
@@ -1008,7 +1067,8 @@ app.get('/api/admin/tests/:id/ranking', async (req: Request, res: Response) => {
 });
 
 
-app.listen(3000, () => console.log('API server on :3000'));
+const port = parseInt(process.env.PORT || '3000', 10);
+app.listen(port, () => console.log('API server on :' + port));
 // Promote first user as admin if no admin
 (async () => {
   try {
@@ -1022,3 +1082,323 @@ app.listen(3000, () => console.log('API server on :3000'));
     }
   } catch (e) { console.error('Admin promotion check failed', e); }
 })();
+
+// Study Plans API endpoints
+app.get('/api/study-plans', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const studyPlans = await prismaAny.studyPlan.findMany({
+      where: { userId: user.id },
+      include: {
+        questionProgress: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json(studyPlans);
+  } catch (error) {
+    console.error('Error fetching study plans:', error);
+    res.status(500).json({ error: 'Failed to fetch study plans' });
+  }
+});
+
+app.post('/api/study-plans', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const {
+      knowledgeBaseId,
+      knowledgeBaseName,
+      totalDays,
+      minutesPerDay,
+      questionsPerDay,
+      startDate,
+      endDate
+    } = req.body;
+
+    // Check if study plan already exists for this knowledge base
+  const existingPlan = await prismaAny.studyPlan.findUnique({
+      where: {
+        userId_knowledgeBaseId: {
+          userId: user.id,
+          knowledgeBaseId
+        }
+      }
+    });
+
+    if (existingPlan) {
+      return res.status(400).json({ error: 'Study plan already exists for this knowledge base' });
+    }
+
+  const studyPlan = await prismaAny.studyPlan.create({
+      data: {
+        userId: user.id,
+        knowledgeBaseId,
+        knowledgeBaseName,
+        totalDays,
+        minutesPerDay,
+        questionsPerDay,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate)
+      },
+      include: {
+        questionProgress: true
+      }
+    });
+
+    res.json(studyPlan);
+  } catch (error) {
+    console.error('Error creating study plan:', error);
+    res.status(500).json({ error: 'Failed to create study plan' });
+  }
+});
+
+app.put('/api/study-plans/:id', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id } = req.params;
+    const updateData = req.body;
+
+    // Verify ownership
+  const existingPlan = await prismaAny.studyPlan.findFirst({
+      where: { id, userId: user.id }
+    });
+
+    if (!existingPlan) {
+      return res.status(404).json({ error: 'Study plan not found' });
+    }
+
+  const studyPlan = await prismaAny.studyPlan.update({
+      where: { id },
+      data: {
+        ...updateData,
+        completedQuestions: typeof updateData.completedQuestions === 'object' 
+          ? JSON.stringify(updateData.completedQuestions)
+          : updateData.completedQuestions
+      },
+      include: {
+        questionProgress: true
+      }
+    });
+
+    res.json(studyPlan);
+  } catch (error) {
+    console.error('Error updating study plan:', error);
+    res.status(500).json({ error: 'Failed to update study plan' });
+  }
+});
+
+app.delete('/api/study-plans/:id', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id } = req.params;
+
+    // Verify ownership
+  const existingPlan = await prismaAny.studyPlan.findFirst({
+      where: { id, userId: user.id }
+    });
+
+    if (!existingPlan) {
+      return res.status(404).json({ error: 'Study plan not found' });
+    }
+
+  await prismaAny.studyPlan.delete({
+      where: { id }
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting study plan:', error);
+    res.status(500).json({ error: 'Failed to delete study plan' });
+  }
+});
+
+// Question Progress API endpoints
+app.post('/api/study-plans/:id/question-progress', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id: studyPlanId } = req.params;
+    const { questionId, difficultyLevel } = req.body;
+
+    // Verify study plan ownership
+  const studyPlan = await prismaAny.studyPlan.findFirst({
+      where: { id: studyPlanId, userId: user.id },
+      include: { questionProgress: true }
+    });
+
+    if (!studyPlan) {
+      return res.status(404).json({ error: 'Study plan not found' });
+    }
+
+    // Calculate nextReviewAfter based on difficulty and new questions learned
+    let nextReviewAfter = null;
+    if (difficultyLevel === 'hard') {
+      nextReviewAfter = Math.max(10 - studyPlan.newQuestionsLearned, 0);
+    } else if (difficultyLevel === 'medium') {
+      nextReviewAfter = Math.max(15 - studyPlan.newQuestionsLearned, 5);
+    } else if (difficultyLevel === 'easy') {
+      nextReviewAfter = null; // Easy questions don't need regular review
+    }
+
+    // Upsert question progress
+  const questionProgress = await prismaAny.questionProgress.upsert({
+      where: {
+        studyPlanId_questionId: {
+          studyPlanId,
+          questionId
+        }
+      },
+      update: {
+        difficultyLevel,
+        lastReviewed: new Date(),
+        reviewCount: { increment: 1 },
+        nextReviewAfter
+      },
+      create: {
+        studyPlanId,
+        questionId,
+        difficultyLevel,
+        lastReviewed: new Date(),
+        reviewCount: 1,
+        nextReviewAfter
+      }
+    });
+
+    // Update completed questions and new questions count
+    const completedQuestions = JSON.parse(studyPlan.completedQuestions || '[]');
+    let updatedCompletedQuestions = completedQuestions;
+    let newQuestionsLearned = studyPlan.newQuestionsLearned;
+
+    if (difficultyLevel === 'easy' && !completedQuestions.includes(questionId)) {
+      updatedCompletedQuestions = [...completedQuestions, questionId];
+    } else if (difficultyLevel !== 'easy') {
+      updatedCompletedQuestions = completedQuestions.filter((id: string) => id !== questionId);
+    }
+
+    // Check if this is a new question (first time rating)
+  const existingProgress = studyPlan.questionProgress.find((p: any) => p.questionId === questionId);
+    if (!existingProgress || existingProgress.difficultyLevel === null) {
+      newQuestionsLearned += 1;
+    }
+
+    // Update study plan
+  const updatedStudyPlan = await prismaAny.studyPlan.update({
+      where: { id: studyPlanId },
+      data: {
+        completedQuestions: JSON.stringify(updatedCompletedQuestions),
+        newQuestionsLearned,
+        currentPhase: updatedCompletedQuestions.length === studyPlan.questionProgress.length + 1 
+          ? 'review' 
+          : 'initial'
+      },
+      include: {
+        questionProgress: true
+      }
+    });
+
+    res.json({
+      questionProgress,
+      studyPlan: updatedStudyPlan
+    });
+  } catch (error) {
+    console.error('Error updating question progress:', error);
+    res.status(500).json({ error: 'Failed to update question progress' });
+  }
+});
+
+app.get('/api/study-plans/:id/today-questions', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id: studyPlanId } = req.params;
+    const maxQuestions = parseInt(req.query.maxQuestions as string) || 10;
+
+    // Get study plan with progress
+  const studyPlan = await prismaAny.studyPlan.findFirst({
+      where: { id: studyPlanId, userId: user.id },
+      include: { questionProgress: true }
+    });
+
+    if (!studyPlan) {
+      return res.status(404).json({ error: 'Study plan not found' });
+    }
+
+    // Get knowledge base questions
+    const knowledgeBase = await prisma.knowledgeBase.findUnique({
+      where: { id: studyPlan.knowledgeBaseId },
+      include: { questions: true }
+    });
+
+    if (!knowledgeBase) {
+      return res.status(404).json({ error: 'Knowledge base not found' });
+    }
+
+    const allQuestions = knowledgeBase.questions;
+  const studiedQuestionIds = new Set(studyPlan.questionProgress.map((p: any) => p.questionId));
+    
+    // Get questions that need review (hard and medium questions ready for review)
+  const questionsNeedingReview = studyPlan.questionProgress.filter((progress: any) => {
+      if (progress.difficultyLevel === 'easy') return false;
+      if (progress.nextReviewAfter === null || progress.nextReviewAfter === undefined) return false;
+      return studyPlan.newQuestionsLearned >= progress.nextReviewAfter;
+    });
+
+    // Get new questions (not yet studied)
+    const newQuestions = allQuestions.filter(q => !studiedQuestionIds.has(q.id));
+
+    // Build today's question list
+    let todayQuestionIds: string[] = [];
+    
+    // Add hard questions first (highest priority)
+    const hardQuestions = questionsNeedingReview
+      .filter((p: any) => p.difficultyLevel === 'hard')
+      .sort((a: any, b: any) => new Date(a.lastReviewed || 0).getTime() - new Date(b.lastReviewed || 0).getTime())
+      .slice(0, maxQuestions);
+    todayQuestionIds.push(...hardQuestions.map((p: any) => p.questionId));
+    
+    // Add medium questions if there's space
+    const remainingSlots = maxQuestions - todayQuestionIds.length;
+    if (remainingSlots > 0) {
+      const mediumQuestions = questionsNeedingReview
+        .filter((p: any) => p.difficultyLevel === 'medium')
+        .sort((a: any, b: any) => new Date(a.lastReviewed || 0).getTime() - new Date(b.lastReviewed || 0).getTime())
+        .slice(0, remainingSlots);
+      todayQuestionIds.push(...mediumQuestions.map((p: any) => p.questionId));
+    }
+    
+    // Fill remaining slots with new questions
+    const stillRemainingSlots = maxQuestions - todayQuestionIds.length;
+    if (stillRemainingSlots > 0) {
+      const newQuestionIds = newQuestions.slice(0, stillRemainingSlots).map(q => q.id);
+      todayQuestionIds.push(...newQuestionIds);
+    }
+
+    // Get full question objects
+    const todayQuestions = allQuestions.filter(q => todayQuestionIds.includes(q.id));
+
+    res.json({
+      questions: todayQuestions.map(q => ({
+        id: q.id,
+        question: q.text,
+        options: JSON.parse(q.options),
+        correctAnswerIndex: q.correctAnswerIdx,
+        source: q.source,
+        category: q.category
+      })),
+      studyPlan
+    });
+  } catch (error) {
+    console.error('Error getting today questions:', error);
+    res.status(500).json({ error: 'Failed to get today questions' });
+  }
+});

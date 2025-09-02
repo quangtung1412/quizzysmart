@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Question, QuizMode, QuizSettings, UserAnswer, KnowledgeBase, QuizAttempt, AppUser } from './types';
+import { Question, QuizMode, QuizSettings, UserAnswer, KnowledgeBase, QuizAttempt, AppUser, StudyPlan, DifficultyLevel } from './types';
 import { useKnowledgeBaseStore, useAttemptStore } from './src/hooks/usePersistentStores';
+import { useStudyPlanStore } from './src/hooks/useStudyPlanStore';
 import { shuffleArray } from './src/utils/shuffle';
 import { api } from './src/api';
 import FileUpload from './components/FileUpload';
@@ -15,9 +16,13 @@ import QuizHistoryScreen from './components/QuizHistoryScreen';
 import TestListScreen from './components/TestListScreen';
 import TestDetailScreen from './components/TestDetailScreen';
 import AttemptDetailScreen from './components/AttemptDetailScreen';
+import ModeSelectionScreen from './components/ModeSelectionScreen';
+import StudyPlanSetupScreen from './components/StudyPlanSetupScreen';
+import StudyPlanOverviewScreen from './components/StudyPlanOverviewScreen';
+import DailyStudyScreen from './components/DailyStudy';
 
 
-type Screen = 'login' | 'testList' | 'testDetail' | 'attemptDetail' | 'knowledgeBase' | 'upload' | 'menu' | 'setup' | 'quiz' | 'results' | 'history' | 'admin';
+type Screen = 'login' | 'modeSelection' | 'testList' | 'testDetail' | 'attemptDetail' | 'knowledgeBase' | 'upload' | 'menu' | 'setup' | 'quiz' | 'results' | 'history' | 'admin' | 'studyPlanSetup' | 'studyPlanOverview' | 'dailyStudy';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<AppUser | null>(null);
@@ -25,7 +30,10 @@ const App: React.FC = () => {
   
   const { bases: knowledgeBases, addBase, removeBase, setBases: setKnowledgeBases } = useKnowledgeBaseStore(user?.email || null);
   const { attempts: quizAttempts, createAttempt, updateAttempt, setAttempts: setQuizAttempts } = useAttemptStore(user?.email || null);
+  const { studyPlans, createStudyPlan, updateStudyPlan, updateQuestionProgress, getTodayQuestions, deleteStudyPlan, getStudyPlanByKnowledgeBaseId } = useStudyPlanStore(user?.email || null);
+  
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<KnowledgeBase | null>(null);
+  const [currentStudyPlan, setCurrentStudyPlan] = useState<StudyPlan | null>(null);
 
   const [allQuestions, setAllQuestions] = useState<Question[]>([]);
   
@@ -73,14 +81,14 @@ const App: React.FC = () => {
 
   const handleLoginSuccess = useCallback((loggedInUser: { name: string; email: string; picture: string }) => {
     setUser(loggedInUser);
-    setCurrentScreen('testList');
+    setCurrentScreen('modeSelection');
   }, []);
 
   useEffect(() => {
     api.me().then(r => {
       if (r.user) {
         setUser({ name: r.user.name || '', email: r.user.email, picture: r.user.picture || '', role: (r.user as any).role });
-        setCurrentScreen('testList'); // Always go to test list first
+        setCurrentScreen('modeSelection'); // Always go to mode selection first
       }
     }).catch(()=>{});
   }, []);
@@ -97,6 +105,25 @@ const App: React.FC = () => {
   setQuizAttempts([]);
     setSelectedKnowledgeBase(null);
     setCurrentAttemptId(null);
+  }, []);
+
+  const handleSelectPracticeMode = useCallback(() => {
+    setCurrentScreen('knowledgeBase');
+    setAllQuestions([]);
+    setQuizMode(null);
+    setSelectedKnowledgeBase(null);
+  }, []);
+
+  const handleSelectTestMode = useCallback(() => {
+    setCurrentScreen('testList');
+    setQuizMode(null);
+    setQuizSettings(null);
+    setActiveQuizQuestions([]);
+    setUserAnswers([]);
+    setCurrentAttemptId(null);
+    setCurrentTestInfo(null);
+    setCurrentTestId(null);
+    setCurrentAttemptDetailId(null);
   }, []);
 
   const handleGoToKnowledgeBase = useCallback(() => {
@@ -116,6 +143,20 @@ const App: React.FC = () => {
     setCurrentTestInfo(null);
     setCurrentTestId(null);
     setCurrentAttemptDetailId(null);
+  }, []);
+
+  const handleGoToModeSelection = useCallback(() => {
+    setCurrentScreen('modeSelection');
+    setQuizMode(null);
+    setQuizSettings(null);
+    setActiveQuizQuestions([]);
+    setUserAnswers([]);
+    setCurrentAttemptId(null);
+    setCurrentTestInfo(null);
+    setCurrentTestId(null);
+    setCurrentAttemptDetailId(null);
+    setAllQuestions([]);
+    setSelectedKnowledgeBase(null);
   }, []);
 
   const handleGoToAdmin = useCallback(() => {
@@ -300,7 +341,7 @@ const App: React.FC = () => {
   }, [currentAttemptId, updateAttempt]);
 
   const handleRestartQuiz = useCallback(() => {
-    setCurrentScreen('menu');
+    setCurrentScreen('modeSelection');
     setQuizMode(null);
     setQuizSettings(null);
     setActiveQuizQuestions([]);
@@ -311,10 +352,102 @@ const App: React.FC = () => {
 
   const handleViewHistory = useCallback(() => setCurrentScreen('history'), []);
 
+  // Study Plan Handlers
+  const handleCreateStudyPlanRequest = useCallback((knowledgeBase: KnowledgeBase) => {
+    setSelectedKnowledgeBase(knowledgeBase);
+    setAllQuestions(knowledgeBase.questions);
+    setCurrentScreen('studyPlanSetup');
+  }, []);
+
+  const handleCreateStudyPlan = useCallback(async (totalDays: number, minutesPerDay: number) => {
+    if (!selectedKnowledgeBase || !user) return;
+
+    try {
+      const newStudyPlan = await createStudyPlan(
+        selectedKnowledgeBase.id,
+        selectedKnowledgeBase.name,
+        selectedKnowledgeBase.questions.length,
+        totalDays,
+        minutesPerDay
+      );
+
+      setCurrentStudyPlan(newStudyPlan);
+      // Directly navigate to daily study
+      setCurrentScreen('dailyStudy');
+    } catch (error) {
+      console.error('Error creating study plan:', error);
+      alert('Có lỗi xảy ra khi tạo lộ trình ôn tập. Vui lòng thử lại.');
+    }
+  }, [selectedKnowledgeBase, user, createStudyPlan]);
+
+  const handleViewStudyPlan = useCallback((knowledgeBase: KnowledgeBase) => {
+    const existingPlan = getStudyPlanByKnowledgeBaseId(knowledgeBase.id);
+    if (existingPlan) {
+      setCurrentStudyPlan(existingPlan);
+      setSelectedKnowledgeBase(knowledgeBase);
+      setAllQuestions(knowledgeBase.questions);
+      setCurrentScreen('studyPlanOverview');
+    }
+  }, [getStudyPlanByKnowledgeBaseId]);
+
+  const handleStartDailyStudy = useCallback(() => {
+    if (!currentStudyPlan) return;
+    setCurrentScreen('dailyStudy');
+  }, [currentStudyPlan]);
+
+  const handleQuestionComplete = useCallback((questionId: string, difficultyLevel: DifficultyLevel) => {
+    if (!currentStudyPlan) return;
+    
+    updateQuestionProgress(currentStudyPlan.id, questionId, difficultyLevel);
+    
+    // Update current study plan state
+    const updatedPlan = { 
+      ...currentStudyPlan, 
+      updatedAt: new Date().toISOString() 
+    };
+    setCurrentStudyPlan(updatedPlan);
+  }, [currentStudyPlan, updateQuestionProgress]);
+
+  const handleStartPhase2 = useCallback(() => {
+    if (!currentStudyPlan || !selectedKnowledgeBase) return;
+    
+    // Set up a comprehensive test with all questions
+    const allQs = selectedKnowledgeBase.questions;
+    const shuffled = shuffleArray([...allQs]) as Question[];
+    
+    setActiveQuizQuestions(shuffled);
+    setQuizMode(QuizMode.Exam); // Use exam mode for phase 2
+    setQuizSettings({
+      questionCount: allQs.length,
+      timeLimit: Math.max(allQs.length * 2, 30), // 2 minutes per question, minimum 30 minutes
+      categories: []
+    });
+    setCurrentScreen('quiz');
+  }, [currentStudyPlan, selectedKnowledgeBase]);
+
+  const handleDeleteStudyPlan = useCallback(() => {
+    if (!currentStudyPlan) return;
+    
+    deleteStudyPlan(currentStudyPlan.id);
+    setCurrentStudyPlan(null);
+    setCurrentScreen('knowledgeBase');
+  }, [currentStudyPlan, deleteStudyPlan]);
+
+  const handleUpdateStudyPlan = useCallback((updatedPlan: StudyPlan) => {
+    updateStudyPlan(updatedPlan.id, updatedPlan);
+    setCurrentStudyPlan(updatedPlan);
+  }, [updateStudyPlan]);
+
   const renderScreen = () => {
     switch (currentScreen) {
       case 'login':
         return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+      case 'modeSelection':
+        return <ModeSelectionScreen 
+                  userName={user?.name || ''}
+                  onSelectPracticeMode={handleSelectPracticeMode}
+                  onSelectTestMode={handleSelectTestMode}
+                />;
       case 'testList':
         return <TestListScreen 
                   user={user!} 
@@ -322,6 +455,7 @@ const App: React.FC = () => {
                   onKnowledgeBase={handleGoToKnowledgeBase}
                   onStartTest={handleStartTest}
                   onViewTestDetails={handleViewTestDetails}
+                  onBack={handleGoToModeSelection}
                 />;
       case 'testDetail':
         if (!currentTestId) return <TestListScreen 
@@ -330,6 +464,7 @@ const App: React.FC = () => {
                                       onKnowledgeBase={handleGoToKnowledgeBase}
                                       onStartTest={handleStartTest}
                                       onViewTestDetails={handleViewTestDetails}
+                                      onBack={handleGoToModeSelection}
                                     />;
         return <TestDetailScreen 
                   testId={currentTestId}
@@ -351,13 +486,16 @@ const App: React.FC = () => {
                   onCreate={user?.role === 'admin' ? handleCreateNewRequest : undefined} 
                   onDelete={handleDeleteBase} 
                   onViewHistory={handleViewHistory}
+                  onCreateStudyPlan={handleCreateStudyPlanRequest}
+                  studyPlans={studyPlans}
+                  onViewStudyPlan={handleViewStudyPlan}
                   isAdmin={user?.role === 'admin'}
-                  onBack={handleGoToTestList}
+                  onBack={handleGoToModeSelection}
                 />;
       case 'admin':
-        return <AdminDashboard userEmail={user!.email} onBack={handleGoToTestList} knowledgeBases={knowledgeBases} />;
+        return <AdminDashboard userEmail={user!.email} onBack={handleGoToModeSelection} knowledgeBases={knowledgeBases} />;
       case 'history':
-        return <QuizHistoryScreen attempts={quizAttempts} onBack={handleGoToTestList} />;
+        return <QuizHistoryScreen attempts={quizAttempts} onBack={handleGoToModeSelection} />;
       case 'upload':
         return <FileUpload onSaveNewBase={handleSaveNewBase} onBack={handleGoToKnowledgeBase} />;
       case 'menu':
@@ -383,7 +521,30 @@ const App: React.FC = () => {
                   userAnswers={userAnswers} 
                   attemptId={currentAttemptId}
                   user={user}
-                  onRestart={handleGoToTestList} 
+                  onRestart={handleGoToModeSelection} 
+                />;
+      case 'studyPlanSetup':
+        if (!selectedKnowledgeBase) return handleGoToKnowledgeBase();
+        return <StudyPlanSetupScreen 
+                  knowledgeBase={selectedKnowledgeBase}
+                  onCreateStudyPlan={handleCreateStudyPlan}
+                  onBack={handleGoToKnowledgeBase}
+                />;
+      case 'studyPlanOverview':
+        if (!currentStudyPlan) return handleGoToKnowledgeBase();
+        return <StudyPlanOverviewScreen 
+                  studyPlan={currentStudyPlan}
+                  onStartDailyStudy={handleStartDailyStudy}
+                  onStartPhase2={handleStartPhase2}
+                  onDeleteStudyPlan={handleDeleteStudyPlan}
+                  onBack={handleGoToKnowledgeBase}
+                />;
+      case 'dailyStudy':
+        if (!currentStudyPlan) return handleGoToKnowledgeBase();
+  return <DailyStudyScreen 
+                  studyPlan={currentStudyPlan}
+                  currentUser={user?.email || ''}
+                  onBackToMenu={handleGoToKnowledgeBase}
                 />;
       default:
         return <LoginScreen onLoginSuccess={handleLoginSuccess} />;

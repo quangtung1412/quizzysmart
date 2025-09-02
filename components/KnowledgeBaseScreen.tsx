@@ -1,5 +1,5 @@
 import React from 'react';
-import { KnowledgeBase } from '../types';
+import { KnowledgeBase, StudyPlan } from '../types';
 
 interface KnowledgeBaseScreenProps {
     bases: KnowledgeBase[];
@@ -7,11 +7,14 @@ interface KnowledgeBaseScreenProps {
     onCreate?: () => void; // Made optional since regular users won't have this
     onDelete: (baseId: string) => void;
     onViewHistory: () => void;
+    onCreateStudyPlan: (knowledgeBase: KnowledgeBase) => void; // New prop
+    studyPlans?: StudyPlan[]; // Optional study plans to check existing plans
+    onViewStudyPlan?: (knowledgeBase: KnowledgeBase) => void; // View existing study plan
     isAdmin?: boolean; // Add flag to determine if user is admin
     onBack?: () => void; // Back to test list
 }
 
-const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({ bases, onSelect, onCreate, onDelete, onViewHistory, isAdmin = false, onBack }) => {
+const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({ bases, onSelect, onCreate, onDelete, onViewHistory, onCreateStudyPlan, studyPlans = [], onViewStudyPlan, isAdmin = false, onBack }) => {
     
     const handleDelete = (e: React.MouseEvent, baseId: string, baseName: string) => {
         e.stopPropagation(); // Prevent onSelect from being called
@@ -98,19 +101,36 @@ const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({ bases, onSele
                                     Tạo ngày: {new Date(base.createdAt).toLocaleDateString()}
                                 </p>
                             </div>
-                            <div className="mt-4 flex justify-between items-center">
-                                 <button 
+                            <div className="mt-4 flex flex-col space-y-2">
+                                <button 
                                     onClick={() => onSelect(base.id)} 
-                                    className="px-5 py-2 text-sm font-medium text-white bg-sky-600 rounded-md shadow-sm hover:bg-sky-700"
+                                    className="w-full px-4 py-2 text-sm font-medium text-white bg-sky-600 rounded-md shadow-sm hover:bg-sky-700 transition-colors"
                                 >
-                                    Sử dụng
+                                    📝 Luyện tập ngẫu nhiên
                                 </button>
+                                {studyPlans.find(plan => plan.knowledgeBaseId === base.id) ? (
+                                    onViewStudyPlan && (
+                                        <button 
+                                            onClick={() => onViewStudyPlan(base)} 
+                                            className="w-full px-4 py-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-md hover:bg-green-100 transition-colors"
+                                        >
+                                            👁️ Xem lộ trình ôn tập
+                                        </button>
+                                    )
+                                ) : (
+                                    <button 
+                                        onClick={() => onCreateStudyPlan(base)} 
+                                        className="w-full px-4 py-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-md hover:bg-green-100 transition-colors"
+                                    >
+                                        🎯 Tạo lộ trình ôn tập
+                                    </button>
+                                )}
                                 <button 
                                     onClick={(e) => handleDelete(e, base.id, base.name)}
                                     title="Xóa bộ câu hỏi"
-                                    className="p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 rounded-full"
+                                    className="w-full p-2 text-slate-400 hover:bg-red-50 hover:text-red-600 rounded-md transition-colors"
                                 >
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                         <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                                     </svg>
                                 </button>

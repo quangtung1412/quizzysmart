@@ -49,8 +49,8 @@ const TestDetailScreen: React.FC<TestDetailScreenProps> = ({
       const attemptsData = await api.getTestAttempts(testId, user.email);
       setAttempts(attemptsData);
       
-      // Load basic test info
-      const testData = await api.getTestById(testId, user.email);
+      // Load basic test info (view only, skip attempt limits)
+      const testData = await api.getTestById(testId, user.email, true);
       setTestInfo(testData);
       
     } catch (err: any) {

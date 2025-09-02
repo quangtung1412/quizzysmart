@@ -68,3 +68,43 @@ export interface QuizAttempt {
   userAnswers: UserAnswer[];
   score: number | null; // Stored as percentage, e.g., 85.5
 }
+
+// Personal Study Plan Types
+export enum DifficultyLevel {
+  Easy = 'easy',
+  Medium = 'medium',
+  Hard = 'hard'
+}
+
+export enum StudyPhase {
+  Initial = 'initial',      // Giai đoạn 1: Học hết tất cả câu hỏi
+  Review = 'review'         // Giai đoạn 2: Làm bài thi thử tổng hợp
+}
+
+export interface QuestionProgress {
+  id: string;
+  questionId: string;
+  difficultyLevel: DifficultyLevel | null;
+  lastReviewed: string | null;
+  reviewCount: number;
+  nextReviewAfter: number | null; // Number of new questions to learn before reviewing this again
+}
+
+export interface StudyPlan {
+  id: string;
+  userId: string;
+  knowledgeBaseId: string;
+  knowledgeBaseName: string;
+  totalDays: number;
+  minutesPerDay: number;
+  questionsPerDay: number;
+  currentPhase: StudyPhase;
+  startDate: string;
+  endDate: string;
+  currentDay: number;
+  newQuestionsLearned: number; // Number of new questions learned so far
+  questionProgress: QuestionProgress[];
+  completedQuestions: string[]; // IDs of questions marked as "easy"
+  createdAt: string;
+  updatedAt: string;
+}

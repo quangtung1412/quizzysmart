@@ -27,6 +27,7 @@ interface TestListScreenProps {
   onKnowledgeBase: () => void;
   onStartTest: (testId: string) => void;
   onViewTestDetails: (testId: string) => void;
+  onBack?: () => void;
 }
 
 const TestListScreen: React.FC<TestListScreenProps> = ({ 
@@ -34,7 +35,8 @@ const TestListScreen: React.FC<TestListScreenProps> = ({
   onAdminPanel, 
   onKnowledgeBase,
   onStartTest,
-  onViewTestDetails
+  onViewTestDetails,
+  onBack
 }) => {
   const [tests, setTests] = useState<Test[]>([]);
   const [filteredTests, setFilteredTests] = useState<Test[]>([]);
@@ -152,11 +154,24 @@ const TestListScreen: React.FC<TestListScreenProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Header with Admin Panel button */}
+      {/* Header with navigation */}
       <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800">Danh sách bài thi</h2>
-          <p className="text-slate-600 mt-1">Các bài thi đã được gán cho bạn</p>
+        <div className="flex items-center space-x-4">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              title="Quay lại"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              </svg>
+            </button>
+          )}
+          <div>
+            <h2 className="text-2xl font-bold text-slate-800">Danh sách bài thi</h2>
+            <p className="text-slate-600 mt-1">Các bài thi đã được gán cho bạn</p>
+          </div>
         </div>
         <div className="flex space-x-3">
           <button
