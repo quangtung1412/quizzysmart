@@ -64,33 +64,6 @@ const StudyPlanSetupScreen: React.FC<StudyPlanSetupScreenProps> = ({
         </div>
       </div>
 
-      {/* Guidelines Section */}
-      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6">
-        <h4 className="text-lg font-semibold text-amber-800 mb-4 flex items-center">
-          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          Hướng dẫn sử dụng lộ trình ôn tập
-        </h4>
-        <div className="grid md:grid-cols-2 gap-4 text-sm text-amber-700">
-          <div>
-            <h5 className="font-semibold mb-2">🎯 Cách hoạt động:</h5>
-            <ul className="space-y-1 list-disc list-inside">
-              <li>Đánh giá mỗi câu: Dễ, Trung bình, hoặc Khó</li>
-              <li>Câu "khó" sẽ xuất hiện lại sau 5-10 câu mới</li>
-            </ul>
-          </div>
-          <div>
-            <h5 className="font-semibold mb-2">📱 Lời khuyên:</h5>
-            <ul className="space-y-1 list-disc list-inside">
-              <li>Chọn thời gian phù hợp với lịch trình của bạn</li>
-              <li>Ôn đều đặn mỗi ngày để hiệu quả tốt nhất</li>
-              <li>Đánh giá thành thật độ khó của từng câu</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-
       {/* Setup Form */}
       <form onSubmit={handleSubmit} className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 space-y-6">
         <div className="grid md:grid-cols-2 gap-6">

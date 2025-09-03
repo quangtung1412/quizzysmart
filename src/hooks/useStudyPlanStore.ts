@@ -167,6 +167,27 @@ export const useStudyPlanStore = (userEmail: string | null) => {
     setStudyPlans(prev => prev.filter(plan => plan.id !== planId));
   }, []);
 
+  // Refresh study plans from API
+  const refreshStudyPlans = useCallback(async () => {
+    if (!userEmail) return;
+
+    setLoading(true);
+    try {
+      const plans = await api.getStudyPlans();
+      const transformedPlans = plans.map((plan: any) => ({
+        ...plan,
+        completedQuestions: typeof plan.completedQuestions === 'string'
+          ? JSON.parse(plan.completedQuestions || '[]')
+          : plan.completedQuestions || []
+      }));
+      setStudyPlans(transformedPlans);
+    } catch (error) {
+      console.error('Error refreshing study plans:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [userEmail]);
+
   // Get study plan by knowledge base ID
   const getStudyPlanByKnowledgeBaseId = useCallback((knowledgeBaseId: string) => {
     return studyPlans.find(plan => plan.knowledgeBaseId === knowledgeBaseId);
@@ -181,6 +202,7 @@ export const useStudyPlanStore = (userEmail: string | null) => {
     getTodayQuestions,
     getAllHardQuestions,
     deleteStudyPlan,
+    refreshStudyPlans,
     getStudyPlanByKnowledgeBaseId
   };
 };

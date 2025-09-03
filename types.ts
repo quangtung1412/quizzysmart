@@ -108,3 +108,12 @@ export interface StudyPlan {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface ProgressStats {
+  total: number;
+  reviewed: number;
+  easy: number;
+  medium: number;
+  hard: number;
+  unrated: number;
+}

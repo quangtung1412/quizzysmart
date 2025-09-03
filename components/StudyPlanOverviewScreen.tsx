@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { StudyPlan, StudyPhase, DifficultyLevel } from '../types';
 import { api } from '../src/api';
+import ProgressBars from './ProgressBars';
+import { calculateStudyProgress } from '../src/utils/progress';
 
 interface StudyPlanOverviewScreenProps {
   studyPlan: StudyPlan;
@@ -31,15 +33,10 @@ const StudyPlanOverviewScreen: React.FC<StudyPlanOverviewScreenProps> = ({
     minutesPerDay: studyPlan.minutesPerDay
   });
 
-  const totalQuestions = studyPlan.questionProgress.length;
-  const completedQuestions = studyPlan.completedQuestions.length;
-  const easyQuestions = studyPlan.questionProgress.filter(q => q.difficultyLevel === DifficultyLevel.Easy).length;
-  const mediumQuestions = studyPlan.questionProgress.filter(q => q.difficultyLevel === DifficultyLevel.Medium).length;
-  const hardQuestions = studyPlan.questionProgress.filter(q => q.difficultyLevel === DifficultyLevel.Hard).length;
-  const unratedQuestions = totalQuestions - easyQuestions - mediumQuestions - hardQuestions;
+  // Use the centralized calculation function
+  const progressStats = calculateStudyProgress(studyPlan.questionProgress);
 
-  const overallProgress = (completedQuestions / totalQuestions) * 100;
-  const isPhase2Ready = studyPlan.currentPhase === StudyPhase.Review || completedQuestions === totalQuestions;
+  const isPhase2Ready = studyPlan.currentPhase === StudyPhase.Review || progressStats.easy === progressStats.total;
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('vi-VN');
@@ -159,7 +156,7 @@ const StudyPlanOverviewScreen: React.FC<StudyPlanOverviewScreenProps> = ({
               <p className="text-blue-600">
                 {isPhase2Ready
                   ? 'Tất cả câu hỏi đã được đánh giá "Dễ". Sẵn sàng làm bài thi thử!'
-                  : `Học ${totalQuestions} câu hỏi trong ${studyPlan.totalDays} ngày`
+                  : `Học ${progressStats.total} câu hỏi trong ${studyPlan.totalDays} ngày`
                 }
               </p>
             </div>
@@ -188,45 +185,35 @@ const StudyPlanOverviewScreen: React.FC<StudyPlanOverviewScreenProps> = ({
           <div className="space-y-2">
             <h5 className="font-semibold">📚 Hệ thống thông minh:</h5>
             <ul className="list-disc list-inside space-y-1">
-              <li>Câu cũ xuất hiện sau 5-10 câu mới</li>
-              <li>Đánh dấu "đã học" cho câu cũ</li>
+              <li>Áp dụng phương pháp lặp lại ngắt quãng: Các câu hỏi "Khó" sẽ lặp lại sau 1 khoảng thời gian</li>
             </ul>
           </div>
           <div className="space-y-2">
             <h5 className="font-semibold">⚡ Học hiệu quả:</h5>
             <ul className="list-disc list-inside space-y-1">
-              <li>Đánh giá thành thật độ khó</li>
-              <li>Ôn lại thường xuyên</li>
+              <li>Thành thật đánh giá độ khó từng câu hỏi</li>
             </ul>
           </div>
           <div className="space-y-2">
             <h5 className="font-semibold">🎯 Tiến bộ:</h5>
             <ul className="list-disc list-inside space-y-1">
-              <li>Có thể học vượt mỗi ngày</li>
-              <li>Theo dõi tiến độ real-time</li>
+              <li>Hãy nâng cao trình độ của bạn bằng cách đánh giá toàn bộ câu hỏi là "Dễ" nhé</li>
             </ul>
           </div>
         </div>
       </div>
 
-      {/* Progress Overview */}
+      {/* Progress Overview + Study Schedule Info */}
       <div className="grid md:grid-cols-2 gap-6">
         {/* Overall Progress */}
         <div className="bg-white p-6 rounded-2xl shadow-lg border border-slate-200">
-          <h4 className="text-lg font-semibold text-slate-700 mb-4">Tiến độ tổng thể</h4>
+          <h4 className="text-lg font-semibold text-slate-700 mb-4">Tiến độ học tập</h4>
 
-          <div className="mb-4">
-            <div className="flex justify-between text-sm text-slate-600 mb-2">
-              <span>Hoàn thành</span>
-              <span>{completedQuestions}/{totalQuestions} câu ({Math.round(overallProgress)}%)</span>
-            </div>
-            <div className="w-full bg-slate-200 rounded-full h-3">
-              <div
-                className="bg-gradient-to-r from-blue-500 to-green-500 h-3 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(overallProgress, 100)}%` }}
-              />
-            </div>
-          </div>
+          {/* Progress Bars */}
+          <ProgressBars
+            className="mb-4"
+            data={progressStats}
+          />
 
           <div className="grid grid-cols-2 gap-4">
             <div className="text-center">
@@ -240,66 +227,27 @@ const StudyPlanOverviewScreen: React.FC<StudyPlanOverviewScreenProps> = ({
           </div>
         </div>
 
-        {/* Question Statistics */}
+        {/* Study Schedule Info */}
         <div className="bg-white p-6 rounded-2xl shadow-lg border border-slate-200">
-          <h4 className="text-lg font-semibold text-slate-700 mb-4">Thống kê câu hỏi</h4>
+          <h4 className="text-lg font-semibold text-slate-700 mb-4">Thông tin lộ trình</h4>
 
-          <div className="space-y-3">
-            <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
-              <div className="flex items-center space-x-3">
-                <div className="w-4 h-4 bg-green-500 rounded-full"></div>
-                <span className="font-medium text-green-800">Dễ</span>
-              </div>
-              <span className="font-bold text-green-600">{easyQuestions}</span>
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="text-center p-4 bg-blue-50 rounded-xl">
+              <div className="text-xl font-bold text-blue-600">{studyPlan.questionsPerDay}</div>
+              <div className="text-sm text-slate-600">Câu/ngày</div>
             </div>
-
-            <div className="flex items-center justify-between p-3 bg-yellow-50 rounded-lg">
-              <div className="flex items-center space-x-3">
-                <div className="w-4 h-4 bg-yellow-500 rounded-full"></div>
-                <span className="font-medium text-yellow-800">Trung bình</span>
-              </div>
-              <span className="font-bold text-yellow-600">{mediumQuestions}</span>
+            <div className="text-center p-4 bg-purple-50 rounded-xl">
+              <div className="text-xl font-bold text-purple-600">{studyPlan.minutesPerDay}</div>
+              <div className="text-sm text-slate-600">Phút/ngày</div>
             </div>
-
-            <div className="flex items-center justify-between p-3 bg-red-50 rounded-lg">
-              <div className="flex items-center space-x-3">
-                <div className="w-4 h-4 bg-red-500 rounded-full"></div>
-                <span className="font-medium text-red-800">Khó</span>
-              </div>
-              <span className="font-bold text-red-600">{hardQuestions}</span>
+            <div className="text-center p-4 bg-green-50 rounded-xl">
+              <div className="text-xl font-bold text-green-600">{formatDate(studyPlan.startDate)}</div>
+              <div className="text-sm text-slate-600">Ngày bắt đầu</div>
             </div>
-
-            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-              <div className="flex items-center space-x-3">
-                <div className="w-4 h-4 bg-slate-400 rounded-full"></div>
-                <span className="font-medium text-slate-700">Chưa học</span>
-              </div>
-              <span className="font-bold text-slate-600">{unratedQuestions}</span>
+            <div className="text-center p-4 bg-red-50 rounded-xl">
+              <div className="text-xl font-bold text-red-600">{formatDate(studyPlan.endDate)}</div>
+              <div className="text-sm text-slate-600">Ngày kết thúc</div>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Study Schedule Info */}
-      <div className="bg-white p-6 rounded-2xl shadow-lg border border-slate-200">
-        <h4 className="text-lg font-semibold text-slate-700 mb-4">Thông tin lộ trình</h4>
-
-        <div className="grid md:grid-cols-4 gap-4">
-          <div className="text-center p-4 bg-blue-50 rounded-xl">
-            <div className="text-2xl font-bold text-blue-600">{studyPlan.questionsPerDay}</div>
-            <div className="text-sm text-slate-600">Câu/ngày</div>
-          </div>
-          <div className="text-center p-4 bg-purple-50 rounded-xl">
-            <div className="text-2xl font-bold text-purple-600">{studyPlan.minutesPerDay}</div>
-            <div className="text-sm text-slate-600">Phút/ngày</div>
-          </div>
-          <div className="text-center p-4 bg-green-50 rounded-xl">
-            <div className="text-2xl font-bold text-green-600">{formatDate(studyPlan.startDate)}</div>
-            <div className="text-sm text-slate-600">Ngày bắt đầu</div>
-          </div>
-          <div className="text-center p-4 bg-red-50 rounded-xl">
-            <div className="text-2xl font-bold text-red-600">{formatDate(studyPlan.endDate)}</div>
-            <div className="text-sm text-slate-600">Ngày kết thúc</div>
           </div>
         </div>
       </div>
@@ -307,12 +255,13 @@ const StudyPlanOverviewScreen: React.FC<StudyPlanOverviewScreenProps> = ({
       {/* Action Buttons */}
       {!isPhase2Ready && (
         <div className="text-center space-y-4">
-          <button
+          {/* Temporarily hidden: Daily Study button */}
+          {/* <button
             onClick={onStartDailyStudy}
             className="block w-full px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold text-lg rounded-2xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-1"
           >
             📚 Bắt đầu học hôm nay
-          </button>
+          </button> */}
           <button
             onClick={onStartSmartReview}
             className="block w-full px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold text-lg rounded-2xl hover:from-purple-700 hover:to-pink-700 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-1"

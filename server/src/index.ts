@@ -146,17 +146,30 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
 });
 
 // Knowledge Bases CRUD (simplified aggregate endpoints)
-app.get('/api/bases', async (req: Request, res: Response) => {
-  const email = String(req.query.email || '');
-  const user = await prisma.user.findUnique({ where: { email }, include: { bases: { include: { questions: true } } } });
-  if (!user) return res.json([]);
-  const bases = user.bases.map(b => ({
-    id: b.id,
-    name: b.name,
-    createdAt: b.createdAt,
-    questions: b.questions.map(q => ({ id: q.id, question: q.text, options: JSON.parse(q.options), correctAnswerIndex: q.correctAnswerIdx, source: q.source || '', category: q.category || '' }))
-  }));
-  res.json(bases);
+app.get('/api/bases', async (_req: Request, res: Response) => {
+  try {
+    const bases = await prisma.knowledgeBase.findMany({
+      include: { questions: true },
+      orderBy: { createdAt: 'desc' }
+    });
+    const result = bases.map(b => ({
+      id: b.id,
+      name: b.name,
+      createdAt: b.createdAt,
+      questions: b.questions.map(q => ({
+        id: q.id,
+        question: q.text,
+        options: JSON.parse(q.options),
+        correctAnswerIndex: q.correctAnswerIdx,
+        source: q.source || '',
+        category: q.category || ''
+      }))
+    }));
+    res.json(result);
+  } catch (e) {
+    console.error('Failed to load knowledge bases', e);
+    res.status(500).json({ error: 'Failed to load knowledge bases' });
+  }
 });
 
 app.post('/api/bases', async (req: Request, res: Response) => {

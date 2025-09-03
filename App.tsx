@@ -30,9 +30,21 @@ const App: React.FC = () => {
   const [user, setUser] = useState<AppUser | null>(null);
   const [currentScreen, setCurrentScreen] = useState<Screen>('login');
 
+  // Prevent browser/Android back navigation (soft back) while in app
+  useEffect(() => {
+    const blockPop = (e: PopStateEvent) => {
+      // Immediately push state again to neutralize back action
+      history.pushState(null, document.title, window.location.href);
+    };
+    // Seed an extra history entry so first back is trapped
+    history.pushState(null, document.title, window.location.href);
+    window.addEventListener('popstate', blockPop);
+    return () => window.removeEventListener('popstate', blockPop);
+  }, []);
+
   const { bases: knowledgeBases, addBase, removeBase, setBases: setKnowledgeBases } = useKnowledgeBaseStore(user?.email || null);
   const { attempts: quizAttempts, createAttempt, updateAttempt, setAttempts: setQuizAttempts } = useAttemptStore(user?.email || null);
-  const { studyPlans, createStudyPlan, updateStudyPlan, updateQuestionProgress, getTodayQuestions, deleteStudyPlan, getStudyPlanByKnowledgeBaseId } = useStudyPlanStore(user?.email || null);
+  const { studyPlans, createStudyPlan, updateStudyPlan, updateQuestionProgress, getTodayQuestions, deleteStudyPlan, refreshStudyPlans, getStudyPlanByKnowledgeBaseId } = useStudyPlanStore(user?.email || null);
 
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<KnowledgeBase | null>(null);
   const [currentStudyPlan, setCurrentStudyPlan] = useState<StudyPlan | null>(null);
@@ -417,9 +429,21 @@ const App: React.FC = () => {
     setCurrentScreen('smartReview');
   }, [currentStudyPlan]);
 
-  const handleBackToOverview = useCallback(() => {
+  const handleBackToOverview = useCallback(async () => {
+    // Refresh study plans from API when returning from SmartReview to ensure latest progress
+    await refreshStudyPlans();
     setCurrentScreen('studyPlanOverview');
-  }, []);
+  }, [refreshStudyPlans]);
+
+  // Update current study plan when studyPlans array changes
+  useEffect(() => {
+    if (currentStudyPlan && studyPlans.length > 0) {
+      const refreshedPlan = studyPlans.find(plan => plan.id === currentStudyPlan.id);
+      if (refreshedPlan && JSON.stringify(refreshedPlan) !== JSON.stringify(currentStudyPlan)) {
+        setCurrentStudyPlan(refreshedPlan);
+      }
+    }
+  }, [studyPlans, currentStudyPlan]);
 
   const handleQuestionComplete = useCallback((questionId: string, difficultyLevel: DifficultyLevel) => {
     if (!currentStudyPlan) return;
