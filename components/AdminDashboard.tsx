@@ -59,12 +59,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         setActiveTab(tab);
         setSidebarOpen(false); // Close mobile sidebar when tab is selected
       }}
-      className={`w-full text-left px-4 py-3 text-sm font-medium rounded-lg flex items-center space-x-3 transition-colors ${
-        activeTab === tab ? 'bg-sky-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
-      }`}
+      className={`w-full text-left px-4 py-3 text-sm font-medium rounded-lg flex items-center space-x-3 transition-colors min-h-[44px] ${activeTab === tab ? 'bg-sky-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+        }`}
     >
-      <span className="text-lg">{icon}</span>
-      <span>{label}</span>
+      <span className="text-lg flex-shrink-0">{icon}</span>
+      <span className="truncate">{label}</span>
     </button>
   );
 
@@ -84,11 +83,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         lg:translate-x-0 lg:static lg:shadow-none
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
-        <div className="flex items-center justify-between p-6 border-b border-slate-200">
-          <h2 className="text-xl font-bold text-slate-800">Admin Panel</h2>
+        <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-200">
+          <h2 className="text-lg sm:text-xl font-bold text-slate-800">Admin Panel</h2>
           <button
             onClick={() => setSidebarOpen(false)}
-            className="lg:hidden p-2 text-slate-500 hover:text-slate-700"
+            className="lg:hidden p-2 text-slate-500 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -105,10 +104,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
           <div className="border-t border-slate-200 pt-4 mt-4">
             <button
               onClick={onBack}
-              className="w-full text-left px-4 py-3 text-sm font-medium rounded-lg flex items-center space-x-3 text-slate-600 hover:bg-slate-100 transition-colors"
+              className="w-full text-left px-4 py-3 text-sm font-medium rounded-lg flex items-center space-x-3 text-slate-600 hover:bg-slate-100 transition-colors min-h-[44px]"
             >
-              <span className="text-lg">🏠</span>
-              <span>Về trang chính</span>
+              <span className="text-lg flex-shrink-0">🏠</span>
+              <span className="truncate">Về trang chính</span>
             </button>
           </div>
         </nav>
@@ -121,19 +120,27 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
           <div className="flex items-center justify-between">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="p-2 text-slate-600 hover:text-slate-900"
+              className="p-2 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            <h1 className="text-lg font-semibold text-slate-800">Admin Dashboard</h1>
-            <div className="w-10"></div> {/* Spacer for centering */}
+            <h1 className="text-lg font-semibold text-slate-800 truncate px-2">Admin Dashboard</h1>
+            <button
+              onClick={onBack}
+              className="p-2 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+              title="Về trang chính"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m0 0V11a1 1 0 011-1h2a1 1 0 011 1v10m0 0h3a1 1 0 001-1V10M9 21h6" />
+              </svg>
+            </button>
           </div>
         </header>
 
         {/* Main content area */}
-        <main className="flex-1 p-6 overflow-auto">
+        <main className="flex-1 p-4 sm:p-6 overflow-auto">
           {renderContent()}
         </main>
       </div>

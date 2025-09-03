@@ -23,7 +23,7 @@ export const api = {
   me: () => request<{ user: any }>('/api/auth/me'),
   logout: () => request<{ ok: boolean }>('/api/auth/logout'),
   getBases: (email: string) => request<any[]>(`/api/bases?email=${encodeURIComponent(email)}`),
-  createBase: (email: string, base: any) => request<any>( '/api/bases', { method: 'POST', body: JSON.stringify({ email, base }) }),
+  createBase: (email: string, base: any) => request<any>('/api/bases', { method: 'POST', body: JSON.stringify({ email, base }) }),
   deleteBase: (id: string) => request<{ ok: boolean }>(`/api/bases/${id}`, { method: 'DELETE' }),
   getUserTests: (email: string) => request<any[]>(`/api/tests?email=${encodeURIComponent(email)}`),
   getTestById: (testId: string, email: string, viewOnly?: boolean) => {
@@ -41,15 +41,15 @@ export const api = {
   }>(`/api/tests/${testId}/statistics?email=${encodeURIComponent(email)}`),
   getTestAttempts: (testId: string, email: string) => request<any[]>(`/api/tests/${testId}/attempts?email=${encodeURIComponent(email)}`),
   getAttempts: (email: string) => request<any[]>(`/api/attempts?email=${encodeURIComponent(email)}`),
-  createAttempt: (email: string, attempt: any) => request<{ id: string }>( '/api/attempts', { method: 'POST', body: JSON.stringify({ email, attempt }) }),
+  createAttempt: (email: string, attempt: any) => request<{ id: string }>('/api/attempts', { method: 'POST', body: JSON.stringify({ email, attempt }) }),
   updateAttempt: (id: string, data: any) => request<{ id: string }>(`/api/attempts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   getQuizResults: (attemptId: string, email: string) => request<{ attemptId: string; score: number; completedAt: string; results: any[] }>(`/api/attempts/${attemptId}/results?email=${encodeURIComponent(email)}`),
   // admin
   adminListUsers: () => request<any[]>(`/api/admin/users`),
   adminListTests: () => request<any[]>(`/api/admin/tests`),
-  adminCreateTest: (payload: { 
-    name: string; 
-    description?: string; 
+  adminCreateTest: (payload: {
+    name: string;
+    description?: string;
     questionCount: number;
     timeLimit: number;
     maxAttempts?: number;
@@ -58,9 +58,9 @@ export const api = {
     knowledgeSources: Array<{ knowledgeBaseId: string; percentage: number }>;
     assignedUsers: string[];
   }) => request<{ id: string }>(`/api/admin/tests`, { method: 'POST', body: JSON.stringify(payload) }),
-  adminUpdateTest: (testId: string, payload: { 
-    name: string; 
-    description?: string; 
+  adminUpdateTest: (testId: string, payload: {
+    name: string;
+    description?: string;
     questionCount: number;
     timeLimit: number;
     maxAttempts?: number;
@@ -75,7 +75,7 @@ export const api = {
   adminListKnowledgeBases: () => request<any[]>(`/api/admin/knowledge-bases`),
   adminDeleteKnowledgeBase: (baseId: string) => request<{ ok: boolean }>(`/api/admin/knowledge-bases/${baseId}`, { method: 'DELETE' }),
   adminCreateKnowledgeBase: (payload: { name: string; questions: any[] }) => request<{ id: string }>(`/api/admin/knowledge-bases`, { method: 'POST', body: JSON.stringify(payload) }),
-  
+
   // Study Plans
   getStudyPlans: () => request<any[]>(`/api/study-plans`),
   createStudyPlan: (payload: {
@@ -97,5 +97,14 @@ export const api = {
     const params = new URLSearchParams();
     if (maxQuestions) params.append('maxQuestions', maxQuestions.toString());
     return request<{ questions: any[]; studyPlan: any }>(`/api/study-plans/${studyPlanId}/today-questions?${params.toString()}`);
+  },
+  getAllHardQuestions: (studyPlanId: string) => {
+    return request<{ questions: any[]; studyPlan: any }>(`/api/study-plans/${studyPlanId}/all-hard-questions`);
+  },
+  getSmartReviewQuestions: (studyPlanId: string) => {
+    return request<{ questions: { new: any[]; hard: any[]; medium: any[]; easy: any[] }; stats: any; studyPlan: any }>(`/api/study-plans/${studyPlanId}/smart-review`);
+  },
+  resetStudyPlanProgress: (studyPlanId: string) => {
+    return request<{ success: boolean }>(`/api/study-plans/${studyPlanId}/reset-progress`, { method: 'POST' });
   }
 };

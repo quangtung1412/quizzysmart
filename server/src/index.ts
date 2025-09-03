@@ -27,11 +27,11 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || [
 ].join(',')).split(',').map(o => o.trim()).filter(Boolean);
 
 app.use(cors({
-  origin: function(origin, callback) {
+  origin: function (origin, callback) {
     if (!origin) return callback(null, true); // direct server-to-server / curl
     if (allowedOrigins.includes(origin)) return callback(null, true);
     // allow subdomain patterns for the primary domain
-    if (/\.giadinhnhimsoc\.site$/.test(origin.replace(/^https?:\/\//,''))) return callback(null, true);
+    if (/\.giadinhnhimsoc\.site$/.test(origin.replace(/^https?:\/\//, ''))) return callback(null, true);
     return callback(new Error('CORS not allowed: ' + origin));
   },
   credentials: true
@@ -74,7 +74,7 @@ if (!clientID || !clientSecret) {
 }
 console.log('[Config] APP_BASE_URL =', appBaseUrl);
 console.log('[Config] BACKEND_BASE_URL =', backendBaseUrl);
-console.log('[OAuth] Client ID prefix =', clientID ? clientID.slice(0,8)+'...' : 'MISSING');
+console.log('[OAuth] Client ID prefix =', clientID ? clientID.slice(0, 8) + '...' : 'MISSING');
 console.log('[OAuth] Callback URL =', callbackURL);
 
 passport.use(new GoogleStrategy(
@@ -98,6 +98,10 @@ passport.use(new GoogleStrategy(
   }
 ));
 
+app.get('/api/healthcheck', (req, res) => {
+  return res.json({ status: 'ok' });
+});
+
 
 // OAuth routes (canonical path /api/auth/...)
 app.get('/api/auth/google', (req, res, next) => {
@@ -111,10 +115,19 @@ app.get('/api/auth/google', (req, res, next) => {
     }
   }
   console.log('[OAuth] Start flow callback=', dynamicCallback);
-  return passport.authenticate('google', { scope: ['profile','email'], callbackURL: dynamicCallback } as any)(req, res, next);
+  return passport.authenticate('google', { scope: ['profile', 'email'], callbackURL: dynamicCallback } as any)(req, res, next);
 });
 app.get('/api/auth/google/callback', passport.authenticate('google', { failureRedirect: '/api/auth/fail' }), (req: Request, res: Response) => {
-  res.redirect(appBaseUrl + '/');
+  // If APP_BASE_URL provided, always trust it. Otherwise derive from forwarded headers (production behind Nginx)
+  let finalBase = appBaseUrl;
+  if (!process.env.APP_BASE_URL) {
+    const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
+    if (host) {
+      const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'http');
+      finalBase = `${proto}://${host.replace(/\/$/, '')}`;
+    }
+  }
+  res.redirect(finalBase + '/');
 });
 
 app.get('/api/auth/logout', (req: Request, res: Response) => {
@@ -188,7 +201,7 @@ app.get('/api/tests', async (req: Request, res: Response) => {
   const email = String(req.query.email || '');
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) return res.json([]);
-  
+
   // Get tests assigned to this user
   const assignments = await prisma.testAssignment.findMany({
     where: { userId: user.id },
@@ -202,13 +215,13 @@ app.get('/api/tests', async (req: Request, res: Response) => {
       }
     }
   });
-  
+
   // Get completed attempts for each test
   const testIds = assignments.map(a => a.test.id);
   const attemptCounts = await Promise.all(
     testIds.map(async (testId) => {
       const count = await prisma.attempt.count({
-        where: { 
+        where: {
           testId: testId,
           userId: user.id,
           completedAt: { not: null }
@@ -217,13 +230,13 @@ app.get('/api/tests', async (req: Request, res: Response) => {
       return { testId, attempts: count };
     })
   );
-  
+
   const tests = assignments.map(assignment => {
     const test = assignment.test;
     const attemptData = attemptCounts.find(ac => ac.testId === test.id);
     const usedAttempts = attemptData?.attempts || 0;
     const remainingAttempts = test.maxAttempts === 0 ? null : Math.max(0, test.maxAttempts - usedAttempts);
-    
+
     return {
       id: test.id,
       name: test.name,
@@ -245,7 +258,7 @@ app.get('/api/tests', async (req: Request, res: Response) => {
       }))
     };
   });
-  
+
   res.json(tests);
 });
 
@@ -254,17 +267,17 @@ app.get('/api/tests/:id', async (req: Request, res: Response) => {
   const testId = req.params.id;
   const email = String(req.query.email || '');
   const viewOnly = req.query.viewOnly === 'true'; // Check if this is for viewing only
-  
+
   console.log(`[DEBUG] GET /api/tests/${testId} for email: ${email}, viewOnly: ${viewOnly}`);
-  
+
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
     console.log(`[DEBUG] User not found: ${email}`);
     return res.status(404).json({ error: 'User not found' });
   }
-  
+
   console.log(`[DEBUG] User found: ${user.id}`);
-  
+
   // Check if user is assigned to this test
   const assignment = await prisma.testAssignment.findFirst({
     where: { testId, userId: user.id },
@@ -278,37 +291,37 @@ app.get('/api/tests/:id', async (req: Request, res: Response) => {
       }
     }
   });
-  
+
   if (!assignment) {
     console.log(`[DEBUG] No assignment found for user ${user.id} and test ${testId}`);
     return res.status(403).json({ error: 'You are not assigned to this test' });
   }
-  
+
   console.log(`[DEBUG] Assignment found: ${assignment.id}`);
-  
+
   const test = assignment.test;
-  
+
   // Check how many attempts user has made for this test
   const existingAttempts = await prisma.attempt.count({
-    where: { 
+    where: {
       testId: testId,
       userId: user.id,
       completedAt: { not: null } // Only count completed attempts
     }
   });
-  
+
   // Only check attempt limits if not viewing only
   if (!viewOnly && test.maxAttempts > 0 && existingAttempts >= test.maxAttempts) {
     console.log(`[DEBUG] User has reached max attempts: ${existingAttempts}/${test.maxAttempts}`);
-    return res.status(403).json({ 
+    return res.status(403).json({
       error: `Bạn đã hết lượt thi. Đã thi: ${existingAttempts}/${test.maxAttempts} lượt`,
       attempts: existingAttempts,
       maxAttempts: test.maxAttempts
     });
   }
-  
+
   console.log(`[DEBUG] User can take test. Attempts: ${existingAttempts}/${test.maxAttempts}`);
-  
+
   // Check if test is available (time constraints) - only for taking tests, not viewing
   if (!viewOnly) {
     const now = new Date();
@@ -319,21 +332,21 @@ app.get('/api/tests/:id', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Test has ended' });
     }
   }
-  
+
   // Get questions for this test based on knowledgeSources
   const knowledgeSources = JSON.parse(test.knowledgeSources);
   const questionOrder = JSON.parse(test.questionOrder);
-  
+
   // Get all questions from the question IDs
   const questions = await prisma.question.findMany({
     where: { id: { in: questionOrder } }
   });
-  
+
   // Sort questions according to the predetermined order
-  const sortedQuestions = questionOrder.map((id: string) => 
+  const sortedQuestions = questionOrder.map((id: string) =>
     questions.find(q => q.id === id)
   ).filter(Boolean);
-  
+
   const testData = {
     id: test.id,
     name: test.name,
@@ -353,7 +366,7 @@ app.get('/api/tests/:id', async (req: Request, res: Response) => {
       // Note: We don't include correctAnswerIdx for security
     }))
   };
-  
+
   res.json(testData);
 });
 
@@ -361,24 +374,24 @@ app.get('/api/tests/:id', async (req: Request, res: Response) => {
 app.get('/api/tests/:id/statistics', async (req: Request, res: Response) => {
   const testId = req.params.id;
   const email = String(req.query.email || '');
-  
+
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
     return res.status(404).json({ error: 'User not found' });
   }
-  
+
   // Check if user is assigned to this test
   const assignment = await prisma.testAssignment.findFirst({
     where: { testId, userId: user.id }
   });
-  
+
   if (!assignment) {
     return res.status(403).json({ error: 'You are not assigned to this test' });
   }
-  
+
   // Get all completed attempts for this user and test
   const attempts = await prisma.attempt.findMany({
-    where: { 
+    where: {
       testId: testId,
       userId: user.id,
       completedAt: { not: null }
@@ -388,7 +401,7 @@ app.get('/api/tests/:id/statistics', async (req: Request, res: Response) => {
       answers: true
     }
   });
-  
+
   if (attempts.length === 0) {
     return res.json({
       attempts: [],
@@ -397,12 +410,12 @@ app.get('/api/tests/:id/statistics', async (req: Request, res: Response) => {
       averageScore: null
     });
   }
-  
+
   // Calculate statistics
   const scores = attempts.map(a => a.score || 0);
   const bestScore = Math.max(...scores);
   const averageScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-  
+
   // Calculate fastest completion time
   let fastestTime: number | null = null;
   for (const attempt of attempts) {
@@ -410,26 +423,26 @@ app.get('/api/tests/:id/statistics', async (req: Request, res: Response) => {
       const startTime = new Date(attempt.startedAt).getTime();
       const endTime = new Date(attempt.completedAt).getTime();
       const duration = (endTime - startTime) / 1000; // in seconds
-      
+
       if (fastestTime === null || duration < fastestTime) {
         fastestTime = duration;
       }
     }
   }
-  
+
   // Format attempts data
   const formattedAttempts = attempts.map(attempt => ({
     id: attempt.id,
     score: attempt.score,
     completedAt: attempt.completedAt,
     startedAt: attempt.startedAt,
-    duration: attempt.startedAt && attempt.completedAt 
+    duration: attempt.startedAt && attempt.completedAt
       ? (new Date(attempt.completedAt).getTime() - new Date(attempt.startedAt).getTime()) / 1000
       : null,
     totalQuestions: attempt.answers.length,
     correctAnswers: attempt.answers.filter(a => a.isCorrect).length
   }));
-  
+
   res.json({
     attempts: formattedAttempts,
     bestScore,
@@ -442,24 +455,24 @@ app.get('/api/tests/:id/statistics', async (req: Request, res: Response) => {
 app.get('/api/tests/:id/attempts', async (req: Request, res: Response) => {
   const testId = req.params.id;
   const email = String(req.query.email || '');
-  
+
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
     return res.status(404).json({ error: 'User not found' });
   }
-  
+
   // Check if user is assigned to this test
   const assignment = await prisma.testAssignment.findFirst({
     where: { testId, userId: user.id }
   });
-  
+
   if (!assignment) {
     return res.status(403).json({ error: 'You are not assigned to this test' });
   }
-  
+
   // Get all attempts for this user and test
   const attempts = await prisma.attempt.findMany({
-    where: { 
+    where: {
       testId: testId,
       userId: user.id
     },
@@ -468,20 +481,20 @@ app.get('/api/tests/:id/attempts', async (req: Request, res: Response) => {
       answers: true
     }
   });
-  
+
   const formattedAttempts = attempts.map(attempt => ({
     id: attempt.id,
     score: attempt.score,
     completedAt: attempt.completedAt,
     startedAt: attempt.startedAt,
-    duration: attempt.startedAt && attempt.completedAt 
+    duration: attempt.startedAt && attempt.completedAt
       ? (new Date(attempt.completedAt).getTime() - new Date(attempt.startedAt).getTime()) / 1000
       : null,
     totalQuestions: attempt.answers.length,
     correctAnswers: attempt.answers.filter(a => a.isCorrect).length,
     status: attempt.completedAt ? 'completed' : 'in-progress'
   }));
-  
+
   res.json(formattedAttempts);
 });
 
@@ -508,7 +521,7 @@ app.post('/api/attempts', async (req: Request, res: Response) => {
   if (!email || !attempt) return res.status(400).json({ error: 'Invalid' });
   let user = await prisma.user.findUnique({ where: { email } });
   if (!user) return res.status(400).json({ error: 'User not found' });
-  
+
   let kb = null;
   // Only try to find KB if knowledgeBaseId is provided
   if (attempt.knowledgeBaseId) {
@@ -520,49 +533,51 @@ app.post('/api/attempts', async (req: Request, res: Response) => {
     if (!test) return res.status(400).json({ error: 'Test not found' });
     const assigned = await (prisma as any).testAssignment.findUnique({ where: { testId_userId: { testId: attempt.testId, userId: user.id } } });
     if (!assigned) return res.status(403).json({ error: 'Not assigned' });
-    
+
     // For test attempts, we don't need knowledgeBase - questions come from the test
     // Get questions from test's questionOrder
     const questionOrder = JSON.parse(test.questionOrder);
     const questions = await prisma.question.findMany({
       where: { id: { in: questionOrder } }
     });
-    
+
     // Create a virtual KB object for validation
     kb = { questions };
   }
   if (!kb) return res.status(400).json({ error: 'Knowledge base not found' });
   const questionIdSet = new Set(kb.questions.map(q => q.id));
   for (const ua of attempt.userAnswers) { if (!questionIdSet.has(ua.questionId)) return res.status(400).json({ error: `Question ${ua.questionId} not in base` }); }
-  const created = await prisma.attempt.create({ data: {
-    mode: attempt.mode,
-    settings: JSON.stringify(attempt.settings),
-    userId: user.id,
-    knowledgeBaseId: attempt.knowledgeBaseId, // This can be null for test attempts
-    testId: attempt.testId, // Store testId for test attempts
-    score: attempt.score,
-    completedAt: attempt.completedAt ? new Date(attempt.completedAt) : null,
-    answers: { create: attempt.userAnswers.map((ua: any) => ({ questionId: ua.questionId, selectedIndex: ua.selectedOptionIndex, isCorrect: ua.isCorrect })) }
-  }});
+  const created = await prisma.attempt.create({
+    data: {
+      mode: attempt.mode,
+      settings: JSON.stringify(attempt.settings),
+      userId: user.id,
+      knowledgeBaseId: attempt.knowledgeBaseId, // This can be null for test attempts
+      testId: attempt.testId, // Store testId for test attempts
+      score: attempt.score,
+      completedAt: attempt.completedAt ? new Date(attempt.completedAt) : null,
+      answers: { create: attempt.userAnswers.map((ua: any) => ({ questionId: ua.questionId, selectedIndex: ua.selectedOptionIndex, isCorrect: ua.isCorrect })) }
+    }
+  });
   res.json({ id: created.id });
 });
 
 app.patch('/api/attempts/:id', async (req: Request, res: Response) => {
   const id = req.params.id;
   const { userAnswers, score, completedAt } = req.body;
-  
+
   // Get the attempt to check if it's a test attempt
   const attempt = await prisma.attempt.findUnique({
     where: { id }
   });
-  
+
   if (!attempt) {
     return res.status(404).json({ error: 'Attempt not found' });
   }
-  
+
   let validatedUserAnswers = userAnswers;
   let validatedScore = score;
-  
+
   // For test attempts, validate answers server-side
   if (attempt.testId) {
     // Get the questions with correct answers
@@ -570,9 +585,9 @@ app.patch('/api/attempts/:id', async (req: Request, res: Response) => {
     const questions = await prisma.question.findMany({
       where: { id: { in: questionIds } }
     });
-    
+
     const questionMap = new Map(questions.map(q => [q.id, q.correctAnswerIdx]));
-    
+
     // Validate each answer
     validatedUserAnswers = userAnswers.map((ua: any) => {
       const correctAnswerIndex = questionMap.get(ua.questionId);
@@ -582,13 +597,13 @@ app.patch('/api/attempts/:id', async (req: Request, res: Response) => {
         isCorrect
       };
     });
-    
+
     // Recalculate score based on server validation
     const correctCount = validatedUserAnswers.filter((ua: any) => ua.isCorrect).length;
     const totalCount = validatedUserAnswers.length;
     validatedScore = totalCount > 0 ? parseFloat(((correctCount / totalCount) * 100).toFixed(2)) : 0;
   }
-  
+
   const updated = await prisma.attempt.update({
     where: { id },
     data: {
@@ -607,15 +622,15 @@ app.patch('/api/attempts/:id', async (req: Request, res: Response) => {
 app.get('/api/attempts/:id/results', async (req: Request, res: Response) => {
   const attemptId = req.params.id;
   const email = String(req.query.email || '');
-  
+
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
     return res.status(404).json({ error: 'User not found' });
   }
-  
+
   // Find the attempt and verify it belongs to the user
   const attempt = await prisma.attempt.findFirst({
-    where: { 
+    where: {
       id: attemptId,
       userId: user.id,
       completedAt: { not: null } // Only allow results for completed attempts
@@ -624,17 +639,17 @@ app.get('/api/attempts/:id/results', async (req: Request, res: Response) => {
       answers: true
     }
   });
-  
+
   if (!attempt) {
     return res.status(404).json({ error: 'Completed attempt not found' });
   }
-  
+
   // Get question details with correct answers
   const questionIds = attempt.answers.map(a => a.questionId);
   const questions = await prisma.question.findMany({
     where: { id: { in: questionIds } }
   });
-  
+
   // Create a map of question ID to question details
   const questionMap = new Map(questions.map(q => [q.id, {
     id: q.id,
@@ -644,7 +659,7 @@ app.get('/api/attempts/:id/results', async (req: Request, res: Response) => {
     source: q.source || '',
     category: q.category || ''
   }]));
-  
+
   // Combine question details with user answers, maintaining order
   const results = attempt.answers.map(answer => {
     const question = questionMap.get(answer.questionId);
@@ -657,7 +672,7 @@ app.get('/api/attempts/:id/results', async (req: Request, res: Response) => {
       }
     };
   }).filter(result => result.question); // Filter out any missing questions
-  
+
   res.json({
     attemptId: attempt.id,
     score: attempt.score,
@@ -713,9 +728,9 @@ app.get('/api/admin/users', async (req: Request, res: Response) => {
 app.get('/api/admin/knowledge-bases', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   const bases = await prisma.knowledgeBase.findMany({
-    include: { 
-      questions: true, 
-      user: { select: { email: true, name: true } } 
+    include: {
+      questions: true,
+      user: { select: { email: true, name: true } }
     },
     orderBy: { createdAt: 'desc' }
   });
@@ -743,7 +758,7 @@ app.post('/api/admin/knowledge-bases', async (req: Request, res: Response) => {
   if (!name || !Array.isArray(questions) || questions.length === 0) {
     return res.status(400).json({ error: 'Invalid payload' });
   }
-  
+
   // Find or create user for creator
   let user = await prisma.user.findUnique({ where: { email: creatorEmail || admin.email } });
   if (!user) {
@@ -772,14 +787,14 @@ app.post('/api/admin/knowledge-bases', async (req: Request, res: Response) => {
 app.delete('/api/admin/knowledge-bases/:id', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   const baseId = req.params.id;
-  
+
   try {
     // Delete all questions first (cascade should handle this but being explicit)
     await prisma.question.deleteMany({ where: { baseId } });
-    
+
     // Delete the knowledge base
     await prisma.knowledgeBase.delete({ where: { id: baseId } });
-    
+
     res.json({ ok: true });
   } catch (error) {
     console.error('Failed to delete knowledge base:', error);
@@ -789,9 +804,9 @@ app.delete('/api/admin/knowledge-bases/:id', async (req: Request, res: Response)
 
 app.post('/api/admin/tests', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
-  const { 
-    name, 
-    description, 
+  const {
+    name,
+    description,
     questionCount,
     timeLimit,
     maxAttempts,
@@ -800,11 +815,11 @@ app.post('/api/admin/tests', async (req: Request, res: Response) => {
     knowledgeSources, // Array of {knowledgeBaseId, percentage}
     assignedUsers = [] // Array of user IDs to assign the test to
   } = req.body;
-  
+
   if (!name || !questionCount || !timeLimit || !Array.isArray(knowledgeSources)) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
-  
+
   // Validate that percentages add up to 100
   const totalPercentage = knowledgeSources.reduce((sum: number, source: any) => sum + (source.percentage || 0), 0);
   if (Math.abs(totalPercentage - 100) > 0.01) {
@@ -814,39 +829,39 @@ app.post('/api/admin/tests', async (req: Request, res: Response) => {
   try {
     // Generate random questions based on knowledge sources
     const allQuestions: any[] = [];
-    
+
     for (const source of knowledgeSources) {
       const kb = await prisma.knowledgeBase.findUnique({
         where: { id: source.knowledgeBaseId },
         include: { questions: true }
       });
-      
+
       if (!kb) {
         return res.status(400).json({ error: `Knowledge base ${source.knowledgeBaseId} not found` });
       }
-      
+
       const questionsNeeded = Math.round((questionCount * source.percentage) / 100);
       const availableQuestions = kb.questions;
-      
+
       if (availableQuestions.length < questionsNeeded) {
-        return res.status(400).json({ 
-          error: `Knowledge base "${kb.name}" has only ${availableQuestions.length} questions but needs ${questionsNeeded}` 
+        return res.status(400).json({
+          error: `Knowledge base "${kb.name}" has only ${availableQuestions.length} questions but needs ${questionsNeeded}`
         });
       }
-      
+
       // Randomly select questions
       const shuffled = availableQuestions.sort(() => 0.5 - Math.random());
       const selectedQuestions = shuffled.slice(0, questionsNeeded);
       allQuestions.push(...selectedQuestions.map(q => q.id));
     }
-    
+
     // Ensure we have exactly the requested number of questions
     const finalQuestions = allQuestions.slice(0, questionCount);
-    
+
     // Create the test
-    const test = await (prisma as any).test.create({ 
-      data: { 
-        name, 
+    const test = await (prisma as any).test.create({
+      data: {
+        name,
         description: description || '',
         questionCount,
         timeLimit,
@@ -855,16 +870,16 @@ app.post('/api/admin/tests', async (req: Request, res: Response) => {
         endTime: endTime ? new Date(endTime) : null,
         knowledgeSources: JSON.stringify(knowledgeSources),
         questionOrder: JSON.stringify(finalQuestions)
-      } 
+      }
     });
-    
+
     // Assign test to users if specified
     if (assignedUsers.length > 0) {
       const assignments = assignedUsers.map((userId: string) => ({
         testId: test.id,
         userId
       }));
-      
+
       for (const assignment of assignments) {
         try {
           await (prisma as any).testAssignment.create({ data: assignment });
@@ -874,7 +889,7 @@ app.post('/api/admin/tests', async (req: Request, res: Response) => {
         }
       }
     }
-    
+
     res.json({ id: test.id });
   } catch (error) {
     console.error('Failed to create test:', error);
@@ -891,20 +906,20 @@ app.post('/api/admin/tests/:id/assign', async (req: Request, res: Response) => {
   if (!test) return res.status(404).json({ error: 'Test not found' });
   const data = userIds.map((uid: string) => ({ testId, userId: uid }));
   for (const rec of data) {
-  try { await (prisma as any).testAssignment.create({ data: rec }); } catch { /* ignore duplicates */ }
+    try { await (prisma as any).testAssignment.create({ data: rec }); } catch { /* ignore duplicates */ }
   }
   res.json({ ok: true });
 });
 
 app.get('/api/admin/tests', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
-  const tests = await (prisma as any).test.findMany({ 
-    include: { 
+  const tests = await (prisma as any).test.findMany({
+    include: {
       assignments: { include: { user: true } }
     },
     orderBy: { createdAt: 'desc' }
   });
-  
+
   res.json((tests as any[]).map((t: any) => ({
     id: t.id,
     name: t.name,
@@ -928,9 +943,9 @@ app.get('/api/admin/tests', async (req: Request, res: Response) => {
 app.put('/api/admin/tests/:id', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   const testId = req.params.id;
-  const { 
-    name, 
-    description, 
+  const {
+    name,
+    description,
     questionCount,
     timeLimit,
     maxAttempts,
@@ -939,11 +954,11 @@ app.put('/api/admin/tests/:id', async (req: Request, res: Response) => {
     knowledgeSources,
     assignedUsers = []
   } = req.body;
-  
+
   if (!name || !questionCount || !timeLimit || !Array.isArray(knowledgeSources)) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
-  
+
   try {
     // Update the test
     await (prisma as any).test.update({
@@ -959,16 +974,16 @@ app.put('/api/admin/tests/:id', async (req: Request, res: Response) => {
         knowledgeSources: JSON.stringify(knowledgeSources)
       }
     });
-    
+
     // Update assignments
     await (prisma as any).testAssignment.deleteMany({ where: { testId } });
-    
+
     if (assignedUsers.length > 0) {
       const assignments = assignedUsers.map((userId: string) => ({
         testId,
         userId
       }));
-      
+
       for (const assignment of assignments) {
         try {
           await (prisma as any).testAssignment.create({ data: assignment });
@@ -977,7 +992,7 @@ app.put('/api/admin/tests/:id', async (req: Request, res: Response) => {
         }
       }
     }
-    
+
     res.json({ id: testId });
   } catch (error) {
     console.error('Failed to update test:', error);
@@ -988,17 +1003,17 @@ app.put('/api/admin/tests/:id', async (req: Request, res: Response) => {
 app.delete('/api/admin/tests/:id', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   const testId = req.params.id;
-  
+
   try {
     // Delete assignments first
     await (prisma as any).testAssignment.deleteMany({ where: { testId } });
-    
+
     // Delete attempts if any
     await prisma.attempt.deleteMany({ where: { testId } as any });
-    
+
     // Delete the test
     await (prisma as any).test.delete({ where: { id: testId } });
-    
+
     res.json({ ok: true });
   } catch (error) {
     console.error('Failed to delete test:', error);
@@ -1011,23 +1026,23 @@ app.delete('/api/admin/tests/:testId/attempts/:email', async (req: Request, res:
   // Temporarily bypass auth for testing
   // const admin = await requireAdmin(req, res); if (!admin) return;
   const { testId, email } = req.params;
-  
+
   try {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(404).json({ error: 'User not found' });
-    
+
     // Delete completed attempts for this user and test
     const deletedAttempts = await prisma.attempt.deleteMany({
-      where: { 
+      where: {
         testId: testId,
         userId: user.id,
         completedAt: { not: null }
       }
     });
-    
-    res.json({ 
+
+    res.json({
       message: `Deleted ${deletedAttempts.count} attempts for ${email}`,
-      deletedCount: deletedAttempts.count 
+      deletedCount: deletedAttempts.count
     });
   } catch (error) {
     console.error('Failed to reset attempts:', error);
@@ -1039,16 +1054,16 @@ app.delete('/api/admin/tests/:testId/attempts/:email', async (req: Request, res:
 app.patch('/api/admin/tests/:testId/increase-attempts', async (req: Request, res: Response) => {
   const { testId } = req.params;
   const { newMax } = req.body;
-  
+
   try {
     const updatedTest = await (prisma as any).test.update({
       where: { id: testId },
       data: { maxAttempts: newMax || 10 }
     });
-    
-    res.json({ 
+
+    res.json({
       message: `Updated maxAttempts to ${updatedTest.maxAttempts}`,
-      test: updatedTest 
+      test: updatedTest
     });
   } catch (error) {
     console.error('Failed to update maxAttempts:', error);
@@ -1072,7 +1087,7 @@ app.listen(port, () => console.log('API server on :' + port));
 // Promote first user as admin if no admin
 (async () => {
   try {
-  const admin = await prisma.user.findFirst({ where: { role: 'admin' } as any });
+    const admin = await prisma.user.findFirst({ where: { role: 'admin' } as any });
     if (!admin) {
       const first = await prisma.user.findFirst({ orderBy: { createdAt: 'asc' } });
       if (first && (first as any).role !== 'admin') {
@@ -1089,7 +1104,7 @@ app.get('/api/study-plans', async (req: Request, res: Response) => {
     const user = req.user as any;
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  const studyPlans = await prismaAny.studyPlan.findMany({
+    const studyPlans = await prismaAny.studyPlan.findMany({
       where: { userId: user.id },
       include: {
         questionProgress: true
@@ -1116,40 +1131,54 @@ app.post('/api/study-plans', async (req: Request, res: Response) => {
       minutesPerDay,
       questionsPerDay,
       startDate,
-      endDate
+      endDate,
+      title
     } = req.body;
 
-    // Check if study plan already exists for this knowledge base
-  const existingPlan = await prismaAny.studyPlan.findUnique({
-      where: {
-        userId_knowledgeBaseId: {
-          userId: user.id,
-          knowledgeBaseId
-        }
-      }
+    const existingCount = await prismaAny.studyPlan.count({
+      where: { userId: user.id, knowledgeBaseId }
     });
 
-    if (existingPlan) {
-      return res.status(400).json({ error: 'Study plan already exists for this knowledge base' });
-    }
-
-  const studyPlan = await prismaAny.studyPlan.create({
+    const studyPlan = await prismaAny.studyPlan.create({
       data: {
         userId: user.id,
         knowledgeBaseId,
         knowledgeBaseName,
+        title: title || `Lộ trình #${existingCount + 1}`,
         totalDays,
         minutesPerDay,
         questionsPerDay,
         startDate: new Date(startDate),
         endDate: new Date(endDate)
-      },
-      include: {
-        questionProgress: true
       }
     });
 
-    res.json(studyPlan);
+    // Fetch all questions in the knowledge base
+    const kbWithQuestions = await prisma.knowledgeBase.findUnique({
+      where: { id: knowledgeBaseId },
+      include: { questions: true }
+    });
+
+    if (kbWithQuestions && kbWithQuestions.questions.length) {
+      // Initialize all question progress entries as 'hard'
+      await prismaAny.questionProgress.createMany({
+        data: kbWithQuestions.questions.map((q: any) => ({
+          studyPlanId: studyPlan.id,
+          questionId: q.id,
+          difficultyLevel: 'hard',
+          // lastReviewed left null so they can surface immediately
+          reviewCount: 0,
+          nextReviewAfter: 0
+        }))
+      });
+    }
+
+    const hydratedPlan = await prismaAny.studyPlan.findUnique({
+      where: { id: studyPlan.id },
+      include: { questionProgress: true }
+    });
+
+    res.json(hydratedPlan);
   } catch (error) {
     console.error('Error creating study plan:', error);
     res.status(500).json({ error: 'Failed to create study plan' });
@@ -1165,7 +1194,7 @@ app.put('/api/study-plans/:id', async (req: Request, res: Response) => {
     const updateData = req.body;
 
     // Verify ownership
-  const existingPlan = await prismaAny.studyPlan.findFirst({
+    const existingPlan = await prismaAny.studyPlan.findFirst({
       where: { id, userId: user.id }
     });
 
@@ -1173,18 +1202,31 @@ app.put('/api/study-plans/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Study plan not found' });
     }
 
-  const studyPlan = await prismaAny.studyPlan.update({
+    // Remove questionProgress from updateData as it needs special handling
+    const { questionProgress, ...cleanUpdateData } = updateData;
+
+    // Handle questionProgress separately if provided
+    let updateOperation: any = {
       where: { id },
       data: {
-        ...updateData,
-        completedQuestions: typeof updateData.completedQuestions === 'object' 
-          ? JSON.stringify(updateData.completedQuestions)
-          : updateData.completedQuestions
+        ...cleanUpdateData,
+        completedQuestions: typeof cleanUpdateData.completedQuestions === 'object'
+          ? JSON.stringify(cleanUpdateData.completedQuestions)
+          : cleanUpdateData.completedQuestions
       },
       include: {
         questionProgress: true
       }
-    });
+    };
+
+    // If questionProgress is provided and is an empty array, delete all progress
+    if (questionProgress !== undefined && Array.isArray(questionProgress) && questionProgress.length === 0) {
+      updateOperation.data.questionProgress = {
+        deleteMany: {}
+      };
+    }
+
+    const studyPlan = await prismaAny.studyPlan.update(updateOperation);
 
     res.json(studyPlan);
   } catch (error) {
@@ -1201,7 +1243,7 @@ app.delete('/api/study-plans/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     // Verify ownership
-  const existingPlan = await prismaAny.studyPlan.findFirst({
+    const existingPlan = await prismaAny.studyPlan.findFirst({
       where: { id, userId: user.id }
     });
 
@@ -1209,7 +1251,7 @@ app.delete('/api/study-plans/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Study plan not found' });
     }
 
-  await prismaAny.studyPlan.delete({
+    await prismaAny.studyPlan.delete({
       where: { id }
     });
 
@@ -1230,7 +1272,7 @@ app.post('/api/study-plans/:id/question-progress', async (req: Request, res: Res
     const { questionId, difficultyLevel } = req.body;
 
     // Verify study plan ownership
-  const studyPlan = await prismaAny.studyPlan.findFirst({
+    const studyPlan = await prismaAny.studyPlan.findFirst({
       where: { id: studyPlanId, userId: user.id },
       include: { questionProgress: true }
     });
@@ -1250,7 +1292,7 @@ app.post('/api/study-plans/:id/question-progress', async (req: Request, res: Res
     }
 
     // Upsert question progress
-  const questionProgress = await prismaAny.questionProgress.upsert({
+    const questionProgress = await prismaAny.questionProgress.upsert({
       where: {
         studyPlanId_questionId: {
           studyPlanId,
@@ -1285,19 +1327,19 @@ app.post('/api/study-plans/:id/question-progress', async (req: Request, res: Res
     }
 
     // Check if this is a new question (first time rating)
-  const existingProgress = studyPlan.questionProgress.find((p: any) => p.questionId === questionId);
+    const existingProgress = studyPlan.questionProgress.find((p: any) => p.questionId === questionId);
     if (!existingProgress || existingProgress.difficultyLevel === null) {
       newQuestionsLearned += 1;
     }
 
     // Update study plan
-  const updatedStudyPlan = await prismaAny.studyPlan.update({
+    const updatedStudyPlan = await prismaAny.studyPlan.update({
       where: { id: studyPlanId },
       data: {
         completedQuestions: JSON.stringify(updatedCompletedQuestions),
         newQuestionsLearned,
-        currentPhase: updatedCompletedQuestions.length === studyPlan.questionProgress.length + 1 
-          ? 'review' 
+        currentPhase: updatedCompletedQuestions.length === studyPlan.questionProgress.length + 1
+          ? 'review'
           : 'initial'
       },
       include: {
@@ -1324,7 +1366,7 @@ app.get('/api/study-plans/:id/today-questions', async (req: Request, res: Respon
     const maxQuestions = parseInt(req.query.maxQuestions as string) || 10;
 
     // Get study plan with progress
-  const studyPlan = await prismaAny.studyPlan.findFirst({
+    const studyPlan = await prismaAny.studyPlan.findFirst({
       where: { id: studyPlanId, userId: user.id },
       include: { questionProgress: true }
     });
@@ -1344,10 +1386,10 @@ app.get('/api/study-plans/:id/today-questions', async (req: Request, res: Respon
     }
 
     const allQuestions = knowledgeBase.questions;
-  const studiedQuestionIds = new Set(studyPlan.questionProgress.map((p: any) => p.questionId));
-    
+    const studiedQuestionIds = new Set(studyPlan.questionProgress.map((p: any) => p.questionId));
+
     // Get questions that need review (hard and medium questions ready for review)
-  const questionsNeedingReview = studyPlan.questionProgress.filter((progress: any) => {
+    const questionsNeedingReview = studyPlan.questionProgress.filter((progress: any) => {
       if (progress.difficultyLevel === 'easy') return false;
       if (progress.nextReviewAfter === null || progress.nextReviewAfter === undefined) return false;
       return studyPlan.newQuestionsLearned >= progress.nextReviewAfter;
@@ -1358,14 +1400,14 @@ app.get('/api/study-plans/:id/today-questions', async (req: Request, res: Respon
 
     // Build today's question list
     let todayQuestionIds: string[] = [];
-    
+
     // Add hard questions first (highest priority)
     const hardQuestions = questionsNeedingReview
       .filter((p: any) => p.difficultyLevel === 'hard')
       .sort((a: any, b: any) => new Date(a.lastReviewed || 0).getTime() - new Date(b.lastReviewed || 0).getTime())
       .slice(0, maxQuestions);
     todayQuestionIds.push(...hardQuestions.map((p: any) => p.questionId));
-    
+
     // Add medium questions if there's space
     const remainingSlots = maxQuestions - todayQuestionIds.length;
     if (remainingSlots > 0) {
@@ -1375,7 +1417,7 @@ app.get('/api/study-plans/:id/today-questions', async (req: Request, res: Respon
         .slice(0, remainingSlots);
       todayQuestionIds.push(...mediumQuestions.map((p: any) => p.questionId));
     }
-    
+
     // Fill remaining slots with new questions
     const stillRemainingSlots = maxQuestions - todayQuestionIds.length;
     if (stillRemainingSlots > 0) {
@@ -1400,5 +1442,371 @@ app.get('/api/study-plans/:id/today-questions', async (req: Request, res: Respon
   } catch (error) {
     console.error('Error getting today questions:', error);
     res.status(500).json({ error: 'Failed to get today questions' });
+  }
+});
+
+// Get all hard questions for intensive study
+app.get('/api/study-plans/:id/all-hard-questions', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id: studyPlanId } = req.params;
+
+    // Get study plan with progress
+    const studyPlan = await prismaAny.studyPlan.findFirst({
+      where: { id: studyPlanId, userId: user.id },
+      include: { questionProgress: true }
+    });
+
+    if (!studyPlan) {
+      return res.status(404).json({ error: 'Study plan not found' });
+    }
+
+    // Get knowledge base questions
+    const knowledgeBase = await prisma.knowledgeBase.findUnique({
+      where: { id: studyPlan.knowledgeBaseId },
+      include: { questions: true }
+    });
+
+    if (!knowledgeBase) {
+      return res.status(404).json({ error: 'Knowledge base not found' });
+    }
+
+    const allQuestions = knowledgeBase.questions;
+    const studiedQuestionIds = new Set(studyPlan.questionProgress.map((p: any) => p.questionId));
+
+    // Get hard questions that need review (with last reviewed info)
+    const hardProgressItems = studyPlan.questionProgress
+      .filter((progress: any) => progress.difficultyLevel === 'hard')
+      .sort((a: any, b: any) => {
+        // Sort by last reviewed date (oldest first), then by created date
+        const dateA = a.lastReviewed ? new Date(a.lastReviewed).getTime() : new Date(a.createdAt).getTime();
+        const dateB = b.lastReviewed ? new Date(b.lastReviewed).getTime() : new Date(b.createdAt).getTime();
+        return dateA - dateB;
+      });
+
+    // Get medium questions for occasional review (less frequent)
+    const mediumProgressItems = studyPlan.questionProgress
+      .filter((progress: any) => progress.difficultyLevel === 'medium')
+      .filter(() => Math.random() < 0.25) // Only 25% chance to include medium questions
+      .sort((a: any, b: any) => {
+        const dateA = a.lastReviewed ? new Date(a.lastReviewed).getTime() : new Date(a.createdAt).getTime();
+        const dateB = b.lastReviewed ? new Date(b.lastReviewed).getTime() : new Date(b.createdAt).getTime();
+        return dateA - dateB;
+      });
+
+    // Get new questions (not yet studied) 
+    const newQuestions = allQuestions.filter(q => !studiedQuestionIds.has(q.id));
+
+    // Debug logging
+    console.log('Debug getAllHardQuestions:');
+    console.log('- Total questions:', allQuestions.length);
+    console.log('- Studied questions:', studiedQuestionIds.size);
+    console.log('- Hard questions:', hardProgressItems.length);
+    console.log('- Medium questions:', mediumProgressItems.length);
+    console.log('- New questions:', newQuestions.length);
+    console.log('- Question progress:', studyPlan.questionProgress.length);
+
+    // Combine hard questions + some new questions with smart spacing
+    const hardQuestionObjects = allQuestions.filter(q =>
+      hardProgressItems.some((p: any) => p.questionId === q.id)
+    );
+    const mediumQuestionObjects = allQuestions.filter(q =>
+      mediumProgressItems.some((p: any) => p.questionId === q.id)
+    );
+
+    // Add reviewed hard questions with "isReviewed" flag and last reviewed info
+    const reviewedHardQuestions = hardQuestionObjects.map(q => {
+      const progress = hardProgressItems.find((p: any) => p.questionId === q.id);
+      return {
+        id: q.id,
+        question: q.text,
+        options: JSON.parse(q.options),
+        correctAnswerIndex: q.correctAnswerIdx,
+        source: q.source,
+        category: q.category,
+        isReviewed: progress?.lastReviewed ? true : false, // Only if actually reviewed
+        lastReviewed: progress?.lastReviewed,
+        reviewCount: progress?.reviewCount || 0,
+        daysSinceLastReview: progress?.lastReviewed
+          ? Math.floor((new Date().getTime() - new Date(progress.lastReviewed).getTime()) / (1000 * 60 * 60 * 24))
+          : null
+      };
+    });
+
+    // Add some medium questions occasionally (25% chance for each)
+    const reviewedMediumQuestions = mediumQuestionObjects.map(q => {
+      const progress = mediumProgressItems.find((p: any) => p.questionId === q.id);
+      return {
+        id: q.id,
+        question: q.text,
+        options: JSON.parse(q.options),
+        correctAnswerIndex: q.correctAnswerIdx,
+        source: q.source,
+        category: q.category,
+        isReviewed: progress?.lastReviewed ? true : false, // Only if actually reviewed
+        lastReviewed: progress?.lastReviewed,
+        reviewCount: progress?.reviewCount || 0,
+        daysSinceLastReview: progress?.lastReviewed
+          ? Math.floor((new Date().getTime() - new Date(progress.lastReviewed).getTime()) / (1000 * 60 * 60 * 24))
+          : null
+      };
+    });
+
+    // Combine all reviewed questions
+    const allReviewedQuestions = [...reviewedHardQuestions, ...reviewedMediumQuestions];
+
+    // Add new questions without isReviewed flag  
+    const newQuestionObjects = newQuestions.slice(0, 20).map(q => ({
+      id: q.id,
+      question: q.text,
+      options: JSON.parse(q.options),
+      correctAnswerIndex: q.correctAnswerIdx,
+      source: q.source,
+      category: q.category,
+      isReviewed: false
+    }));
+
+    console.log('- Hard questions prepared:', reviewedHardQuestions.length);
+    console.log('- Medium questions prepared:', reviewedMediumQuestions.length);
+    console.log('- New questions prepared:', newQuestionObjects.length);
+    console.log('- Sample hard question isReviewed:', reviewedHardQuestions[0]?.isReviewed, 'lastReviewed:', reviewedHardQuestions[0]?.lastReviewed);
+
+    // Smart mixing: insert reviewed questions every 5-10 new questions
+    let mixedQuestions: any[] = [];
+    let reviewedIndex = 0;
+    let newIndex = 0;
+    let questionCount = 0;
+
+    // If no new questions, just return reviewed questions
+    if (newQuestionObjects.length === 0) {
+      mixedQuestions = allReviewedQuestions.slice(0, 50); // Limit to 50 questions
+    } else {
+      // Mix new and reviewed questions
+      while (newIndex < newQuestionObjects.length || reviewedIndex < allReviewedQuestions.length) {
+        // Add 5-10 new questions
+        const batchSize = Math.floor(Math.random() * 6) + 5; // 5-10
+        for (let i = 0; i < batchSize && newIndex < newQuestionObjects.length; i++) {
+          mixedQuestions.push(newQuestionObjects[newIndex++]);
+          questionCount++;
+        }
+
+        // Add a reviewed question if available
+        if (reviewedIndex < allReviewedQuestions.length) {
+          mixedQuestions.push(allReviewedQuestions[reviewedIndex++]);
+          questionCount++;
+        }
+
+        // Limit total questions
+        if (mixedQuestions.length >= 50) break;
+      }
+    }
+
+    res.json({
+      questions: mixedQuestions,
+      studyPlan
+    });
+  } catch (error) {
+    console.error('Error getting all hard questions:', error);
+    res.status(500).json({ error: 'Failed to get all hard questions' });
+  }
+});
+
+// Debug endpoint to check question progress status
+app.get('/api/study-plans/:id/debug-progress', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id: studyPlanId } = req.params;
+
+    const studyPlan = await prismaAny.studyPlan.findFirst({
+      where: { id: studyPlanId, userId: user.id },
+      include: { questionProgress: true }
+    });
+
+    if (!studyPlan) {
+      return res.status(404).json({ error: 'Study plan not found' });
+    }
+
+    const knowledgeBase = await prisma.knowledgeBase.findUnique({
+      where: { id: studyPlan.knowledgeBaseId },
+      include: { questions: true }
+    });
+
+    const progressByDifficulty = studyPlan.questionProgress.reduce((acc: any, progress: any) => {
+      acc[progress.difficultyLevel] = (acc[progress.difficultyLevel] || 0) + 1;
+      return acc;
+    }, {});
+
+    res.json({
+      studyPlan: {
+        id: studyPlan.id,
+        name: studyPlan.name,
+        totalQuestions: knowledgeBase?.questions.length || 0,
+        studiedQuestions: studyPlan.questionProgress.length,
+        progressByDifficulty,
+        progressDetails: studyPlan.questionProgress.map((p: any) => ({
+          questionId: p.questionId,
+          difficultyLevel: p.difficultyLevel,
+          updatedAt: p.updatedAt
+        }))
+      }
+    });
+  } catch (error) {
+    console.error('Error getting debug progress:', error);
+    res.status(500).json({ error: 'Failed to get debug progress' });
+  }
+});
+
+// Smart review system - load all questions with intelligent ordering
+app.get('/api/study-plans/:id/smart-review', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id: studyPlanId } = req.params;
+
+    // Get study plan with progress
+    const studyPlan = await prismaAny.studyPlan.findFirst({
+      where: { id: studyPlanId, userId: user.id },
+      include: { questionProgress: true }
+    });
+
+    if (!studyPlan) {
+      return res.status(404).json({ error: 'Study plan not found' });
+    }
+
+    // Get knowledge base questions
+    const knowledgeBase = await prisma.knowledgeBase.findUnique({
+      where: { id: studyPlan.knowledgeBaseId },
+      include: { questions: true }
+    });
+
+    if (!knowledgeBase) {
+      return res.status(404).json({ error: 'Knowledge base not found' });
+    }
+
+    const allQuestions = knowledgeBase.questions;
+    const progressMap = new Map(
+      studyPlan.questionProgress.map((p: any) => [p.questionId, p])
+    );
+
+    // Categorize questions by their current status
+    const newQuestions = [];
+    const hardQuestions = [];
+    const mediumQuestions = [];
+    const easyQuestions = [];
+
+    for (const question of allQuestions) {
+      const progress = progressMap.get(question.id) as any;
+      const questionObj = {
+        id: question.id,
+        question: question.text,
+        options: JSON.parse(question.options),
+        correctAnswerIndex: question.correctAnswerIdx,
+        source: question.source,
+        category: question.category,
+        isReviewed: progress?.lastReviewed ? true : false,
+        lastReviewed: progress?.lastReviewed,
+        reviewCount: progress?.reviewCount || 0,
+        difficultyLevel: progress?.difficultyLevel || null,
+        daysSinceLastReview: progress?.lastReviewed
+          ? Math.floor((new Date().getTime() - new Date(progress.lastReviewed).getTime()) / (1000 * 60 * 60 * 24))
+          : null
+      };
+
+      if (!progress) {
+        newQuestions.push(questionObj);
+      } else {
+        switch (progress.difficultyLevel) {
+          case 'hard':
+            hardQuestions.push(questionObj);
+            break;
+          case 'medium':
+            mediumQuestions.push(questionObj);
+            break;
+          case 'easy':
+            easyQuestions.push(questionObj);
+            break;
+          default:
+            newQuestions.push(questionObj);
+        }
+      }
+    }
+
+    // Sort questions by priority
+    // New questions: random order
+    newQuestions.sort(() => Math.random() - 0.5);
+    
+    // Hard questions: oldest reviewed first
+    hardQuestions.sort((a, b) => {
+      const dateA = a.lastReviewed ? new Date(a.lastReviewed).getTime() : 0;
+      const dateB = b.lastReviewed ? new Date(b.lastReviewed).getTime() : 0;
+      return dateA - dateB;
+    });
+
+    // Medium questions: oldest reviewed first  
+    mediumQuestions.sort((a, b) => {
+      const dateA = a.lastReviewed ? new Date(a.lastReviewed).getTime() : 0;
+      const dateB = b.lastReviewed ? new Date(b.lastReviewed).getTime() : 0;
+      return dateA - dateB;
+    });
+
+    console.log('Smart Review Stats:');
+    console.log('- New questions:', newQuestions.length);
+    console.log('- Hard questions:', hardQuestions.length); 
+    console.log('- Medium questions:', mediumQuestions.length);
+    console.log('- Easy questions:', easyQuestions.length);
+
+    res.json({
+      questions: {
+        new: newQuestions,
+        hard: hardQuestions,
+        medium: mediumQuestions,
+        easy: easyQuestions
+      },
+      stats: {
+        total: allQuestions.length,
+        new: newQuestions.length,
+        hard: hardQuestions.length,
+        medium: mediumQuestions.length,
+        easy: easyQuestions.length
+      },
+      studyPlan
+    });
+  } catch (error) {
+    console.error('Error getting smart review:', error);
+    res.status(500).json({ error: 'Failed to get smart review questions' });
+  }
+});
+
+// Reset study plan progress (for testing purposes)
+app.post('/api/study-plans/:id/reset-progress', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id: studyPlanId } = req.params;
+
+    // Verify ownership
+    const studyPlan = await prismaAny.studyPlan.findFirst({
+      where: { id: studyPlanId, userId: user.id }
+    });
+
+    if (!studyPlan) {
+      return res.status(404).json({ error: 'Study plan not found' });
+    }
+
+    // Delete all progress
+    await prismaAny.questionProgress.deleteMany({
+      where: { studyPlanId: studyPlanId }
+    });
+
+    res.json({ message: 'Progress reset successfully' });
+  } catch (error) {
+    console.error('Error resetting progress:', error);
+    res.status(500).json({ error: 'Failed to reset progress' });
   }
 });

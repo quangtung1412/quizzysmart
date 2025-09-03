@@ -14,7 +14,7 @@ const StudyPlanSetupScreen: React.FC<StudyPlanSetupScreenProps> = ({
 }) => {
   const [totalDays, setTotalDays] = useState<number>(30);
   const [minutesPerDay, setMinutesPerDay] = useState<number>(60);
-  
+
   const totalQuestions = knowledgeBase.questions.length;
   const questionsPerDay = Math.ceil(totalQuestions / totalDays);
   const estimatedTimePerQuestion = Math.ceil(minutesPerDay / questionsPerDay);
@@ -64,6 +64,33 @@ const StudyPlanSetupScreen: React.FC<StudyPlanSetupScreenProps> = ({
         </div>
       </div>
 
+      {/* Guidelines Section */}
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6">
+        <h4 className="text-lg font-semibold text-amber-800 mb-4 flex items-center">
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Hướng dẫn sử dụng lộ trình ôn tập
+        </h4>
+        <div className="grid md:grid-cols-2 gap-4 text-sm text-amber-700">
+          <div>
+            <h5 className="font-semibold mb-2">🎯 Cách hoạt động:</h5>
+            <ul className="space-y-1 list-disc list-inside">
+              <li>Đánh giá mỗi câu: Dễ, Trung bình, hoặc Khó</li>
+              <li>Câu "khó" sẽ xuất hiện lại sau 5-10 câu mới</li>
+            </ul>
+          </div>
+          <div>
+            <h5 className="font-semibold mb-2">📱 Lời khuyên:</h5>
+            <ul className="space-y-1 list-disc list-inside">
+              <li>Chọn thời gian phù hợp với lịch trình của bạn</li>
+              <li>Ôn đều đặn mỗi ngày để hiệu quả tốt nhất</li>
+              <li>Đánh giá thành thật độ khó của từng câu</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
       {/* Setup Form */}
       <form onSubmit={handleSubmit} className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 space-y-6">
         <div className="grid md:grid-cols-2 gap-6">
@@ -99,7 +126,7 @@ const StudyPlanSetupScreen: React.FC<StudyPlanSetupScreenProps> = ({
                 type="number"
                 min="10"
                 max="480"
-                step="15"
+                step="1"
                 value={minutesPerDay}
                 onChange={(e) => setMinutesPerDay(parseInt(e.target.value) || 10)}
                 className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -121,7 +148,7 @@ const StudyPlanSetupScreen: React.FC<StudyPlanSetupScreenProps> = ({
             </svg>
             Dự kiến lộ trình học tập
           </h4>
-          
+
           <div className="grid md:grid-cols-3 gap-4">
             <div className="bg-white p-4 rounded-lg border border-slate-200">
               <div className="text-2xl font-bold text-blue-600">{questionsPerDay}</div>
@@ -135,16 +162,6 @@ const StudyPlanSetupScreen: React.FC<StudyPlanSetupScreenProps> = ({
               <div className="text-2xl font-bold text-purple-600">{Math.round((minutesPerDay / 60) * 10) / 10}</div>
               <div className="text-sm text-slate-600">giờ/ngày</div>
             </div>
-          </div>
-
-          <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-            <h5 className="font-semibold text-blue-800 mb-2">Cách thức hoạt động:</h5>
-            <ul className="text-sm text-blue-700 space-y-1">
-              <li>• <strong>Giai đoạn 1:</strong> Học tất cả {totalQuestions} câu hỏi trong {totalDays} ngày</li>
-              <li>• Mỗi câu hỏi sẽ được đánh giá độ khó: <span className="font-medium">Dễ, Trung bình, Khó</span></li>
-              <li>• Câu hỏi <span className="font-medium">"Khó"</span> sẽ xuất hiện lại thường xuyên hơn</li>
-              <li>• <strong>Giai đoạn 2:</strong> Làm bài thi thử tổng hợp khi tất cả câu đều "Dễ"</li>
-            </ul>
           </div>
         </div>
 

@@ -19,7 +19,7 @@ export const useStudyPlanStore = (userEmail: string | null) => {
         // Transform API response to match frontend types
         const transformedPlans = plans.map((plan: any) => ({
           ...plan,
-          completedQuestions: typeof plan.completedQuestions === 'string' 
+          completedQuestions: typeof plan.completedQuestions === 'string'
             ? JSON.parse(plan.completedQuestions || '[]')
             : plan.completedQuestions || []
         }));
@@ -61,7 +61,7 @@ export const useStudyPlanStore = (userEmail: string | null) => {
     // Transform API response
     const transformedPlan = {
       ...newPlan,
-      completedQuestions: typeof newPlan.completedQuestions === 'string' 
+      completedQuestions: typeof newPlan.completedQuestions === 'string'
         ? JSON.parse(newPlan.completedQuestions || '[]')
         : newPlan.completedQuestions || []
     };
@@ -73,16 +73,16 @@ export const useStudyPlanStore = (userEmail: string | null) => {
   // Update a study plan
   const updateStudyPlan = useCallback(async (planId: string, updates: Partial<StudyPlan>) => {
     const updatedPlan = await api.updateStudyPlan(planId, updates);
-    
+
     // Transform API response
     const transformedPlan = {
       ...updatedPlan,
-      completedQuestions: typeof updatedPlan.completedQuestions === 'string' 
+      completedQuestions: typeof updatedPlan.completedQuestions === 'string'
         ? JSON.parse(updatedPlan.completedQuestions || '[]')
         : updatedPlan.completedQuestions || []
     };
 
-    setStudyPlans(prev => prev.map(plan => 
+    setStudyPlans(prev => prev.map(plan =>
       plan.id === planId ? transformedPlan : plan
     ));
     return transformedPlan;
@@ -90,8 +90,8 @@ export const useStudyPlanStore = (userEmail: string | null) => {
 
   // Update question progress
   const updateQuestionProgress = useCallback(async (
-    planId: string, 
-    questionId: string, 
+    planId: string,
+    questionId: string,
     difficultyLevel: DifficultyLevel
   ) => {
     const response = await api.updateQuestionProgress(planId, {
@@ -102,12 +102,12 @@ export const useStudyPlanStore = (userEmail: string | null) => {
     // Update local state with the response
     const updatedPlan = {
       ...response.studyPlan,
-      completedQuestions: typeof response.studyPlan.completedQuestions === 'string' 
+      completedQuestions: typeof response.studyPlan.completedQuestions === 'string'
         ? JSON.parse(response.studyPlan.completedQuestions || '[]')
         : response.studyPlan.completedQuestions || []
     };
 
-    setStudyPlans(prev => prev.map(plan => 
+    setStudyPlans(prev => prev.map(plan =>
       plan.id === planId ? updatedPlan : plan
     ));
 
@@ -120,16 +120,38 @@ export const useStudyPlanStore = (userEmail: string | null) => {
     maxQuestions: number = 10
   ) => {
     const response = await api.getTodayQuestions(planId, maxQuestions);
-    
+
     // Update local study plan state with latest data from API
     const updatedPlan = {
       ...response.studyPlan,
-      completedQuestions: typeof response.studyPlan.completedQuestions === 'string' 
+      completedQuestions: typeof response.studyPlan.completedQuestions === 'string'
         ? JSON.parse(response.studyPlan.completedQuestions || '[]')
         : response.studyPlan.completedQuestions || []
     };
 
-    setStudyPlans(prev => prev.map(plan => 
+    setStudyPlans(prev => prev.map(plan =>
+      plan.id === planId ? updatedPlan : plan
+    ));
+
+    return {
+      questions: response.questions,
+      studyPlan: updatedPlan
+    };
+  }, []);
+
+  // Get all hard questions for intensive study
+  const getAllHardQuestions = useCallback(async (planId: string) => {
+    const response = await api.getAllHardQuestions(planId);
+
+    // Update local study plan state with latest data from API
+    const updatedPlan = {
+      ...response.studyPlan,
+      completedQuestions: typeof response.studyPlan.completedQuestions === 'string'
+        ? JSON.parse(response.studyPlan.completedQuestions || '[]')
+        : response.studyPlan.completedQuestions || []
+    };
+
+    setStudyPlans(prev => prev.map(plan =>
       plan.id === planId ? updatedPlan : plan
     ));
 
@@ -157,6 +179,7 @@ export const useStudyPlanStore = (userEmail: string | null) => {
     updateStudyPlan,
     updateQuestionProgress,
     getTodayQuestions,
+    getAllHardQuestions,
     deleteStudyPlan,
     getStudyPlanByKnowledgeBaseId
   };
