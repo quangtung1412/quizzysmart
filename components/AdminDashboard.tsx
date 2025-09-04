@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { api } from '../src/api';
 import Overview from './admin/Overview';
 import UserManagement from './admin/UserManagement';
 import TestManagement from './admin/TestManagement';
@@ -19,21 +20,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
 
   const handleSaveNewBase = async (name: string, questions: Question[]) => {
     try {
-      // Use admin API to create knowledge base
-      await fetch('http://localhost:3000/api/admin/knowledge-bases', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          name,
-          questions,
-          creatorEmail: userEmail
-        })
-      });
-    } catch (error) {
+      await api.adminCreateKnowledgeBase({ name, questions, creatorEmail: userEmail });
+    } catch (error: any) {
       console.error('Failed to create knowledge base:', error);
+      if (error?.message?.includes('API 401')) {
+        alert('Bạn cần đăng nhập lại (401).');
+      } else if (error?.message?.includes('API 403')) {
+        alert('Bạn không có quyền tạo cơ sở kiến thức (403).');
+      } else {
+        alert('Không thể tạo cơ sở kiến thức.');
+      }
       throw error;
     }
   };
@@ -121,6 +117,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
             <button
               onClick={() => setSidebarOpen(true)}
               className="p-2 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+              aria-label="Mở menu" title="Mở menu"
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -130,7 +127,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
             <button
               onClick={onBack}
               className="p-2 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-              title="Về trang chính"
+              aria-label="Về trang chính" title="Về trang chính"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m0 0V11a1 1 0 011-1h2a1 1 0 011 1v10m0 0h3a1 1 0 001-1V10M9 21h6" />

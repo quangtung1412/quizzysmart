@@ -38,6 +38,7 @@ const TestListScreen: React.FC<TestListScreenProps> = ({
   onViewTestDetails,
   onBack
 }) => {
+  console.log(user);
   const [tests, setTests] = useState<Test[]>([]);
   const [filteredTests, setFilteredTests] = useState<Test[]>([]);
   const [loading, setLoading] = useState(true);
@@ -181,7 +182,7 @@ const TestListScreen: React.FC<TestListScreenProps> = ({
             <span className="sm:hidden">📚 Kiến thức</span>
             <span className="hidden sm:inline">📚 Cơ sở kiến thức</span>
           </button>
-          {user.role === 'admin' && (
+          {(user.role === 'admin' || user.isAdmin === true) && (
             <button
               onClick={onAdminPanel}
               className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 min-h-[44px] text-sm sm:text-base"
@@ -294,7 +295,7 @@ const TestListScreen: React.FC<TestListScreenProps> = ({
                       <div className="grid grid-cols-3 gap-1 sm:gap-2 text-xs">
                         <div className="text-center">
                           <div className={`text-sm sm:text-lg font-bold ${test.bestScore !== null && test.bestScore >= 80 ? 'text-green-600' :
-                              test.bestScore !== null && test.bestScore >= 50 ? 'text-yellow-600' : 'text-red-600'
+                            test.bestScore !== null && test.bestScore >= 50 ? 'text-yellow-600' : 'text-red-600'
                             }`}>
                             {test.bestScore !== null ? `${test.bestScore}%` : 'N/A'}
                           </div>
@@ -353,8 +354,8 @@ const TestListScreen: React.FC<TestListScreenProps> = ({
                     onClick={() => onStartTest(test.id)}
                     disabled={!available}
                     className={`w-full py-2.5 sm:py-3 px-4 rounded-lg font-medium transition-colors min-h-[44px] text-sm sm:text-base ${available
-                        ? 'bg-sky-600 hover:bg-sky-700 text-white shadow-sm hover:shadow'
-                        : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                      ? 'bg-sky-600 hover:bg-sky-700 text-white shadow-sm hover:shadow'
+                      : 'bg-slate-200 text-slate-500 cursor-not-allowed'
                       }`}
                   >
                     {available ? 'Bắt đầu làm bài' : 'Không khả dụng'}

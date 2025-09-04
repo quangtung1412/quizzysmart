@@ -16,6 +16,17 @@ export interface KnowledgeBase {
 
 export type UserRole = 'admin' | 'user';
 
+export interface User {
+  id: string;
+  username?: string;
+  googleId?: string;
+  name: string;
+  email?: string;
+  branchCode?: string;
+  isAdmin?: boolean;
+  picture?: string;
+}
+
 export interface AppUser {
   id?: string;
   name: string;

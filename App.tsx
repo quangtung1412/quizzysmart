@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Question, QuizMode, QuizSettings, UserAnswer, KnowledgeBase, QuizAttempt, AppUser, StudyPlan, DifficultyLevel } from './types';
+import { Question, QuizMode, QuizSettings, UserAnswer, KnowledgeBase, QuizAttempt, User, StudyPlan, DifficultyLevel } from './types';
 import { useKnowledgeBaseStore, useAttemptStore } from './src/hooks/usePersistentStores';
 import { useStudyPlanStore } from './src/hooks/useStudyPlanStore';
 import { shuffleArray } from './src/utils/shuffle';
@@ -10,6 +10,8 @@ import SetupScreen from './components/SetupScreen';
 import QuizScreen from './components/QuizScreen';
 import ResultsScreen from './components/ResultsScreen';
 import LoginScreen from './components/LoginScreen';
+import RegisterScreen from './components/RegisterScreen';
+import UserSetupScreen from './components/UserSetupScreen';
 import AdminDashboard from './components/AdminDashboard';
 import KnowledgeBaseScreen from './components/KnowledgeBaseScreen';
 import QuizHistoryScreen from './components/QuizHistoryScreen';
@@ -24,10 +26,10 @@ import DailyStudy from './components/DailyStudy';
 import SmartReview from './components/SmartReview';
 
 
-type Screen = 'login' | 'modeSelection' | 'testList' | 'testDetail' | 'attemptDetail' | 'knowledgeBase' | 'upload' | 'menu' | 'setup' | 'quiz' | 'results' | 'history' | 'admin' | 'studyPlanSetup' | 'studyPlanOverview' | 'dailyStudy' | 'smartReview' | 'studyPlanList';
+type Screen = 'login' | 'register' | 'userSetup' | 'modeSelection' | 'testList' | 'testDetail' | 'attemptDetail' | 'knowledgeBase' | 'upload' | 'menu' | 'setup' | 'quiz' | 'results' | 'history' | 'admin' | 'studyPlanSetup' | 'studyPlanOverview' | 'dailyStudy' | 'smartReview' | 'studyPlanList';
 
 const App: React.FC = () => {
-  const [user, setUser] = useState<AppUser | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [currentScreen, setCurrentScreen] = useState<Screen>('login');
 
   // Prevent browser/Android back navigation (soft back) while in app
@@ -42,9 +44,9 @@ const App: React.FC = () => {
     return () => window.removeEventListener('popstate', blockPop);
   }, []);
 
-  const { bases: knowledgeBases, addBase, removeBase, setBases: setKnowledgeBases } = useKnowledgeBaseStore(user?.email || null);
-  const { attempts: quizAttempts, createAttempt, updateAttempt, setAttempts: setQuizAttempts } = useAttemptStore(user?.email || null);
-  const { studyPlans, createStudyPlan, updateStudyPlan, updateQuestionProgress, getTodayQuestions, deleteStudyPlan, refreshStudyPlans, getStudyPlanByKnowledgeBaseId } = useStudyPlanStore(user?.email || null);
+  const { bases: knowledgeBases, addBase, removeBase, setBases: setKnowledgeBases } = useKnowledgeBaseStore(user?.email || user?.username || null);
+  const { attempts: quizAttempts, createAttempt, updateAttempt, setAttempts: setQuizAttempts } = useAttemptStore(user?.email || user?.username || null);
+  const { studyPlans, createStudyPlan, updateStudyPlan, updateQuestionProgress, getTodayQuestions, deleteStudyPlan, refreshStudyPlans, getStudyPlanByKnowledgeBaseId } = useStudyPlanStore(user?.email || user?.username || null);
 
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<KnowledgeBase | null>(null);
   const [currentStudyPlan, setCurrentStudyPlan] = useState<StudyPlan | null>(null);
@@ -93,21 +95,62 @@ const App: React.FC = () => {
   }, [currentAttemptId, quizAttempts, knowledgeBases, activeQuizQuestions.length]);
 
 
-  const handleLoginSuccess = useCallback((loggedInUser: { name: string; email: string; picture: string }) => {
+  const handleLoginSuccess = useCallback((loggedInUser: User) => {
     setUser(loggedInUser);
+
+    // Check if user needs to complete setup (missing branchCode)
+    if (!loggedInUser.branchCode) {
+      setCurrentScreen('userSetup');
+    } else {
+      setCurrentScreen('modeSelection');
+    }
+  }, []);
+
+  const handleSwitchToRegister = useCallback(() => {
+    setCurrentScreen('register');
+  }, []);
+
+  const handleSwitchToLogin = useCallback(() => {
+    setCurrentScreen('login');
+  }, []);
+
+  const handleUserSetupComplete = useCallback((updatedUser: User) => {
+    setUser(updatedUser);
     setCurrentScreen('modeSelection');
   }, []);
 
   useEffect(() => {
     api.me().then(r => {
       if (r.user) {
-        setUser({ name: r.user.name || '', email: r.user.email, picture: r.user.picture || '', role: (r.user as any).role });
-        setCurrentScreen('modeSelection'); // Always go to mode selection first
+        const userData: User = {
+          id: r.user.id,
+          username: r.user.username,
+          googleId: r.user.googleId,
+          name: r.user.name || '',
+          email: r.user.email,
+          branchCode: r.user.branchCode,
+          isAdmin: (r.user as any).role === 'admin',
+          picture: r.user.picture || ''
+        };
+        setUser(userData);
+
+        // Check if user needs to complete setup
+        if (!userData.branchCode) {
+          setCurrentScreen('userSetup');
+        } else {
+          setCurrentScreen('modeSelection');
+        }
       }
     }).catch(() => { });
   }, []);
 
-  const handleLogout = useCallback(() => {
+  const handleLogout = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+
     setUser(null);
     setCurrentScreen('login');
     setKnowledgeBases([]);
@@ -200,9 +243,12 @@ const App: React.FC = () => {
   const handleStartTest = useCallback(async (testId: string) => {
     if (!user) return;
 
+    const userEmail = user.email || user.username || '';
+    if (!userEmail) return;
+
     try {
       // Get test data with questions
-      const testData = await api.getTestById(testId, user.email);
+      const testData = await api.getTestById(testId, userEmail);
 
       // Convert test questions to our Question format
       const testQuestions: Question[] = testData.questions.map((q: any) => ({
@@ -222,7 +268,7 @@ const App: React.FC = () => {
       }));
 
       // Create a new attempt for the test
-      const newAttempt = await createAttempt(user.email, {
+      const newAttempt = await createAttempt(userEmail, {
         testId: testId, // For test attempts, we use testId instead of knowledgeBaseId
         knowledgeBaseName: testData.name,
         mode: QuizMode.Test, // New mode for tests
@@ -271,7 +317,10 @@ const App: React.FC = () => {
 
   const handleSaveNewBase = useCallback(async (name: string, questions: Question[]) => {
     if (!user) return;
-    const created = await addBase(user.email, { name, questions } as any);
+    const userEmail = user.email || user.username || '';
+    if (!userEmail) return;
+
+    const created = await addBase(userEmail, { name, questions } as any);
     setAllQuestions(created.questions);
     setSelectedKnowledgeBase(created as any);
     setCurrentScreen('menu');
@@ -294,6 +343,9 @@ const App: React.FC = () => {
   const handleStartQuiz = useCallback(async (settings: QuizSettings) => {
     if (!selectedKnowledgeBase || !user) return;
 
+    const userEmail = user.email || user.username || '';
+    if (!userEmail) return;
+
     setQuizSettings(settings);
 
     let filteredQuestions = settings.categories.length > 0
@@ -304,7 +356,7 @@ const App: React.FC = () => {
     const selectedQuestions: Question[] = (shuffled as Question[]).slice(0, settings.questionCount);
     const initialAnswers = selectedQuestions.map((q: Question) => ({ questionId: q.id, selectedOptionIndex: null, isCorrect: null }));
 
-    const newAttempt = await createAttempt(user.email, {
+    const newAttempt = await createAttempt(userEmail, {
       knowledgeBaseId: selectedKnowledgeBase.id,
       knowledgeBaseName: selectedKnowledgeBase.name,
       mode: quizMode!,
@@ -491,7 +543,12 @@ const App: React.FC = () => {
   const renderScreen = () => {
     switch (currentScreen) {
       case 'login':
-        return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+        return <LoginScreen onLoginSuccess={handleLoginSuccess} onSwitchToRegister={handleSwitchToRegister} />;
+      case 'register':
+        return <RegisterScreen onSwitchToLogin={handleSwitchToLogin} />;
+      case 'userSetup':
+        if (!user) return <LoginScreen onLoginSuccess={handleLoginSuccess} onSwitchToRegister={handleSwitchToRegister} />;
+        return <UserSetupScreen user={user} onSetupComplete={handleUserSetupComplete} onLogout={handleLogout} />;
       case 'modeSelection':
         return <ModeSelectionScreen
           userName={user?.name || ''}
@@ -533,16 +590,17 @@ const App: React.FC = () => {
         return <KnowledgeBaseScreen
           bases={knowledgeBases}
           onSelect={handleSelectBase}
-          onCreate={user?.role === 'admin' ? handleCreateNewRequest : undefined}
+          onCreate={user?.isAdmin ? handleCreateNewRequest : undefined}
           onViewHistory={handleViewHistory}
           onCreateStudyPlan={handleCreateStudyPlanRequest}
           studyPlans={studyPlans}
           onViewStudyPlan={handleViewStudyPlan}
-          isAdmin={user?.role === 'admin'}
+          isAdmin={user?.isAdmin}
           onBack={handleGoToModeSelection}
         />;
       case 'admin':
-        return <AdminDashboard userEmail={user!.email} onBack={handleGoToModeSelection} knowledgeBases={knowledgeBases} />;
+        const userEmail = user?.email || user?.username || '';
+        return <AdminDashboard userEmail={userEmail} onBack={handleGoToModeSelection} knowledgeBases={knowledgeBases} />;
       case 'history':
         return <QuizHistoryScreen attempts={quizAttempts} onBack={handleGoToModeSelection} />;
       case 'upload':
@@ -603,20 +661,22 @@ const App: React.FC = () => {
         />;
       case 'dailyStudy':
         if (!currentStudyPlan) return handleGoToKnowledgeBase();
+        const dailyStudyEmail = user?.email || user?.username || '';
         return <DailyStudy
           studyPlan={currentStudyPlan}
-          currentUser={user?.email || ''}
+          currentUser={dailyStudyEmail}
           onBackToOverview={handleBackToOverview}
         />;
       case 'smartReview':
         if (!currentStudyPlan) return handleGoToKnowledgeBase();
+        const smartReviewEmail = user?.email || user?.username || '';
         return <SmartReview
           studyPlan={currentStudyPlan}
-          currentUser={user?.email || ''}
+          currentUser={smartReviewEmail}
           onBackToOverview={handleBackToOverview}
         />;
       default:
-        return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+        return <LoginScreen onLoginSuccess={handleLoginSuccess} onSwitchToRegister={handleSwitchToRegister} />;
     }
   };
 
@@ -624,11 +684,11 @@ const App: React.FC = () => {
     <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-slate-50 text-slate-800">
       <div className="w-full max-w-8xl mx-auto relative">
         <header className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-sky-700">Quiz Master</h1>
-          <p className="text-slate-500 mt-2">Tạo bài trắc nghiệm từ file Excel của bạn</p>
+          <h1 className="text-4xl font-bold text-red-800 ">Quizzy Smart</h1>
+          <p className="text-slate-500 mt-2">Ôn thi trắc nghiệm thông minh</p>
           {user && (
             <div className="absolute top-0 right-0 flex items-center gap-3 bg-white p-2 rounded-full shadow-sm border border-slate-200">
-              <img src={user.picture} alt={user.name} className="w-8 h-8 rounded-full" />
+              {user.picture && <img src={user.picture} alt={user.name} className="w-8 h-8 rounded-full" />}
               <span className="text-sm font-medium text-slate-600 hidden sm:inline">Chào, {user.name}</span>
               <button
                 onClick={handleLogout}
@@ -647,7 +707,7 @@ const App: React.FC = () => {
           {renderScreen()}
         </main>
         <footer className="text-center mt-8 text-sm text-slate-400">
-          <p>Xây dựng bởi AI. Thiết kế cho mục đích học tập và ôn luyện.</p>
+          <p>©2025 – Phạm Quang Tùng - Agribank Chi nhánh Hải Dương</p>
         </footer>
       </div>
     </div>

@@ -36,7 +36,7 @@ interface QuestionQueue {
 const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, currentUser, onBackToOverview }) => {
   const { updateQuestionProgress } = useStudyPlanStore(currentUser);
   const [plan, setPlan] = useState(initialPlan);
-  
+
   // Question management
   const [questionQueue, setQuestionQueue] = useState<QuestionQueue>({
     new: [],
@@ -47,7 +47,7 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
   const [currentQuestionsList, setCurrentQuestionsList] = useState<SmartQuestion[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [pendingHardQuestions, setPendingHardQuestions] = useState<SmartQuestion[]>([]);
-  
+
   // Study state
   const [newQuestionsAnswered, setNewQuestionsAnswered] = useState(0);
   // Count of consecutive NEW questions since last milestone insertion
@@ -72,7 +72,7 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
     try {
       setLoading(true);
       setError(null);
-      
+
       const res = await api.getSmartReviewQuestions(plan.id);
       setPlan(res.studyPlan);
 
@@ -88,25 +88,25 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
       for (const arr of sourceArrays) {
         for (const q of arr) {
           if (seen.has(q.id)) continue;
-            seen.add(q.id);
-            if (!q.lastReviewed) {
-              rebuilt.new.push(q);
-            } else {
-              switch (q.difficultyLevel) {
-                case DifficultyLevel.Hard:
-                  rebuilt.hard.push(q);
-                  break;
-                case DifficultyLevel.Medium:
-                  rebuilt.medium.push(q);
-                  break;
-                case DifficultyLevel.Easy:
-                  rebuilt.easy.push(q);
-                  break;
-                default:
-                  // If difficulty missing but lastReviewed exists, treat as medium fallback
-                  rebuilt.medium.push(q);
-              }
+          seen.add(q.id);
+          if (!q.lastReviewed) {
+            rebuilt.new.push(q);
+          } else {
+            switch (q.difficultyLevel) {
+              case DifficultyLevel.Hard:
+                rebuilt.hard.push(q);
+                break;
+              case DifficultyLevel.Medium:
+                rebuilt.medium.push(q);
+                break;
+              case DifficultyLevel.Easy:
+                rebuilt.easy.push(q);
+                break;
+              default:
+                // If difficulty missing but lastReviewed exists, treat as medium fallback
+                rebuilt.medium.push(q);
             }
+          }
         }
       }
       setQuestionQueue(rebuilt);
@@ -115,12 +115,12 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
       if (rebuilt.hard.length > 0) {
         setPendingHardQuestions(rebuilt.hard.slice());
       }
-      
+
       // Initialize the current questions list with smart ordering
-  const { next } = generateNextStream(rebuilt, 0, []);
-  setCurrentQuestionsList(next);
-      
-  if (next.length === 0) {
+      const { next } = generateNextStream(rebuilt, 0, []);
+      setCurrentQuestionsList(next);
+
+      if (next.length === 0) {
         setError('Tất cả câu hỏi đã hoàn thành!');
       }
     } catch (err) {
@@ -203,7 +203,7 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
 
     try {
       console.log('[SMART_REVIEW] generateNextStream: result nextLen=', next.length, 'consumedPending=', consumedPending, 'hardMilestone=', insertedHardMilestone, 'mediumMilestone=', insertedMediumMilestone, 'streakUsed=', streak);
-    } catch {}
+    } catch { }
     return { next, insertedHardMilestone, insertedMediumMilestone, consumedPending };
   };
 
@@ -212,8 +212,23 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
   }, [loadQuestions]);
 
   const currentQuestion = currentQuestionsList[currentIndex];
-  const isCorrect = currentQuestion && selected !== null && 
+  const isCorrect = currentQuestion && selected !== null &&
     parseInt(selected, 10) === currentQuestion.correctAnswerIndex;
+
+  const getOptionClasses = (optionIndex: number) => {
+    const base = "w-full text-left p-4 my-2 border rounded-lg transition-all duration-200 cursor-pointer flex items-center";
+    const isSelected = selected !== null && parseInt(selected, 10) === optionIndex;
+
+    if (revealed) {
+      const isCorrectAnswer = optionIndex === currentQuestion.correctAnswerIndex;
+      if (isCorrectAnswer) return `${base} bg-green-100 border-green-500 text-green-800 ring-2 ring-green-500`;
+      if (isSelected && !isCorrectAnswer) return `${base} bg-red-100 border-red-500 text-red-800`;
+      return `${base} bg-white border-slate-300 text-slate-700 cursor-not-allowed`;
+    }
+
+    if (isSelected) return `${base} bg-sky-100 border-sky-500 ring-2 ring-sky-500 text-sky-800`;
+    return `${base} bg-white border-slate-300 hover:bg-slate-50 hover:border-sky-400`;
+  };
 
   const handleSelect = (idx: string) => {
     if (!revealed) setSelected(idx);
@@ -226,9 +241,9 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
 
   const handleRate = async (difficulty: DifficultyLevel) => {
     if (!currentQuestion) return;
-  if (ratingSubmitting) return; // guard against double tap
-  setRatingSubmitting(true);
-  setSubmittingDifficulty(difficulty);
+    if (ratingSubmitting) return; // guard against double tap
+    setRatingSubmitting(true);
+    setSubmittingDifficulty(difficulty);
 
     try {
       await updateQuestionProgress(plan.id, currentQuestion.id, difficulty);
@@ -237,7 +252,7 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
       setPlan(prevPlan => {
         const updatedProgress = [...prevPlan.questionProgress];
         const existingProgressIndex = updatedProgress.findIndex(p => p.questionId === currentQuestion.id);
-        
+
         const newProgress = {
           id: existingProgressIndex >= 0 ? updatedProgress[existingProgressIndex].id : '',
           questionId: currentQuestion.id,
@@ -263,7 +278,7 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
       setQuestionQueue(prev => {
         const updated = { ...prev };
         const questionId = currentQuestion.id;
-        
+
         // Remove from old queue if it exists
         ['new', 'hard', 'medium', 'easy'].forEach(key => {
           const queueKey = key as keyof QuestionQueue;
@@ -271,7 +286,7 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
             updated[queueKey] = updated[queueKey].filter(q => q.id !== questionId);
           }
         });
-        
+
         // Add to new queue with updated metadata
         const updatedQuestion = {
           ...currentQuestion,
@@ -280,7 +295,7 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
           lastReviewed: new Date().toISOString(),
           reviewCount: (currentQuestion.reviewCount || 0) + 1
         };
-        
+
         if (difficulty === DifficultyLevel.Hard) {
           updated.hard.push(updatedQuestion);
         } else if (difficulty === DifficultyLevel.Medium) {
@@ -288,14 +303,14 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
         } else if (difficulty === DifficultyLevel.Easy) {
           updated.easy.push(updatedQuestion);
         }
-        
+
         return updated;
       });
 
       // Mutate current question metadata locally so UI reflects update
-      setCurrentQuestionsList(list => list.map((q, i) => i === currentIndex ? { 
-        ...q, 
-        isReviewed: true, 
+      setCurrentQuestionsList(list => list.map((q, i) => i === currentIndex ? {
+        ...q,
+        isReviewed: true,
         difficultyLevel: difficulty,
         lastReviewed: new Date().toISOString(),
         reviewCount: (q.reviewCount || 0) + 1
@@ -318,7 +333,7 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
         setNewStreak(prev => prev + 1);             // streak for milestone logic
       }
 
-  moveToNextQuestion();
+      moveToNextQuestion();
     } catch (err) {
       setError('Lỗi cập nhật tiến độ: ' + (err as Error).message);
     }
@@ -511,174 +526,149 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
       </div>
 
       {/* Main Content */}
-  <div className="w-full px-2 sm:px-4 pb-40 sm:pb-8">{/* extra bottom padding for taller mobile footer */}
-        <div className="mx-auto sm:max-w-6xl">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6">
-            <button
-              onClick={onBackToOverview}
-              className="flex items-center text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-2 rounded-lg transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
-              <span className="ml-2 hidden sm:inline">Quay lại</span>
-            </button>
-            
-            <div className="text-center flex-1 mx-4">
-              <h1 className="text-xl sm:text-2xl font-bold text-gray-800 flex items-center justify-center">
-                <Zap className="w-6 h-6 mr-2 text-purple-600" />
-                <span className="hidden sm:inline">Ôn tập thông minh</span>
-                <span className="sm:hidden">Ôn tập</span>
-              </h1>
-              <div className="hidden sm:flex items-center justify-center gap-4 mt-2 text-sm text-gray-600">
-                <div className="flex items-center">
-                  <Star className="w-4 h-4 mr-1 text-green-600" />
-                  <span className="hidden sm:inline">Đã học mới: </span>
-                  <span>{newQuestionsAnswered}</span>
+      <div className="p-4 sm:p-6">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4 sm:mb-6 border-b pb-4">
+          <button
+            onClick={onBackToOverview}
+            className="flex items-center text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-2 rounded-lg transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5" />
+            <span className="ml-2 hidden sm:inline">Quay lại</span>
+          </button>
+
+          <div className="text-center flex-1 mx-4">
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-800 flex items-center justify-center">
+              <Zap className="w-6 h-6 mr-2 text-purple-600" />
+              <span className="hidden sm:inline">Ôn tập thông minh</span>
+              <span className="sm:hidden">Ôn tập</span>
+            </h1>
+            <div className="hidden sm:flex items-center justify-center gap-4 mt-2 text-sm text-gray-600">
+              <div className="flex items-center">
+                <Star className="w-4 h-4 mr-1 text-green-600" />
+                <span className="hidden sm:inline">Đã học mới: </span>
+                <span>{newQuestionsAnswered}</span>
+              </div>
+              {pendingHardQuestions.length > 0 && (
+                <div className="flex items-center text-red-600">
+                  <Clock className="w-4 h-4 mr-1" />
+                  <span className="hidden sm:inline">Chờ ôn: </span>
+                  <span>{pendingHardQuestions.length}</span>
                 </div>
-                {pendingHardQuestions.length > 0 && (
-                  <div className="flex items-center text-red-600">
-                    <Clock className="w-4 h-4 mr-1" />
-                    <span className="hidden sm:inline">Chờ ôn: </span>
-                    <span>{pendingHardQuestions.length}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-            
-            <div className="w-16"> {/* Balance placeholder */}</div>
-          </div>
-
-          {/* Question Status Badge */}
-          <div className="hidden sm:flex justify-center mb-6">
-            {currentQuestion.isReviewed && currentQuestion.lastReviewed && (
-              <div className="inline-flex items-center px-4 py-2 rounded-full text-sm font-medium bg-blue-100 text-blue-800 border border-blue-200">
-                <CheckCircle className="w-4 h-4 mr-2" />
-                <span>Đã học ({currentQuestion.reviewCount} lần)</span>
-                {currentQuestion.daysSinceLastReview !== null && (
-                  <span className="ml-2 text-blue-600">
-                    - {currentQuestion.daysSinceLastReview} ngày trước
-                  </span>
-                )}
-              </div>
-            )}
-            {!currentQuestion.isReviewed && (
-              <div className="inline-flex items-center px-4 py-2 rounded-full text-sm font-medium bg-green-100 text-green-800 border border-green-200">
-                <Star className="w-4 h-4 mr-2" />
-                <span>Câu mới</span>
-              </div>
-            )}
-          </div>
-
-          {/* Question Card */}
-          <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
-            <div className="p-6 sm:p-8">
-              <h2 className="text-lg sm:text-xl font-medium text-gray-800 mb-8 leading-relaxed">
-                {currentQuestion.question}
-              </h2>
-
-              <div className="space-y-4">
-                {currentQuestion.options.map((option, idx) => {
-                  const isSelected = selected === idx.toString();
-                  const isCorrectAnswer = idx === currentQuestion.correctAnswerIndex;
-                  const showCorrect = revealed && isCorrectAnswer;
-                  const showIncorrect = revealed && isSelected && !isCorrectAnswer;
-
-                  return (
-                    <button
-                      key={idx}
-                      onClick={() => handleSelect(idx.toString())}
-                      disabled={revealed}
-                      className={`w-full text-left p-4 sm:p-5 rounded-xl border-2 transition-all duration-200 ${
-                        showCorrect
-                          ? 'border-green-500 bg-green-50 text-green-800 shadow-green-100'
-                          : showIncorrect
-                          ? 'border-red-500 bg-red-50 text-red-800 shadow-red-100'
-                          : isSelected
-                          ? 'border-blue-500 bg-blue-50 text-blue-800 shadow-blue-100'
-                          : 'border-gray-200 bg-gray-50 hover:border-gray-300 hover:bg-gray-100 hover:shadow-md'
-                      } ${revealed ? 'cursor-not-allowed' : 'cursor-pointer hover:transform hover:scale-[1.01]'}`}
-                    >
-                      <div className="flex items-center">
-                        <span className="flex-shrink-0 w-8 h-8 rounded-full border-2 border-current flex items-center justify-center text-sm font-bold mr-4">
-                          {String.fromCharCode(65 + idx)}
-                        </span>
-                        <span className="flex-1 text-base">{option}</span>
-                        {showCorrect && <CheckCircle className="w-6 h-6 text-green-600 ml-3" />}
-                        {showIncorrect && <XCircle className="w-6 h-6 text-red-600 ml-3" />}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex justify-center mt-8 space-x-4">
-                {!revealed && (
-                  <button
-                    onClick={handleReveal}
-                    disabled={selected === null}
-                    className={`flex items-center px-6 py-3 rounded-xl font-medium transition-all duration-200 ${
-                      selected !== null
-                        ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg hover:shadow-xl transform hover:scale-105'
-                        : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                    }`}
-                  >
-                    <Eye className="w-5 h-5 mr-2" />
-                    <span className="hidden sm:inline">Xem đáp án</span>
-                    <span className="sm:hidden">Xem</span>
-                  </button>
-                )}
-
-                {ratingMode === true && (
-                  <div className="flex flex-wrap justify-center gap-3">
-                    <button
-                      onClick={() => handleRate(DifficultyLevel.Easy)}
-                      disabled={ratingSubmitting}
-                      className={`flex items-center px-4 sm:px-5 py-3 bg-green-600 text-white rounded-xl transition-all duration-200 shadow-lg text-sm sm:text-base font-medium ${ratingSubmitting ? 'opacity-60 cursor-not-allowed' : 'hover:bg-green-700 hover:shadow-xl transform hover:scale-105'}`}
-                      aria-busy={ratingSubmitting && submittingDifficulty === DifficultyLevel.Easy}
-                    >
-                      {submittingDifficulty === DifficultyLevel.Easy && ratingSubmitting ? (
-                        <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5 mr-2 animate-spin" />
-                      ) : (
-                        <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
-                      )}
-                      <span className="hidden sm:inline">Dễ</span>
-                      <span className="sm:hidden">Dễ</span>
-                    </button>
-                    <button
-                      onClick={() => handleRate(DifficultyLevel.Medium)}
-                      disabled={ratingSubmitting}
-                      className={`flex items-center px-4 sm:px-5 py-3 bg-yellow-600 text-white rounded-xl transition-all duration-200 shadow-lg text-sm sm:text-base font-medium ${ratingSubmitting ? 'opacity-60 cursor-not-allowed' : 'hover:bg-yellow-700 hover:shadow-xl transform hover:scale-105'}`}
-                      aria-busy={ratingSubmitting && submittingDifficulty === DifficultyLevel.Medium}
-                    >
-                      {submittingDifficulty === DifficultyLevel.Medium && ratingSubmitting ? (
-                        <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5 mr-2 animate-spin" />
-                      ) : (
-                        <Target className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
-                      )}
-                      <span className="hidden sm:inline">Trung bình</span>
-                      <span className="sm:hidden">TB</span>
-                    </button>
-                    <button
-                      onClick={() => handleRate(DifficultyLevel.Hard)}
-                      disabled={ratingSubmitting}
-                      className={`flex items-center px-4 sm:px-5 py-3 bg-red-600 text-white rounded-xl transition-all duration-200 shadow-lg text-sm sm:text-base font-medium ${ratingSubmitting ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-700 hover:shadow-xl transform hover:scale-105'}`}
-                      aria-busy={ratingSubmitting && submittingDifficulty === DifficultyLevel.Hard}
-                    >
-                      {submittingDifficulty === DifficultyLevel.Hard && ratingSubmitting ? (
-                        <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5 mr-2 animate-spin" />
-                      ) : (
-                        <XCircle className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
-                      )}
-                      <span className="hidden sm:inline">Khó</span>
-                      <span className="sm:hidden">Khó</span>
-                    </button>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
           </div>
 
+          <div className="w-16"> {/* Balance placeholder */}</div>
+        </div>
+
+        {/* Question Status Badge */}
+        <div className="hidden sm:flex justify-center mb-6">
+          {currentQuestion.isReviewed && currentQuestion.lastReviewed && (
+            <div className="inline-flex items-center px-4 py-2 rounded-full text-sm font-medium bg-blue-100 text-blue-800 border border-blue-200">
+              <CheckCircle className="w-4 h-4 mr-2" />
+              <span>Đã học ({currentQuestion.reviewCount} lần)</span>
+              {currentQuestion.daysSinceLastReview !== null && (
+                <span className="ml-2 text-blue-600">
+                  - {currentQuestion.daysSinceLastReview} ngày trước
+                </span>
+              )}
+            </div>
+          )}
+          {!currentQuestion.isReviewed && (
+            <div className="inline-flex items-center px-4 py-2 rounded-full text-sm font-medium bg-green-100 text-green-800 border border-green-200">
+              <Star className="w-4 h-4 mr-2" />
+              <span>Câu mới</span>
+            </div>
+          )}
+        </div>
+
+        {/* Question Area - Direct like QuizScreen */}
+        <div className="mb-6">
+          <p className="text-base sm:text-lg font-semibold text-slate-800 mb-4 sm:mb-6 leading-relaxed">
+            {`Câu hỏi: ${currentQuestion.question}`}
+          </p>
+
+          <div className="space-y-2 sm:space-y-3">
+            {currentQuestion.options.map((option, idx) => (
+              <button
+                key={idx}
+                onClick={() => handleSelect(idx.toString())}
+                disabled={revealed}
+                className={getOptionClasses(idx)}
+              >
+                <span className="flex-shrink-0 h-6 w-6 sm:h-7 sm:w-7 rounded-full border-2 border-slate-400 flex items-center justify-center mr-3 sm:mr-4 font-bold text-xs sm:text-sm">
+                  {String.fromCharCode(65 + idx)}
+                </span>
+                <span className="text-sm sm:text-base text-left leading-relaxed">{option}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="mt-6 sm:mt-8 pt-4 border-t flex justify-center space-x-4">
+          {!revealed && (
+            <button
+              onClick={handleReveal}
+              disabled={selected === null}
+              className={`flex items-center px-6 py-3 rounded-xl font-medium transition-all duration-200 ${selected !== null
+                  ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg hover:shadow-xl transform hover:scale-105'
+                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                }`}
+            >
+              <Eye className="w-5 h-5 mr-2" />
+              <span className="hidden sm:inline">Xem đáp án</span>
+              <span className="sm:hidden">Xem</span>
+            </button>
+          )}
+
+          {ratingMode === true && (
+            <div className="flex flex-wrap justify-center gap-3">
+              <button
+                onClick={() => handleRate(DifficultyLevel.Easy)}
+                disabled={ratingSubmitting}
+                className={`flex items-center px-4 sm:px-5 py-3 bg-green-600 text-white rounded-xl transition-all duration-200 shadow-lg text-sm sm:text-base font-medium ${ratingSubmitting ? 'opacity-60 cursor-not-allowed' : 'hover:bg-green-700 hover:shadow-xl transform hover:scale-105'}`}
+                aria-busy={ratingSubmitting && submittingDifficulty === DifficultyLevel.Easy}
+              >
+                {submittingDifficulty === DifficultyLevel.Easy && ratingSubmitting ? (
+                  <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5 mr-2 animate-spin" />
+                ) : (
+                  <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
+                )}
+                <span className="hidden sm:inline">Dễ</span>
+                <span className="sm:hidden">Dễ</span>
+              </button>
+              <button
+                onClick={() => handleRate(DifficultyLevel.Medium)}
+                disabled={ratingSubmitting}
+                className={`flex items-center px-4 sm:px-5 py-3 bg-yellow-600 text-white rounded-xl transition-all duration-200 shadow-lg text-sm sm:text-base font-medium ${ratingSubmitting ? 'opacity-60 cursor-not-allowed' : 'hover:bg-yellow-700 hover:shadow-xl transform hover:scale-105'}`}
+                aria-busy={ratingSubmitting && submittingDifficulty === DifficultyLevel.Medium}
+              >
+                {submittingDifficulty === DifficultyLevel.Medium && ratingSubmitting ? (
+                  <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5 mr-2 animate-spin" />
+                ) : (
+                  <Target className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
+                )}
+                <span className="hidden sm:inline">Trung bình</span>
+                <span className="sm:hidden">TB</span>
+              </button>
+              <button
+                onClick={() => handleRate(DifficultyLevel.Hard)}
+                disabled={ratingSubmitting}
+                className={`flex items-center px-4 sm:px-5 py-3 bg-red-600 text-white rounded-xl transition-all duration-200 shadow-lg text-sm sm:text-base font-medium ${ratingSubmitting ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-700 hover:shadow-xl transform hover:scale-105'}`}
+                aria-busy={ratingSubmitting && submittingDifficulty === DifficultyLevel.Hard}
+              >
+                {submittingDifficulty === DifficultyLevel.Hard && ratingSubmitting ? (
+                  <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5 mr-2 animate-spin" />
+                ) : (
+                  <XCircle className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
+                )}
+                <span className="hidden sm:inline">Khó</span>
+                <span className="sm:hidden">Khó</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -4,6 +4,8 @@ import cors from 'cors';
 import passport from 'passport';
 import session from 'express-session';
 import { Strategy as GoogleStrategy, Profile } from 'passport-google-oauth20';
+import { Strategy as LocalStrategy } from 'passport-local';
+import bcrypt from 'bcrypt';
 import { PrismaClient, User } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -27,13 +29,7 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || [
 ].join(',')).split(',').map(o => o.trim()).filter(Boolean);
 
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true); // direct server-to-server / curl
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    // allow subdomain patterns for the primary domain
-    if (/\.giadinhnhimsoc\.site$/.test(origin.replace(/^https?:\/\//, ''))) return callback(null, true);
-    return callback(new Error('CORS not allowed: ' + origin));
-  },
+  origin: true, // allow all origins
   credentials: true
 }));
 app.set('trust proxy', 1); // behind reverse proxy (needed for secure cookies)
@@ -50,6 +46,28 @@ app.use(session({
 }));
 app.use(passport.initialize());
 app.use(passport.session());
+
+// Add LocalStrategy for username/password
+passport.use(new LocalStrategy(
+  async (username, password, done) => {
+    try {
+      const user = await prisma.user.findUnique({ where: { username } });
+      if (!user) {
+        return done(null, false, { message: 'Incorrect username.' });
+      }
+      if (!user.password) {
+        return done(null, false, { message: 'Password not set for this user.' });
+      }
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return done(null, false, { message: 'Incorrect password.' });
+      }
+      return done(null, user);
+    } catch (err) {
+      return done(err);
+    }
+  }
+));
 
 passport.serializeUser((user: any, done: (err: any, id?: any) => void) => done(null, user.id));
 passport.deserializeUser(async (id: string, done: (err: any, user?: any) => void) => {
@@ -88,8 +106,26 @@ passport.use(new GoogleStrategy(
       const email = profile.emails?.[0]?.value;
       if (!email) return done(new Error('No email from Google'));
       let user = await prisma.user.findUnique({ where: { email } });
+      const emailLocal = email.split('@')[0];
       if (!user) {
-        user = await prisma.user.create({ data: { email, name: profile.displayName, picture: profile.photos?.[0]?.value } });
+        // Try to link to an existing username-only account (e.g. admin created without email)
+        const candidate = await prisma.user.findFirst({ where: { username: emailLocal, email: null } as any });
+        if (candidate) {
+          user = await prisma.user.update({
+            where: { id: candidate.id },
+            data: {
+              email,
+              name: candidate.name || profile.displayName,
+              picture: profile.photos?.[0]?.value || candidate.picture
+            }
+          });
+          console.log('[OAuth] Linked Google account to existing user (by username match):', user.id, 'role=', (user as any).role);
+        } else {
+          user = await prisma.user.create({ data: { email, name: profile.displayName, picture: profile.photos?.[0]?.value } });
+          console.log('[OAuth] Created new user from Google:', user.id, 'role=', (user as any).role);
+        }
+      } else {
+        console.log('[OAuth] Found existing user by email:', user.id, 'role=', (user as any).role);
       }
       return done(null, user);
     } catch (err) {
@@ -130,6 +166,39 @@ app.get('/api/auth/google/callback', passport.authenticate('google', { failureRe
   res.redirect(finalBase + '/');
 });
 
+app.post('/api/auth/register', async (req: Request, res: Response) => {
+  const { username, password, name } = req.body;
+  if (!username || !password || !name) {
+    return res.status(400).json({ error: 'Username, password, and name are required.' });
+  }
+
+  try {
+    const existingUser = await prisma.user.findUnique({ where: { username } });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Username already exists.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: {
+        username,
+        password: hashedPassword,
+        name,
+      }
+    });
+    res.json({ id: user.id, username: user.username, name: user.name });
+  } catch (error) {
+    console.error('Registration failed:', error);
+    res.status(500).json({ error: 'Registration failed.' });
+  }
+});
+
+app.post('/api/auth/login', passport.authenticate('local'), (req: Request, res: Response) => {
+  // If this function gets called, authentication was successful.
+  // `req.user` contains the authenticated user.
+  res.json({ user: req.user });
+});
+
 app.get('/api/auth/logout', (req: Request, res: Response) => {
   req.logout(err => {
     if (err) console.error(err);
@@ -143,6 +212,34 @@ app.get('/api/auth/logout', (req: Request, res: Response) => {
 app.get('/api/auth/me', (req: Request, res: Response) => {
   if (!req.user) return res.status(401).json({ user: null });
   res.json({ user: req.user });
+});
+
+app.put('/api/user/details', async (req: Request, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const { name, branchCode } = req.body;
+  const userId = (req.user as any).id;
+
+  const allowedBranchCodes = ["2300", "2301", "2302", "2305", "2306", "2308", "2309", "2310", "2312", "2313"];
+  if (branchCode && !allowedBranchCodes.includes(branchCode)) {
+    return res.status(400).json({ error: 'Invalid branch code.' });
+  }
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        name: name || undefined,
+        branchCode: branchCode || undefined,
+      }
+    });
+    res.json({ user: updatedUser });
+  } catch (error) {
+    console.error('Failed to update user details:', error);
+    res.status(500).json({ error: 'Failed to update user details.' });
+  }
 });
 
 // Knowledge Bases CRUD (simplified aggregate endpoints)
@@ -1752,7 +1849,7 @@ app.get('/api/study-plans/:id/smart-review', async (req: Request, res: Response)
     // Sort questions by priority
     // New questions: random order
     newQuestions.sort(() => Math.random() - 0.5);
-    
+
     // Hard questions: oldest reviewed first
     hardQuestions.sort((a, b) => {
       const dateA = a.lastReviewed ? new Date(a.lastReviewed).getTime() : 0;
@@ -1769,7 +1866,7 @@ app.get('/api/study-plans/:id/smart-review', async (req: Request, res: Response)
 
     console.log('Smart Review Stats:');
     console.log('- New questions:', newQuestions.length);
-    console.log('- Hard questions:', hardQuestions.length); 
+    console.log('- Hard questions:', hardQuestions.length);
     console.log('- Medium questions:', mediumQuestions.length);
     console.log('- Easy questions:', easyQuestions.length);
 

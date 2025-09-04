@@ -3,11 +3,37 @@
 // Dev: frontend :5173 -> backend http://localhost:3000
 // Prod: same origin (assumes reverse proxy exposes /api/* to backend)
 export const API_BASE = ((): string => {
-  if (typeof window === 'undefined') return (process.env.API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+  // Server-side / build fallback
+  if (typeof window === 'undefined') {
+    return (process.env.API_BASE_URL || process.env.VITE_API_BASE || 'http://localhost:3000').replace(/\/$/, '');
+  }
+
   const origin = window.location.origin.replace(/\/$/, '');
-  if (origin.includes(':5173')) return 'http://localhost:3000';
+  const port = window.location.port;
+
+  // If running in Vite dev (any 517x port) route API to backend port 3000
+  if (import.meta?.env?.DEV && /^517\d$/.test(port)) {
+    return (import.meta.env.VITE_API_BASE || 'http://localhost:3000').replace(/\/$/, '');
+  }
+
+  // Optional explicit override via env
+  if (import.meta?.env?.VITE_API_BASE) {
+    return (import.meta.env.VITE_API_BASE as string).replace(/\/$/, '');
+  }
+
   return origin;
 })();
+
+// Type helper (Vite provides import.meta.env at runtime)
+declare global {
+  interface ImportMetaEnv {
+    DEV?: boolean;
+    VITE_API_BASE?: string;
+  }
+  interface ImportMeta {
+    env: ImportMetaEnv;
+  }
+}
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(API_BASE + path, {
@@ -16,10 +42,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...options,
   });
   if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json();
+  const contentType = res.headers.get("content-type");
+  if (contentType && contentType.indexOf("application/json") !== -1) {
+    return res.json();
+  }
+  // Handle non-json responses if needed
+  return res.text() as any;
 }
 
 export const api = {
+  post: (path: string, body: any) => request(path, { method: 'POST', body: JSON.stringify(body) }),
+  put: (path: string, body: any) => request(path, { method: 'PUT', body: JSON.stringify(body) }),
   me: () => request<{ user: any }>('/api/auth/me'),
   logout: () => request<{ ok: boolean }>('/api/auth/logout'),
   getBases: (email: string) => request<any[]>(`/api/bases?email=${encodeURIComponent(email)}`),
@@ -74,7 +107,7 @@ export const api = {
   adminTestRanking: (testId: string) => request<any[]>(`/api/admin/tests/${testId}/ranking`),
   adminListKnowledgeBases: () => request<any[]>(`/api/admin/knowledge-bases`),
   adminDeleteKnowledgeBase: (baseId: string) => request<{ ok: boolean }>(`/api/admin/knowledge-bases/${baseId}`, { method: 'DELETE' }),
-  adminCreateKnowledgeBase: (payload: { name: string; questions: any[] }) => request<{ id: string }>(`/api/admin/knowledge-bases`, { method: 'POST', body: JSON.stringify(payload) }),
+  adminCreateKnowledgeBase: (payload: { name: string; questions: any[]; creatorEmail?: string }) => request<{ id: string }>(`/api/admin/knowledge-bases`, { method: 'POST', body: JSON.stringify(payload) }),
 
   // Study Plans
   getStudyPlans: () => request<any[]>(`/api/study-plans`),
