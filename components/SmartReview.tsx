@@ -153,7 +153,7 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
   // Generate next questions based on new streaming logic (no 20-question batch)
   // Strategy:
   // 1. Always prepend pending hard questions (they resurface soon after marking hard)
-  // 2. After user has answered milestones (10, 20, 30...) new questions -> insert a hard question next (if available)
+  // 2. After user has answered milestones (3, 6, 9...) new questions -> insert a hard question next (if available)
   // 3. After 15, 30, 45... new questions -> insert a medium question next (if available)
   // 4. Otherwise take exactly ONE new question
   // 5. If no new left: fallback to hard -> medium -> (few) easy
@@ -181,12 +181,12 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
     // }
 
     // 2. Milestones based on streak (not total answered)
-    if (streak > 0 && streak % 10 === 0 && queue.hard.length > 0) {
+    if (streak > 0 && streak % 3 === 0 && queue.hard.length > 0) {
       next.push(queue.hard.shift()!);
       pendingHardQuestions.shift();
       insertedHardMilestone = true;
     }
-    if (streak > 0 && streak % 15 === 0 && queue.medium.length > 0) {
+    if (streak > 0 && streak % 5 === 0 && queue.medium.length > 0) {
       next.push(queue.medium.shift()!);
       insertedMediumMilestone = true;
     }
@@ -606,6 +606,14 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
           </div>
         </div>
 
+        {/* Source Citation - Show after reveal */}
+        {revealed && currentQuestion.source && (
+          <div className="mt-4 sm:mt-6 p-3 sm:p-4 rounded-lg bg-slate-50 border border-slate-200">
+            <h4 className="font-bold text-slate-700 text-sm sm:text-base">Giải thích:</h4>
+            <p className="text-xs sm:text-sm text-slate-600 mt-1">Trích dẫn nguồn: {currentQuestion.source}</p>
+          </div>
+        )}
+
         {/* Action Buttons */}
         <div className="mt-6 sm:mt-8 pt-4 border-t flex justify-center space-x-4">
           {!revealed && (
@@ -613,8 +621,8 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
               onClick={handleReveal}
               disabled={selected === null}
               className={`flex items-center px-6 py-3 rounded-xl font-medium transition-all duration-200 ${selected !== null
-                  ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg hover:shadow-xl transform hover:scale-105'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg hover:shadow-xl transform hover:scale-105'
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                 }`}
             >
               <Eye className="w-5 h-5 mr-2" />

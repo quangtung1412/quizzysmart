@@ -139,5 +139,9 @@ export const api = {
   },
   resetStudyPlanProgress: (studyPlanId: string) => {
     return request<{ success: boolean }>(`/api/study-plans/${studyPlanId}/reset-progress`, { method: 'POST' });
+  },
+  // Quick Search
+  getQuickSearchQuestions: (knowledgeBaseIds: string[]) => {
+    return request<any[]>(`/api/quick-search/questions`, { method: 'POST', body: JSON.stringify({ knowledgeBaseIds }) });
   }
 };

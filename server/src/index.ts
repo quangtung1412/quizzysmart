@@ -41,7 +41,8 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     secure: 'auto', // auto secure if request is https
-    sameSite: 'lax'
+    sameSite: 'lax',
+    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days (1 month) in milliseconds
   }
 }));
 app.use(passport.initialize());
@@ -304,6 +305,53 @@ app.delete('/api/bases/:id', async (req: Request, res: Response) => {
   const id = req.params.id;
   await prisma.knowledgeBase.delete({ where: { id } });
   res.json({ ok: true });
+});
+
+// Quick Search - Get questions from multiple knowledge bases
+app.post('/api/quick-search/questions', async (req: Request, res: Response) => {
+  try {
+    const { knowledgeBaseIds } = req.body;
+
+    if (!knowledgeBaseIds || !Array.isArray(knowledgeBaseIds) || knowledgeBaseIds.length === 0) {
+      return res.status(400).json({ error: 'Invalid knowledge base IDs' });
+    }
+
+    // Fetch questions from all selected knowledge bases
+    const questions = await prisma.question.findMany({
+      where: {
+        baseId: {
+          in: knowledgeBaseIds
+        }
+      },
+      include: {
+        base: {
+          select: {
+            name: true
+          }
+        }
+      },
+      orderBy: [
+        { baseId: 'asc' },
+        { category: 'asc' }
+      ]
+    });
+
+    // Transform to client format
+    const result = questions.map(q => ({
+      id: q.id,
+      question: q.text,
+      options: JSON.parse(q.options),
+      correctAnswerIndex: q.correctAnswerIdx,
+      source: q.source || '',
+      category: q.category || '',
+      knowledgeBaseName: q.base.name
+    }));
+
+    res.json(result);
+  } catch (error) {
+    console.error('Failed to fetch questions for quick search:', error);
+    res.status(500).json({ error: 'Failed to fetch questions' });
+  }
 });
 
 // Tests assigned to user

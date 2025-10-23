@@ -24,9 +24,10 @@ import StudyPlanOverviewScreen from './components/StudyPlanOverviewScreen';
 import StudyPlanListScreen from './components/StudyPlanListScreen';
 import DailyStudy from './components/DailyStudy';
 import SmartReview from './components/SmartReview';
+import QuickSearchScreen from './components/QuickSearchScreen';
 
 
-type Screen = 'login' | 'register' | 'userSetup' | 'modeSelection' | 'testList' | 'testDetail' | 'attemptDetail' | 'knowledgeBase' | 'upload' | 'menu' | 'setup' | 'quiz' | 'results' | 'history' | 'admin' | 'studyPlanSetup' | 'studyPlanOverview' | 'dailyStudy' | 'smartReview' | 'studyPlanList';
+type Screen = 'login' | 'register' | 'userSetup' | 'modeSelection' | 'testList' | 'testDetail' | 'attemptDetail' | 'knowledgeBase' | 'upload' | 'menu' | 'setup' | 'quiz' | 'results' | 'history' | 'admin' | 'studyPlanSetup' | 'studyPlanOverview' | 'dailyStudy' | 'smartReview' | 'studyPlanList' | 'quickSearch';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -181,6 +182,10 @@ const App: React.FC = () => {
     setCurrentTestInfo(null);
     setCurrentTestId(null);
     setCurrentAttemptDetailId(null);
+  }, []);
+
+  const handleSelectQuickSearchMode = useCallback(() => {
+    setCurrentScreen('quickSearch');
   }, []);
 
   const handleGoToKnowledgeBase = useCallback(() => {
@@ -554,6 +559,7 @@ const App: React.FC = () => {
           userName={user?.name || ''}
           onSelectPracticeMode={handleSelectPracticeMode}
           onSelectTestMode={handleSelectTestMode}
+          onSelectQuickSearchMode={handleSelectQuickSearchMode}
         />;
       case 'testList':
         return <TestListScreen
@@ -674,6 +680,11 @@ const App: React.FC = () => {
           studyPlan={currentStudyPlan}
           currentUser={smartReviewEmail}
           onBackToOverview={handleBackToOverview}
+        />;
+      case 'quickSearch':
+        return <QuickSearchScreen
+          knowledgeBases={knowledgeBases}
+          onBack={handleGoToModeSelection}
         />;
       default:
         return <LoginScreen onLoginSuccess={handleLoginSuccess} onSwitchToRegister={handleSwitchToRegister} />;

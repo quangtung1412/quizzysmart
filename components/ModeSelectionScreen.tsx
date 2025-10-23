@@ -3,12 +3,14 @@ import React from 'react';
 interface ModeSelectionScreenProps {
   onSelectPracticeMode: () => void;
   onSelectTestMode: () => void;
+  onSelectQuickSearchMode: () => void;
   userName: string;
 }
 
 const ModeSelectionScreen: React.FC<ModeSelectionScreenProps> = ({
   onSelectPracticeMode,
   onSelectTestMode,
+  onSelectQuickSearchMode,
   userName
 }) => {
   return (
@@ -22,7 +24,7 @@ const ModeSelectionScreen: React.FC<ModeSelectionScreenProps> = ({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
         {/* Practice Mode */}
         <div className="bg-gradient-to-br from-green-50 to-emerald-100 p-6 sm:p-8 rounded-2xl shadow-lg border border-green-200 hover:shadow-xl transition-all duration-300 cursor-pointer group"
           onClick={onSelectPracticeMode}>
@@ -55,12 +57,6 @@ const ModeSelectionScreen: React.FC<ModeSelectionScreenProps> = ({
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                   </svg>
                   <span>Tùy chỉnh số câu hỏi và danh mục</span>
-                </li>
-                <li className="flex items-center space-x-2">
-                  <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
-                  <span>Lưu lại lịch sử làm bài</span>
                 </li>
               </ul>
             </div>
@@ -103,12 +99,6 @@ const ModeSelectionScreen: React.FC<ModeSelectionScreenProps> = ({
                   </svg>
                   <span>Chấm điểm chính thức</span>
                 </li>
-                <li className="flex items-center space-x-2">
-                  <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
-                  <span>Lưu kết quả vĩnh viễn</span>
-                </li>
               </ul>
             </div>
             <button className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2.5 sm:py-3 px-6 sm:px-8 rounded-xl transition-colors duration-200 group-hover:bg-blue-600 text-sm sm:text-base min-h-[44px]">
@@ -117,11 +107,52 @@ const ModeSelectionScreen: React.FC<ModeSelectionScreenProps> = ({
           </div>
         </div>
 
+        {/* Quick Search Mode */}
+        <div className="bg-gradient-to-br from-purple-50 to-violet-100 p-6 sm:p-8 rounded-2xl shadow-lg border border-purple-200 hover:shadow-xl transition-all duration-300 cursor-pointer group"
+          onClick={onSelectQuickSearchMode}>
+          <div className="flex flex-col items-center space-y-4 sm:space-y-6">
+            <div className="w-16 h-16 sm:w-20 sm:h-20 bg-purple-500 rounded-full flex items-center justify-center text-white text-2xl sm:text-3xl group-hover:scale-110 transition-transform duration-300">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-8 h-8 sm:w-10 sm:h-10">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-xl sm:text-2xl font-bold text-purple-700 mb-2 sm:mb-3">Tra cứu</h3>
+              <p className="text-purple-600 text-sm sm:text-base mb-3 sm:mb-4">
+                Tìm kiếm nhanh câu hỏi và đáp án
+              </p>
+              <ul className="text-xs sm:text-sm text-purple-600 space-y-1.5 sm:space-y-2 text-left">
+                <li className="flex items-center space-x-2">
+                  <svg className="w-4 h-4 text-purple-500" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                  <span>Chọn nhiều cơ sở kiến thức</span>
+                </li>
+                <li className="flex items-center space-x-2">
+                  <svg className="w-4 h-4 text-purple-500" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                  <span>Tìm kiếm theo từ khóa</span>
+                </li>
+                <li className="flex items-center space-x-2">
+                  <svg className="w-4 h-4 text-purple-500" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                  <span>Đánh dấu kết quả trùng khớp</span>
+                </li>
+              </ul>
+            </div>
+            <button className="bg-purple-500 hover:bg-purple-600 text-white font-semibold py-2.5 sm:py-3 px-6 sm:px-8 rounded-xl transition-colors duration-200 group-hover:bg-purple-600 text-sm sm:text-base min-h-[44px]">
+              Tra cứu ngay
+            </button>
+          </div>
+        </div>
+
       </div>
 
       <div className="mt-6 sm:mt-8 p-3 sm:p-4 bg-slate-100 rounded-lg">
         <p className="text-xs sm:text-sm text-slate-600">
-          💡 <strong>Gợi ý:</strong> Bắt đầu với <span className="text-green-600 font-semibold">Ôn luyện</span> để làm quen câu hỏi, sau đó thử sức với chế độ <span className="text-blue-600 font-semibold">Thi</span>.
+          💡 <strong>Gợi ý:</strong> Sử dụng <span className="text-purple-600 font-semibold">Tra cứu</span> để tìm nhanh thông tin, <span className="text-green-600 font-semibold">Ôn luyện</span> để làm quen câu hỏi, hoặc <span className="text-blue-600 font-semibold">Thi</span> để kiểm tra năng lực.
         </p>
       </div>
     </div>
