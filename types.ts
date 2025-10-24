@@ -25,6 +25,12 @@ export interface User {
   branchCode?: string;
   isAdmin?: boolean;
   picture?: string;
+  aiSearchQuota?: number; // Number of AI searches remaining
+  quickSearchQuota?: number; // Number of quick searches remaining (free trial)
+  role?: UserRole;
+  hasQuickSearchAccess?: boolean; // Quick Search feature access
+  premiumPlan?: string | null; // 'plus' | 'premium' | null
+  premiumExpiresAt?: string | null; // ISO date string
 }
 
 export interface AppUser {

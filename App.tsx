@@ -4,6 +4,8 @@ import { useKnowledgeBaseStore, useAttemptStore } from './src/hooks/usePersisten
 import { useStudyPlanStore } from './src/hooks/useStudyPlanStore';
 import { shuffleArray } from './src/utils/shuffle';
 import { api } from './src/api';
+import { initSocket, disconnectSocket } from './src/socket';
+import { clearDeviceSession, getDeviceId, getSessionToken } from './src/utils/deviceId';
 import FileUpload from './components/FileUpload';
 import MainMenu from './components/MainMenu';
 import SetupScreen from './components/SetupScreen';
@@ -25,13 +27,19 @@ import StudyPlanListScreen from './components/StudyPlanListScreen';
 import DailyStudy from './components/DailyStudy';
 import SmartReview from './components/SmartReview';
 import QuickSearchScreen from './components/QuickSearchScreen';
+import PremiumIntroScreen from './components/PremiumIntroScreen';
+import LiveCameraSearch from './components/LiveCameraSearch';
+import PremiumPlansScreen from './components/PremiumPlansScreen';
 
 
-type Screen = 'login' | 'register' | 'userSetup' | 'modeSelection' | 'testList' | 'testDetail' | 'attemptDetail' | 'knowledgeBase' | 'upload' | 'menu' | 'setup' | 'quiz' | 'results' | 'history' | 'admin' | 'studyPlanSetup' | 'studyPlanOverview' | 'dailyStudy' | 'smartReview' | 'studyPlanList' | 'quickSearch';
+type Screen = 'login' | 'register' | 'userSetup' | 'modeSelection' | 'testList' | 'testDetail' | 'attemptDetail' | 'knowledgeBase' | 'upload' | 'menu' | 'setup' | 'quiz' | 'results' | 'history' | 'admin' | 'studyPlanSetup' | 'studyPlanOverview' | 'dailyStudy' | 'smartReview' | 'studyPlanList' | 'quickSearch' | 'premiumIntro' | 'liveCamera' | 'premiumPlans';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [currentScreen, setCurrentScreen] = useState<Screen>('login');
+  const [forceLogoutMessage, setForceLogoutMessage] = useState<string | null>(null);
+  const [showThankYouPopup, setShowThankYouPopup] = useState<boolean>(false);
+  const [thankYouData, setThankYouData] = useState<any>(null);
 
   // Prevent browser/Android back navigation (soft back) while in app
   useEffect(() => {
@@ -44,6 +52,87 @@ const App: React.FC = () => {
     window.addEventListener('popstate', blockPop);
     return () => window.removeEventListener('popstate', blockPop);
   }, []);
+
+  // Setup Socket.IO connection and listen for force-logout
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const socket = initSocket(user.id);
+
+    // Listen for force-logout event
+    socket.on('force-logout', (data: { reason: string; message: string }) => {
+      console.log('[Force Logout]', data);
+      setForceLogoutMessage(data.message);
+
+      // Clear device session
+      clearDeviceSession();
+
+      // Logout user
+      handleLogout();
+    });
+
+    return () => {
+      disconnectSocket();
+    };
+  }, [user?.id]);
+
+  // Device session validation on app start
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const validateSession = async () => {
+      try {
+        const deviceId = getDeviceId();
+        const sessionToken = getSessionToken();
+
+        if (!sessionToken) {
+          console.log('[Device] No session token found');
+          return;
+        }
+
+        const result = await api.validateDevice(deviceId, sessionToken);
+
+        if (!result.valid) {
+          console.log('[Device] Session invalid:', result.message);
+          setForceLogoutMessage(result.message || 'Phiên đăng nhập không hợp lệ');
+          handleLogout();
+        }
+      } catch (error) {
+        console.error('[Device] Validation error:', error);
+      }
+    };
+
+    validateSession();
+  }, [user?.id]);
+
+  // Check for pending thank you popup when entering ModeSelectionScreen
+  useEffect(() => {
+    if (!user?.id || currentScreen !== 'modeSelection') return;
+
+    const checkThankYouPopup = async () => {
+      try {
+        const result = await api.checkThankYouPopup();
+        if (result.shouldShow) {
+          // Get user's current subscription info to show in popup
+          const freshUserData = await refreshUserData();
+          if (freshUserData) {
+            // Find most recent active subscription for display
+            setThankYouData({
+              plan: freshUserData.premiumPlan || 'premium',
+              planName: freshUserData.premiumPlan === 'plus' ? 'Plus' : 'Premium',
+              aiQuota: freshUserData.aiSearchQuota || 0,
+              expiresAt: freshUserData.premiumExpiresAt || new Date()
+            });
+            setShowThankYouPopup(true);
+          }
+        }
+      } catch (error) {
+        console.error('[Thank You Popup] Error checking:', error);
+      }
+    };
+
+    checkThankYouPopup();
+  }, [user?.id, currentScreen]);
 
   const { bases: knowledgeBases, addBase, removeBase, setBases: setKnowledgeBases } = useKnowledgeBaseStore(user?.email || user?.username || null);
   const { attempts: quizAttempts, createAttempt, updateAttempt, setAttempts: setQuizAttempts } = useAttemptStore(user?.email || user?.username || null);
@@ -96,16 +185,53 @@ const App: React.FC = () => {
   }, [currentAttemptId, quizAttempts, knowledgeBases, activeQuizQuestions.length]);
 
 
-  const handleLoginSuccess = useCallback((loggedInUser: User) => {
-    setUser(loggedInUser);
+  // Function to refresh user data
+  const refreshUserData = useCallback(async () => {
+    try {
+      const r = await api.me();
+      if (r.user) {
+        const userData: User = {
+          id: r.user.id,
+          username: r.user.username,
+          googleId: r.user.googleId,
+          name: r.user.name || '',
+          email: r.user.email,
+          branchCode: r.user.branchCode,
+          isAdmin: (r.user as any).role === 'admin',
+          picture: r.user.picture || '',
+          aiSearchQuota: (r.user as any).aiSearchQuota || 0,
+          quickSearchQuota: (r.user as any).quickSearchQuota || 0,
+          hasQuickSearchAccess: (r.user as any).hasQuickSearchAccess || false,
+          premiumPlan: (r.user as any).premiumPlan || null,
+          premiumExpiresAt: (r.user as any).premiumExpiresAt || null,
+          role: (r.user as any).role
+        };
+        setUser(userData);
+        return userData;
+      }
+    } catch (error: any) {
+      // Don't log 401 errors - they're expected when user is not logged in
+      if (!error?.message?.includes('401')) {
+        console.error('Failed to refresh user data:', error);
+      }
+    }
+    return null;
+  }, []);
+
+  const handleLoginSuccess = useCallback(async (loggedInUser: User) => {
+    // Refresh user data to get latest quota and premium info
+    const freshUserData = await refreshUserData();
+
+    const userData = freshUserData || loggedInUser;
+    setUser(userData);
 
     // Check if user needs to complete setup (missing branchCode)
-    if (!loggedInUser.branchCode) {
+    if (!userData.branchCode) {
       setCurrentScreen('userSetup');
     } else {
       setCurrentScreen('modeSelection');
     }
-  }, []);
+  }, [refreshUserData]);
 
   const handleSwitchToRegister = useCallback(() => {
     setCurrentScreen('register');
@@ -121,20 +247,8 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    api.me().then(r => {
-      if (r.user) {
-        const userData: User = {
-          id: r.user.id,
-          username: r.user.username,
-          googleId: r.user.googleId,
-          name: r.user.name || '',
-          email: r.user.email,
-          branchCode: r.user.branchCode,
-          isAdmin: (r.user as any).role === 'admin',
-          picture: r.user.picture || ''
-        };
-        setUser(userData);
-
+    refreshUserData().then(userData => {
+      if (userData) {
         // Check if user needs to complete setup
         if (!userData.branchCode) {
           setCurrentScreen('userSetup');
@@ -142,8 +256,8 @@ const App: React.FC = () => {
           setCurrentScreen('modeSelection');
         }
       }
-    }).catch(() => { });
-  }, []);
+    });
+  }, [refreshUserData]);
 
   const handleLogout = useCallback(async () => {
     try {
@@ -151,6 +265,9 @@ const App: React.FC = () => {
     } catch (error) {
       console.error('Logout error:', error);
     }
+
+    // Clear device session data
+    clearDeviceSession();
 
     setUser(null);
     setCurrentScreen('login');
@@ -163,6 +280,7 @@ const App: React.FC = () => {
     setQuizAttempts([]);
     setSelectedKnowledgeBase(null);
     setCurrentAttemptId(null);
+    setForceLogoutMessage(null);
   }, []);
 
   const handleSelectPracticeMode = useCallback(() => {
@@ -186,6 +304,23 @@ const App: React.FC = () => {
 
   const handleSelectQuickSearchMode = useCallback(() => {
     setCurrentScreen('quickSearch');
+  }, []);
+
+  const handleSelectPremiumMode = useCallback(() => {
+    // Nếu user có AI quota, bỏ qua intro và vào thẳng LiveCameraSearch
+    if (user && user.aiSearchQuota > 0) {
+      setCurrentScreen('liveCamera');
+    } else {
+      setCurrentScreen('premiumIntro');
+    }
+  }, [user]);
+
+  const handleStartLiveCamera = useCallback(() => {
+    setCurrentScreen('liveCamera');
+  }, []);
+
+  const handleGoToPremiumPlans = useCallback(() => {
+    setCurrentScreen('premiumPlans');
   }, []);
 
   const handleGoToKnowledgeBase = useCallback(() => {
@@ -557,9 +692,14 @@ const App: React.FC = () => {
       case 'modeSelection':
         return <ModeSelectionScreen
           userName={user?.name || ''}
+          isAdmin={user?.isAdmin}
+          user={user}
           onSelectPracticeMode={handleSelectPracticeMode}
           onSelectTestMode={handleSelectTestMode}
           onSelectQuickSearchMode={handleSelectQuickSearchMode}
+          onSelectPremiumMode={handleSelectPremiumMode}
+          onGoToPremiumPlans={handleGoToPremiumPlans}
+          onAdminPanel={user?.isAdmin ? handleGoToAdmin : undefined}
         />;
       case 'testList':
         return <TestListScreen
@@ -685,40 +825,248 @@ const App: React.FC = () => {
         return <QuickSearchScreen
           knowledgeBases={knowledgeBases}
           onBack={handleGoToModeSelection}
+          user={user}
+          onUpgradeRequired={handleGoToPremiumPlans}
+          onQuotaUpdate={refreshUserData}
+        />;
+      case 'premiumIntro':
+        return <PremiumIntroScreen
+          onLiveCameraStart={handleStartLiveCamera}
+          onBack={handleGoToModeSelection}
+        />;
+      case 'liveCamera':
+        return <LiveCameraSearch
+          knowledgeBases={knowledgeBases}
+          onBack={handleGoToModeSelection}
+          onGoToPremiumPlans={handleGoToPremiumPlans}
+          user={user}
+        />;
+      case 'premiumPlans':
+        return <PremiumPlansScreen
+          user={user}
+          onBack={handleGoToModeSelection}
+          onPurchaseSuccess={refreshUserData}
         />;
       default:
-        return <LoginScreen onLoginSuccess={handleLoginSuccess} onSwitchToRegister={handleSwitchToRegister} />;
+        return (
+          <>
+            {forceLogoutMessage && (
+              <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-center">
+                <p className="text-red-700 font-medium">⚠️ {forceLogoutMessage}</p>
+              </div>
+            )}
+            <LoginScreen onLoginSuccess={handleLoginSuccess} onSwitchToRegister={handleSwitchToRegister} />
+          </>
+        );
     }
   };
 
-  return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-slate-50 text-slate-800">
-      <div className="w-full max-w-8xl mx-auto relative">
-        <header className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-red-800 ">Quizzy Smart</h1>
-          <p className="text-slate-500 mt-2">Ôn thi trắc nghiệm thông minh</p>
-          {user && (
-            <div className="absolute top-0 right-0 flex items-center gap-3 bg-white p-2 rounded-full shadow-sm border border-slate-200">
-              {user.picture && <img src={user.picture} alt={user.name} className="w-8 h-8 rounded-full" />}
-              <span className="text-sm font-medium text-slate-600 hidden sm:inline">Chào, {user.name}</span>
-              <button
-                onClick={handleLogout}
-                title="Đăng xuất"
-                className="p-2 text-slate-500 hover:bg-slate-100 hover:text-red-600 rounded-full transition-colors"
-                aria-label="Đăng xuất"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+  // Thank You Modal Component
+  const ThankYouModal = () => {
+    if (!showThankYouPopup || !thankYouData) return null;
+
+    const planName = thankYouData.planName || 'Premium';
+    let planColor = 'from-purple-500 to-indigo-500'; // Default for Plus
+
+    if (thankYouData.plan === 'premium') {
+      planColor = 'from-yellow-500 to-amber-500';
+    }
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50 backdrop-blur-sm animate-fadeIn overflow-y-auto">
+        <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full my-8 overflow-hidden animate-slideUp">
+          {/* Header with gradient - Compact */}
+          <div className={`bg-gradient-to-r ${planColor} px-6 py-8 text-center relative overflow-hidden`}>
+            {/* Decorative circles */}
+            <div className="absolute top-0 right-0 w-24 h-24 bg-white opacity-10 rounded-full -mr-12 -mt-12"></div>
+            <div className="absolute bottom-0 left-0 w-20 h-20 bg-white opacity-10 rounded-full -ml-10 -mb-10"></div>
+
+            {/* Success icon */}
+            <div className="relative z-10">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-full mb-3 shadow-lg">
+                <svg className="w-8 h-8 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                 </svg>
-              </button>
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-1">
+                Thanh toán thành công!
+              </h2>
+              <p className="text-white text-opacity-90">
+                Chào mừng bạn đến với gói {planName}
+              </p>
             </div>
-          )}
+          </div>
+
+          {/* Content - Compact */}
+          <div className="px-6 py-6">
+            {/* Thank you message - Shorter */}
+            <div className="text-center mb-5">
+              <div className="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-r from-amber-400 to-yellow-400 rounded-full mb-3">
+                <span className="text-2xl">🙏</span>
+              </div>
+              <h3 className="text-xl font-bold text-slate-800 mb-2">
+                Cảm ơn bạn rất nhiều!
+              </h3>
+              <p className="text-slate-600 text-sm leading-relaxed">
+                Sự ủng hộ của bạn giúp chúng tôi phát triển website tốt hơn.
+              </p>
+            </div>
+
+            {/* Plan details - Compact */}
+            <div className="bg-gradient-to-br from-slate-50 to-slate-100 rounded-xl p-4 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-slate-600 text-sm font-medium">Gói đã kích hoạt:</span>
+                <span className={`px-3 py-1.5 rounded-full text-white font-bold text-xs bg-gradient-to-r ${planColor}`}>
+                  {planName}
+                </span>
+              </div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-slate-600 text-sm font-medium">AI Search:</span>
+                <span className="text-green-600 font-bold">
+                  {thankYouData.aiQuota} lượt
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-600 text-sm font-medium">Hết hạn:</span>
+                <span className="text-slate-700 font-semibold text-sm">
+                  {new Date(thankYouData.expiresAt).toLocaleDateString('vi-VN')}
+                </span>
+              </div>
+            </div>
+
+            {/* Features unlocked - Compact */}
+            <div className="bg-green-50 border-2 border-green-200 rounded-xl p-3 mb-5">
+              <div className="flex items-center gap-2">
+                <div className="flex-shrink-0 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+                  <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <p className="font-semibold text-green-800 text-sm">
+                  Tất cả tính năng Premium đã kích hoạt
+                </p>
+              </div>
+            </div>
+
+            {/* Action button */}
+            <button
+              onClick={() => {
+                setShowThankYouPopup(false);
+                setThankYouData(null);
+              }}
+              className="w-full py-3 px-6 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white font-bold rounded-xl transition-all shadow-lg hover:shadow-xl transform hover:scale-105"
+            >
+              Khám phá ngay
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-1 sm:p-2 bg-slate-50 text-slate-800">
+      {/* Thank You Modal */}
+      <ThankYouModal />
+
+      <div className="w-full max-w-8xl mx-auto relative">
+        <header className="mb-3 sm:mb-4">
+          {/* Mobile Layout - Logo và tên ở trái, user info ở phải */}
+          <div className="flex items-start justify-between mb-2 sm:mb-1">
+            {/* Logo và tên website - Bên trái */}
+            <div className="flex items-center gap-1 sm:gap-2">
+              <img src="/images/logo.svg" alt="Quizzy Smart Logo" className="w-8 h-8 sm:w-12 sm:h-12" />
+              <div className="flex flex-col items-start">
+                <h1 className="text-lg sm:text-3xl font-bold text-red-800 leading-tight">
+                  <span className="hidden sm:inline">Quizzy Smart</span>
+                  <span className="inline sm:hidden">Quizzy Smart</span>
+                </h1>
+                <p className="text-slate-500 text-xs sm:text-base sm:hidden">Ôn thi thông minh</p>
+              </div>
+            </div>
+
+            {/* User Info - Bên phải */}
+            {user && (
+              <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0">
+                {/* Premium Button - Bên trái AI quota cho user thường/plus */}
+                {(!user.premiumPlan || user.premiumPlan === 'plus') && (
+                  <button
+                    onClick={handleGoToPremiumPlans}
+                    className="bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-white font-bold py-2 px-4 rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center gap-2 animate-pulse"
+                    title={user.premiumPlan === 'plus' ? 'Nâng cấp Premium' : 'Mua gói Premium'}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+                      <path fillRule="evenodd" d="M10 1c-1.828 0-3.623.149-5.371.435a.75.75 0 00-.629.74v.387c-.827.157-1.642.345-2.445.564a.75.75 0 00-.552.698 5 5 0 004.503 5.152 6 6 0 002.946 1.822A6.451 6.451 0 017.768 13H7.5A1.5 1.5 0 006 14.5V17h-.75C4.56 17 4 17.56 4 18.25c0 .414.336.75.75.75h10.5a.75.75 0 00.75-.75c0-.69-.56-1.25-1.25-1.25H14v-2.5a1.5 1.5 0 00-1.5-1.5h-.268a6.453 6.453 0 01-.684-2.202 6 6 0 002.946-1.822 5 5 0 004.503-5.152.75.75 0 00-.552-.698A31.804 31.804 0 0016 2.562v-.387a.75.75 0 00-.629-.74A33.227 33.227 0 0010 1zM2.525 4.422C3.012 4.3 3.504 4.19 4 4.09V5c0 .74.134 1.448.38 2.103a3.503 3.503 0 01-1.855-2.68zm14.95 0a3.503 3.503 0 01-1.854 2.68C15.866 6.449 16 5.74 16 5v-.91c.496.099.988.21 1.475.332z" clipRule="evenodd" />
+                    </svg>
+                    <span className="hidden sm:inline">
+                      {user.premiumPlan === 'plus' ? 'Nâng cấp Premium' : 'Nâng cấp Premium'}
+                    </span>
+                  </button>
+                )}
+
+                {/* AI Quota Display - For all users - Same style for everyone */}
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full shadow-sm bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200">
+                  <span className="text-lg">💎</span>
+                  <span className="text-sm font-bold text-blue-700">
+                    {user.aiSearchQuota || 0}
+                  </span>
+                </div>
+
+                {/* Quick Search Quota Display - Only for free users */}
+                {!user.premiumPlan && (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full shadow-sm bg-gradient-to-r from-purple-50 to-violet-50 border border-purple-200">
+                    <span className="text-lg">⚡</span>
+                    <span className="text-sm font-bold text-blue-700">
+                      {user.quickSearchQuota || 0}
+                    </span>
+                  </div>
+                )}
+
+                {/* User Info with Premium Styling */}
+                <div className={`flex items-center gap-2 bg-white p-2 rounded-full shadow-sm transition-all duration-200 ${user.premiumPlan === 'plus'
+                  ? 'border-2 border-purple-500 shadow-purple-200'
+                  : user.premiumPlan === 'premium'
+                    ? 'border-2 border-yellow-500 shadow-yellow-200'
+                    : 'border border-slate-200'
+                  }`}>
+                  {user.picture && <img src={user.picture} alt={user.name} className="w-8 h-8 rounded-full" />}
+
+                  <div className="hidden sm:flex flex-col items-start">
+                    <span className={`text-sm font-medium ${user.premiumPlan === 'plus'
+                      ? 'text-purple-700 font-bold'
+                      : user.premiumPlan === 'premium'
+                        ? 'text-yellow-700 font-bold'
+                        : 'text-slate-600'
+                      }`}>
+                      Chào, {user.name}
+                    </span>
+
+                  </div>
+
+
+                  <button
+                    onClick={handleLogout}
+                    title="Đăng xuất"
+                    className="p-2 text-slate-500 hover:bg-slate-100 hover:text-red-600 rounded-full transition-colors"
+                    aria-label="Đăng xuất"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Subtitle - Hiện bên trái trên desktop */}
+          <p className="text-slate-500 text-left hidden sm:block ml-1 text-sm">Ôn thi trắc nghiệm thông minh</p>
         </header>
-        <main className="bg-white p-6 sm:p-8 rounded-2xl shadow-lg transition-all duration-300">
+        <main className="bg-white p-3 sm:p-4 rounded-xl shadow-lg transition-all duration-300">
           {renderScreen()}
         </main>
-        <footer className="text-center mt-8 text-sm text-slate-400">
-          <p>©2025 – Phạm Quang Tùng - Agribank Chi nhánh Hải Dương</p>
+        <footer className="text-center mt-2 sm:mt-3 text-xs sm:text-sm text-slate-400">
+          <p>©2025 - Quizzy Smart</p>
         </footer>
       </div>
     </div>

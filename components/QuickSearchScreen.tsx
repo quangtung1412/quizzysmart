@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { KnowledgeBase, Question } from '../types';
+import { KnowledgeBase, Question, User } from '../types';
 import { api } from '../src/api';
 
 interface QuickSearchScreenProps {
   knowledgeBases: KnowledgeBase[];
   onBack: () => void;
+  user: User | null;
+  onUpgradeRequired?: () => void;
+  onQuotaUpdate?: () => void;
 }
 
 interface SearchResult {
@@ -30,18 +33,67 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
-const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, onBack }) => {
+const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, onBack, user, onUpgradeRequired, onQuotaUpdate }) => {
   const [selectedBaseIds, setSelectedBaseIds] = useState<Set<string>>(new Set());
   const [allQuestions, setAllQuestions] = useState<Question[]>([]);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
-  const [isKnowledgeBaseExpanded, setIsKnowledgeBaseExpanded] = useState(true);
+  const [showKnowledgeBasePopup, setShowKnowledgeBasePopup] = useState(true); // Show popup on first load
   const [visibleResults, setVisibleResults] = useState(50); // Show first 50 results
+  const [remainingQuota, setRemainingQuota] = useState<number | null>(user?.quickSearchQuota ?? null);
+  const [showQuotaPopup, setShowQuotaPopup] = useState(false);
+  const [lastSearchTime, setLastSearchTime] = useState<number | null>(null);
+  const [hasActiveSearch, setHasActiveSearch] = useState(false);
 
-  // Debounce search keyword to avoid lag
-  const debouncedSearchKeyword = useDebounce(searchKeyword, 300);
+  // Debounce search keyword - Increased to 500ms for better performance
+  const debouncedSearchKeyword = useDebounce(searchKeyword, 500);
 
+  // Track when user performs a search (keyword changes to non-empty)
+  useEffect(() => {
+    const hasKeyword = debouncedSearchKeyword.trim().length > 0;
+
+    if (hasKeyword) {
+      // User is searching - mark as active and update last search time
+      setHasActiveSearch(true);
+      setLastSearchTime(Date.now());
+    } else {
+      // No keyword - no active search
+      setHasActiveSearch(false);
+      setLastSearchTime(null);
+    }
+  }, [debouncedSearchKeyword]);
+
+  // Effect to decrement quota after user stops searching (inactivity timeout)
+  useEffect(() => {
+    // Premium users don't consume quota
+    if (!hasActiveSearch || !lastSearchTime || user?.premiumPlan === 'premium') return;
+
+    // After 5 seconds of no changes to search keyword, assume user found the answer
+    const inactivityTimer = setTimeout(async () => {
+      try {
+        const { remainingQuota: newQuota } = await api.decrementQuickSearchQuota();
+        setRemainingQuota(newQuota);
+
+        // Update quota in parent component (App.tsx)
+        if (onQuotaUpdate) {
+          onQuotaUpdate();
+        }
+
+        if (newQuota <= 0) {
+          setShowQuotaPopup(true);
+        }
+        // Reset session
+        setHasActiveSearch(false);
+        setLastSearchTime(null);
+      } catch (error) {
+        console.error("Failed to decrement quota:", error);
+        setShowQuotaPopup(true);
+      }
+    }, 5000); // 5 seconds of inactivity
+
+    return () => clearTimeout(inactivityTimer);
+  }, [lastSearchTime, hasActiveSearch, user?.premiumPlan, onQuotaUpdate]);
   // Toggle knowledge base selection
   const toggleBaseSelection = (baseId: string) => {
     setSelectedBaseIds(prev => {
@@ -55,20 +107,59 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
     });
   };
 
+  // Select all knowledge bases
+  const selectAllBases = () => {
+    const allIds = new Set(knowledgeBases.map(base => base.id));
+    setSelectedBaseIds(allIds);
+  };
+
+  // Deselect all knowledge bases
+  const deselectAllBases = () => {
+    setSelectedBaseIds(new Set());
+  };
+
   // Load questions from selected knowledge bases
   const loadQuestions = async () => {
     if (selectedBaseIds.size === 0) {
       setAllQuestions([]);
+      // Don't reset quota here, keep the initial value
       return;
     }
 
     setIsLoadingQuestions(true);
     try {
       const baseIdsArray: string[] = Array.from(selectedBaseIds);
-      const questions = await api.getQuickSearchQuestions(baseIdsArray);
-      setAllQuestions(questions);
-    } catch (error) {
+      const userEmail = user?.email || user?.username || '';
+      if (!userEmail) {
+        alert('Không tìm thấy thông tin người dùng');
+        setIsLoadingQuestions(false);
+        return;
+      }
+      const response = await api.getQuickSearchQuestions(baseIdsArray, userEmail);
+      setAllQuestions(response.questions);
+      // The API returns the most up-to-date quota, which might be different from the user object
+      if (response.remainingQuota !== undefined) {
+        setRemainingQuota(response.remainingQuota);
+      }
+    } catch (error: any) {
       console.error('Failed to load questions:', error);
+
+      // Check if error is due to access restriction or quota exhausted
+      if (error?.needsUpgrade || error?.message?.includes('hết lượt tra cứu')) {
+        setShowQuotaPopup(true);
+        return;
+      }
+
+      if (error?.needsUpgrade || error?.message?.includes('only available for Plus and Premium')) {
+        alert('Chức năng tra cứu nhanh chỉ dành cho người dùng Plus và Premium. Vui lòng nâng cấp tài khoản.');
+        if (onUpgradeRequired) {
+          onUpgradeRequired();
+        } else {
+          onBack();
+        }
+        return;
+      }
+
       alert('Không thể tải câu hỏi. Vui lòng thử lại.');
       setAllQuestions([]);
     } finally {
@@ -79,10 +170,6 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
   // Load questions when selection changes
   useEffect(() => {
     loadQuestions();
-    // Auto-collapse knowledge base selection after selecting at least one
-    if (selectedBaseIds.size > 0) {
-      setIsKnowledgeBaseExpanded(false);
-    }
   }, [selectedBaseIds]);
 
   // Reset visible results when search keyword changes
@@ -90,7 +177,7 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
     setVisibleResults(50);
   }, [debouncedSearchKeyword]);
 
-  // Highlight text matching keyword - Optimized version
+  // Highlight text matching keyword - More optimized version
   const highlightText = useCallback((text: string, keyword: string): React.ReactNode => {
     if (!keyword.trim()) return text;
 
@@ -104,9 +191,9 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
     let lastIndex = 0;
     let currentIndex = normalizedText.indexOf(normalizedKeyword);
 
-    // Limit to first 50 matches to avoid performance issues with too many highlights
+    // Limit to first 20 matches to avoid performance issues (reduced from 50)
     let matchCount = 0;
-    const MAX_MATCHES = 50;
+    const MAX_MATCHES = 20;
 
     while (currentIndex !== -1 && matchCount < MAX_MATCHES) {
       // Add text before match
@@ -134,30 +221,40 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
     return <>{parts}</>;
   }, []);
 
-  // Filter and search questions - Use debounced keyword
+  // Filter and search questions - Use debounced keyword with optimized search
   const searchResults = useMemo((): SearchResult[] => {
     const keyword = debouncedSearchKeyword.trim();
 
-    if (!keyword) return [];
+    if (!keyword) {
+      return [];
+    }
+
+    // Only check quota for non-premium users
+    if (user?.premiumPlan !== 'premium' && remainingQuota !== null && remainingQuota <= 0) {
+      return [];
+    }
+
     if (allQuestions.length === 0) return [];
 
     const normalizedKeyword = keyword.toLowerCase();
     const results: SearchResult[] = [];
 
-    // Limit results to improve performance
-    const MAX_RESULTS = 500;
+    // Limit results to improve performance - Reduced from 500 to 200 for better performance
+    const MAX_RESULTS = 200;
 
-    for (const question of allQuestions) {
-      if (results.length >= MAX_RESULTS) break;
-
-      const matchedInQuestion = question.question.toLowerCase().includes(normalizedKeyword);
+    // Early exit optimization
+    for (let i = 0; i < allQuestions.length && results.length < MAX_RESULTS; i++) {
+      const question = allQuestions[i];
+      const normalizedQuestion = question.question.toLowerCase();
+      const matchedInQuestion = normalizedQuestion.includes(normalizedKeyword);
       const matchedInAnswers: number[] = [];
 
-      question.options.forEach((option, index) => {
-        if (option.toLowerCase().includes(normalizedKeyword)) {
-          matchedInAnswers.push(index);
+      // Only check options if not already matched in question or if we need to highlight
+      for (let j = 0; j < question.options.length; j++) {
+        if (question.options[j].toLowerCase().includes(normalizedKeyword)) {
+          matchedInAnswers.push(j);
         }
-      });
+      }
 
       if (matchedInQuestion || matchedInAnswers.length > 0) {
         results.push({
@@ -169,7 +266,7 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
     }
 
     return results;
-  }, [allQuestions, debouncedSearchKeyword]);
+  }, [allQuestions, debouncedSearchKeyword, remainingQuota, user?.premiumPlan]);
 
   // Load more results function - defined after searchResults
   const loadMoreResults = useCallback(() => {
@@ -183,103 +280,180 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
 
   return (
     <div className="max-w-7xl mx-auto space-y-4">
-      {/* Header - Compact when knowledge base is selected */}
-      <div className={`flex items-center justify-between transition-all duration-300 ${selectedBaseIds.size > 0 ? 'mb-2' : 'mb-6'}`}>
+      {/* Out of Quota Popup */}
+      {showQuotaPopup && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full text-center">
+            <h3 className="text-2xl font-bold text-red-600 mb-4">Hết lượt tra cứu</h3>
+            <p className="text-slate-600 mb-6">
+              Bạn đã sử dụng hết lượt tra cứu nhanh miễn phí. Vui lòng nâng cấp tài khoản để tiếp tục sử dụng không giới hạn.
+            </p>
+            <div className="flex justify-center gap-4">
+              <button
+                onClick={() => {
+                  setShowQuotaPopup(false);
+                  onBack();
+                }}
+                className="px-6 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg transition-colors"
+              >
+                Để sau
+              </button>
+              <button
+                onClick={() => {
+                  setShowQuotaPopup(false);
+                  if (onUpgradeRequired) onUpgradeRequired();
+                }}
+                className="px-6 py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-white font-bold rounded-lg transition-all shadow-md hover:shadow-lg"
+              >
+                🚀 Nâng cấp ngay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Header with Settings Button */}
+      <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className={`font-bold text-slate-700 transition-all duration-300 ${selectedBaseIds.size > 0 ? 'text-2xl' : 'text-3xl'}`}>
+          <h2 className="text-2xl font-bold text-slate-700">
             Tra cứu nhanh
           </h2>
-          {selectedBaseIds.size === 0 && (
-            <p className="text-slate-600 mt-1">Tìm kiếm câu hỏi và đáp án trong cơ sở kiến thức</p>
+          {selectedBaseIds.size > 0 && (
+            <p className="text-sm text-slate-600 mt-1">
+              Đã chọn {selectedBaseIds.size} CSKT • {allQuestions.length} câu hỏi
+            </p>
+          )}
+          {user?.premiumPlan !== 'premium' && remainingQuota !== null && (
+            <p className="text-sm text-purple-600 mt-1 flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
+              </svg>
+              Còn lại {remainingQuota} lượt tra cứu
+            </p>
           )}
         </div>
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-          </svg>
-          <span>Quay lại</span>
-        </button>
-      </div>
-
-      {/* Knowledge Base Selection */}
-      <div className="bg-white rounded-xl shadow-md border border-slate-200">
-        {/* Header - Always Visible */}
-        <div
-          className="p-4 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors rounded-t-xl"
-          onClick={() => setIsKnowledgeBaseExpanded(!isKnowledgeBaseExpanded)}
-        >
-          <div className="flex items-center gap-3">
-            <h3 className="text-lg font-semibold text-slate-700">
-              Cơ sở kiến thức
-            </h3>
-            {selectedBaseIds.size > 0 && (
-              <span className="px-3 py-1 bg-purple-100 text-purple-700 text-sm font-semibold rounded-full">
-                Đã chọn {selectedBaseIds.size} CSKT • {allQuestions.length} câu hỏi
-              </span>
-            )}
-          </div>
+        <div className="flex items-center gap-2">
+          {/* Settings Button */}
           <button
-            className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
-            title={isKnowledgeBaseExpanded ? "Thu gọn" : "Mở rộng"}
-            aria-label={isKnowledgeBaseExpanded ? "Thu gọn" : "Mở rộng"}
+            onClick={() => setShowKnowledgeBasePopup(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg transition-colors shadow-md"
+            title="Chọn cơ sở kiến thức"
           >
-            <svg
-              className={`w-5 h-5 text-slate-600 transition-transform duration-200 ${isKnowledgeBaseExpanded ? 'rotate-180' : ''}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
             </svg>
+            <span className="hidden sm:inline">Cài đặt</span>
+          </button>
+
+          {/* Back Button */}
+          <button
+            onClick={onBack}
+            className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            <span>Quay lại</span>
           </button>
         </div>
-
-        {/* Expandable Content */}
-        {isKnowledgeBaseExpanded && (
-          <div className="p-6 pt-0 border-t border-slate-100">
-            {knowledgeBases.length === 0 ? (
-              <p className="text-slate-500 text-center py-8">
-                Chưa có cơ sở kiến thức nào. Vui lòng tạo hoặc tải lên cơ sở kiến thức trước.
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {knowledgeBases.map(base => (
-                  <button
-                    key={base.id}
-                    onClick={() => toggleBaseSelection(base.id)}
-                    className={`p-4 rounded-lg border-2 transition-all text-left ${selectedBaseIds.has(base.id)
-                        ? 'border-purple-500 bg-purple-50'
-                        : 'border-slate-200 bg-white hover:border-slate-300'
-                      }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={`mt-1 w-5 h-5 rounded border-2 flex items-center justify-center ${selectedBaseIds.has(base.id)
-                          ? 'border-purple-500 bg-purple-500'
-                          : 'border-slate-300'
-                        }`}>
-                        {selectedBaseIds.has(base.id) && (
-                          <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-semibold text-slate-700 truncate">{base.name}</h4>
-                        <p className="text-sm text-slate-500 mt-1">
-                          {base.questions.length} câu hỏi
-                        </p>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
+
+      {/* Knowledge Base Selection Popup */}
+      {showKnowledgeBasePopup && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+            {/* Popup Header */}
+            <div className="p-6 border-b border-slate-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-2xl font-bold text-slate-700">Chọn cơ sở kiến thức</h3>
+                <button
+                  onClick={() => setShowKnowledgeBasePopup(false)}
+                  className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                  title="Đóng"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              {selectedBaseIds.size > 0 && (
+                <p className="text-sm text-purple-600 mt-2">
+                  Đã chọn {selectedBaseIds.size} cơ sở kiến thức • {allQuestions.length} câu hỏi
+                </p>
+              )}
+            </div>
+
+            {/* Popup Content */}
+            <div className="p-6 overflow-y-auto flex-1">
+              {knowledgeBases.length === 0 ? (
+                <p className="text-slate-500 text-center py-8">
+                  Chưa có cơ sở kiến thức nào. Vui lòng tạo hoặc tải lên cơ sở kiến thức trước.
+                </p>
+              ) : (
+                <>
+                  {/* Select All / Deselect All buttons */}
+                  <div className="flex gap-2 mb-4">
+                    <button
+                      onClick={selectAllBases}
+                      className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white text-sm font-semibold rounded-lg transition-colors"
+                    >
+                      ✓ Chọn tất cả
+                    </button>
+                    <button
+                      onClick={deselectAllBases}
+                      className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold rounded-lg transition-colors"
+                    >
+                      Bỏ chọn tất cả
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {knowledgeBases.map(base => (
+                      <button
+                        key={base.id}
+                        onClick={() => toggleBaseSelection(base.id)}
+                        className={`p-4 rounded-lg border-2 transition-all text-left ${selectedBaseIds.has(base.id)
+                          ? 'border-purple-500 bg-purple-50'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                          }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`mt-1 w-5 h-5 rounded border-2 flex items-center justify-center ${selectedBaseIds.has(base.id)
+                            ? 'border-purple-500 bg-purple-500'
+                            : 'border-slate-300'
+                            }`}>
+                            {selectedBaseIds.has(base.id) && (
+                              <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-slate-700 truncate">{base.name}</h4>
+                            <p className="text-sm text-slate-500 mt-1">
+                              {base.questions.length} câu hỏi
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Popup Footer */}
+            <div className="p-6 border-t border-slate-200 bg-slate-50">
+              <button
+                onClick={() => setShowKnowledgeBasePopup(false)}
+                className="w-full px-6 py-3 bg-purple-500 hover:bg-purple-600 text-white font-semibold rounded-lg transition-colors"
+              >
+                Xong
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Search Box */}
       {selectedBaseIds.size > 0 && (
@@ -291,10 +465,10 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
                 value={searchKeyword}
                 onChange={(e) => setSearchKeyword(e.target.value)}
                 placeholder="Nhập từ khóa để tìm kiếm..."
-                disabled={isLoadingQuestions}
+                disabled={isLoadingQuestions || (user?.premiumPlan !== 'premium' && remainingQuota !== null && remainingQuota <= 0)}
                 className="w-full px-5 py-3 pr-12 text-base border-2 border-slate-300 rounded-xl focus:border-purple-500 focus:outline-none transition-colors disabled:bg-slate-100 disabled:cursor-not-allowed"
               />
-              {searchKeyword !== debouncedSearchKeyword ? (
+              {searchKeyword !== debouncedSearchKeyword && searchKeyword.length > 0 ? (
                 <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-purple-500"></div>
                 </div>
@@ -329,7 +503,7 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
             </h3>
             <span className="text-sm text-slate-500">
               <strong className="text-purple-600">{searchResults.length}</strong> kết quả
-              {searchResults.length >= 500 && <span className="text-xs ml-1">(giới hạn 500)</span>}
+              {searchResults.length >= 200 && <span className="text-xs ml-1">(giới hạn 200)</span>}
             </span>
           </div>
 
@@ -338,8 +512,16 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
               <svg className="mx-auto h-16 w-16 text-slate-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <p className="text-slate-500 text-lg">Không tìm thấy kết quả nào</p>
-              <p className="text-slate-400 text-sm mt-2">Thử tìm kiếm với từ khóa khác</p>
+              <p className="text-slate-500 text-lg">
+                {user?.premiumPlan !== 'premium' && remainingQuota !== null && remainingQuota <= 0
+                  ? "Bạn đã hết lượt tra cứu"
+                  : "Không tìm thấy kết quả nào"}
+              </p>
+              <p className="text-slate-400 text-sm mt-2">
+                {user?.premiumPlan !== 'premium' && remainingQuota !== null && remainingQuota <= 0
+                  ? "Vui lòng nâng cấp để tiếp tục."
+                  : "Thử tìm kiếm với từ khóa khác"}
+              </p>
             </div>
           ) : (
             <>
@@ -382,14 +564,14 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
                           <div
                             key={optionIndex}
                             className={`p-2 rounded-lg border ${isCorrect
-                                ? 'border-green-500 bg-green-50'
-                                : 'border-slate-200 bg-white'
+                              ? 'border-green-500 bg-green-50'
+                              : 'border-slate-200 bg-white'
                               }`}
                           >
                             <div className="flex items-start gap-2">
                               <span className={`mt-0.5 flex items-center justify-center w-5 h-5 rounded-full text-xs font-semibold shrink-0 ${isCorrect
-                                  ? 'bg-green-500 text-white'
-                                  : 'bg-slate-200 text-slate-600'
+                                ? 'bg-green-500 text-white'
+                                : 'bg-slate-200 text-slate-600'
                                 }`}>
                                 {String.fromCharCode(65 + optionIndex)}
                               </span>

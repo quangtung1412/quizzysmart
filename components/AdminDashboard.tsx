@@ -4,9 +4,13 @@ import Overview from './admin/Overview';
 import UserManagement from './admin/UserManagement';
 import TestManagement from './admin/TestManagement';
 import KnowledgeManagement from './admin/KnowledgeManagement';
+import ModelUsageStats from './admin/ModelUsageStats';
+import AiSearchHistory from './admin/AiSearchHistory';
+import SubscriptionPlanManagement from './admin/SubscriptionPlanManagement';
+import SystemSettings from './admin/SystemSettings';
 import { Question } from '../types';
 
-type AdminTab = 'overview' | 'users' | 'tests' | 'knowledge' | 'categories' | 'settings';
+type AdminTab = 'overview' | 'users' | 'tests' | 'knowledge' | 'categories' | 'settings' | 'model-usage' | 'ai-history' | 'subscription-plans';
 
 interface AdminDashboardProps {
   userEmail: string;
@@ -44,6 +48,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         return <TestManagement />;
       case 'knowledge':
         return <KnowledgeManagement onSaveNewBase={handleSaveNewBase} />;
+      case 'model-usage':
+        return <ModelUsageStats onBack={() => setActiveTab('overview')} />;
+      case 'ai-history':
+        return <AiSearchHistory />;
+      case 'subscription-plans':
+        return <SubscriptionPlanManagement />;
+      case 'settings':
+        return <SystemSettings />;
       default:
         return <Overview />;
     }
@@ -95,6 +107,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
           <TabButton tab="users" label="Quản lý người dùng" icon="👥" />
           <TabButton tab="tests" label="Quản lý bài thi" icon="📝" />
           <TabButton tab="knowledge" label="Quản lý kiến thức" icon="📚" />
+          <TabButton tab="subscription-plans" label="Quản lý gói" icon="💎" />
+          <TabButton tab="model-usage" label="AI Model Stats" icon="🤖" />
+          <TabButton tab="ai-history" label="AI Search History" icon="🔍" />
           <TabButton tab="categories" label="Quản lý chuyên mục" icon="📂" />
           <TabButton tab="settings" label="Cài đặt hệ thống" icon="⚙️" />
           <div className="border-t border-slate-200 pt-4 mt-4">

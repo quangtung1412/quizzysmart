@@ -123,11 +123,11 @@ const DailyStudy: React.FC<DailyStudyProps> = ({ studyPlan: initialPlan, current
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50 p-2 sm:p-4">
-      <div className="max-w-2xl mx-auto bg-white rounded-lg sm:rounded-xl shadow-lg p-4 sm:p-6 space-y-4 sm:space-y-6">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-green-50 p-1 sm:p-2">
+      <div className="max-w-2xl mx-auto bg-white rounded-lg sm:rounded-xl shadow-lg p-3 sm:p-4 space-y-3 sm:space-y-4">
         {/* Header - Mobile optimized */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
             <button
               onClick={onBackToOverview}
               aria-label="Quay lại"
@@ -154,9 +154,9 @@ const DailyStudy: React.FC<DailyStudyProps> = ({ studyPlan: initialPlan, current
         </div>
 
         {/* Question - Mobile optimized */}
-        <div className="space-y-3 sm:space-y-4">
+        <div className="space-y-2 sm:space-y-3">
           <h2 className="font-semibold text-base sm:text-lg leading-relaxed">{q.question}</h2>
-          <div className="space-y-2 sm:space-y-3">
+          <div className="space-y-1.5 sm:space-y-2">
             {q.options.map((opt: string, optIdx: number) => {
               const idStr = String(optIdx);
               const sel = selected === idStr;
@@ -167,7 +167,7 @@ const DailyStudy: React.FC<DailyStudyProps> = ({ studyPlan: initialPlan, current
                   key={idStr}
                   onClick={() => handleSelect(idStr)}
                   disabled={revealed}
-                  className={`w-full text-left border rounded-lg px-3 sm:px-4 py-3 flex justify-between items-center transition text-sm sm:text-base ${correct ? 'border-green-500 bg-green-50' : ''
+                  className={`w-full text-left border rounded-lg px-2.5 sm:px-3 py-2.5 flex justify-between items-center transition text-sm sm:text-base ${correct ? 'border-green-500 bg-green-50' : ''
                     }${wrongSel ? 'border-red-500 bg-red-50' : ''}${!revealed && sel ? 'border-blue-500 bg-blue-50' : ''
                     }${!revealed && !sel ? 'border-gray-200 hover:bg-gray-50' : ''}`}
                 >
@@ -182,7 +182,7 @@ const DailyStudy: React.FC<DailyStudyProps> = ({ studyPlan: initialPlan, current
 
         {/* Explanation */}
         {revealed && q.explanation && (
-          <div className="p-3 sm:p-4 bg-gray-50 rounded-lg border text-sm text-gray-700">
+          <div className="p-2.5 sm:p-3 bg-gray-50 rounded-lg border text-sm text-gray-700">
             <strong>Giải thích:</strong> {q.explanation}
           </div>
         )}
@@ -214,12 +214,12 @@ const DailyStudy: React.FC<DailyStudyProps> = ({ studyPlan: initialPlan, current
 
         {/* Rating mode - Mobile optimized */}
         {ratingMode === true && (
-          <div className="space-y-4">
+          <div className="space-y-3">
             <div className="text-center">
-              <Star className="w-8 h-8 sm:w-10 sm:h-10 text-yellow-500 mx-auto mb-2" />
+              <Star className="w-7 h-7 sm:w-9 sm:h-9 text-yellow-500 mx-auto mb-2" />
               <p className="font-semibold text-sm sm:text-base">Độ khó câu hỏi này?</p>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
                 onClick={() => handleRate(DifficultyLevel.Easy)}
                 className="p-3 border-2 border-green-200 rounded-lg hover:border-green-400 text-sm sm:text-base font-medium bg-green-50 hover:bg-green-100"
@@ -244,8 +244,8 @@ const DailyStudy: React.FC<DailyStudyProps> = ({ studyPlan: initialPlan, current
 
         {/* Finished mode - Mobile optimized */}
         {ratingMode === 'finished' && (
-          <div className="space-y-4">
-            <div className="p-4 bg-green-50 rounded-lg border border-green-200 text-center">
+          <div className="space-y-3">
+            <div className="p-3 bg-green-50 rounded-lg border border-green-200 text-center">
               <h3 className="font-semibold text-green-800 mb-2 text-lg">🎉 Hoàn thành phiên học!</h3>
               <p className="text-green-700 text-sm">Bạn đã học xong số câu hỏi dự định hôm nay.</p>
             </div>

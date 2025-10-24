@@ -157,7 +157,7 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
   );
 
   const getOptionClasses = (optionIndex: number) => {
-    const base = "w-full text-left p-4 my-2 border rounded-lg transition-all duration-200 cursor-pointer flex items-center";
+    const base = "w-full text-left p-3 my-1.5 border rounded-lg transition-all duration-200 cursor-pointer flex items-center";
     const selected = currentAnswer?.selectedOptionIndex === optionIndex;
 
     if (mode === QuizMode.Study && showFeedback) {
@@ -213,10 +213,10 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
   };
 
   return (
-    <div className="p-4 sm:p-6">
+    <div className="p-2 sm:p-3">
       {showAllQuestions && <QuestionOverview />}
 
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 sm:mb-6 border-b pb-4 gap-4 sm:gap-0">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 sm:mb-4 border-b pb-2 sm:pb-3 gap-2 sm:gap-0">
         <div className="flex-1 min-w-0">
           <h2 className="text-lg sm:text-xl font-bold text-sky-700 truncate">
             {mode === QuizMode.Study ? 'Chế độ Học tập' : (testName || 'Chế độ Thi')}
@@ -240,11 +240,11 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
         </div>
       </div>
 
-      <div className="mb-6">
-        <p className="text-base sm:text-lg font-semibold text-slate-800 mb-4 sm:mb-6 leading-relaxed">
+      <div className="mb-3 sm:mb-4">
+        <p className="text-base sm:text-lg font-semibold text-slate-800 mb-3 sm:mb-4 leading-relaxed">
           {`Câu ${currentIndex + 1}: ${currentQuestion.question}`}
         </p>
-        <div className="space-y-2 sm:space-y-3">
+        <div className="space-y-1.5 sm:space-y-2">
           {currentQuestion.options.map((option, index) => (
             <button
               key={index}
@@ -252,7 +252,7 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
               className={getOptionClasses(index)}
               disabled={mode === QuizMode.Study && showFeedback}
             >
-              <span className="flex-shrink-0 h-6 w-6 sm:h-7 sm:w-7 rounded-full border-2 border-slate-400 flex items-center justify-center mr-3 sm:mr-4 font-bold text-xs sm:text-sm">
+              <span className="flex-shrink-0 h-5 w-5 sm:h-6 sm:w-6 rounded-full border-2 border-slate-400 flex items-center justify-center mr-2 sm:mr-3 font-bold text-xs sm:text-sm">
                 {String.fromCharCode(65 + index)}
               </span>
               <span className="text-sm sm:text-base text-left leading-relaxed">{option}</span>
@@ -262,13 +262,13 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
       </div>
 
       {mode === QuizMode.Study && showFeedback && (
-        <div className="mt-4 sm:mt-6 p-3 sm:p-4 rounded-lg bg-slate-50 border border-slate-200">
+        <div className="mt-3 sm:mt-4 p-2.5 sm:p-3 rounded-lg bg-slate-50 border border-slate-200">
           <h4 className="font-bold text-slate-700 text-sm sm:text-base">Giải thích:</h4>
           <p className="text-xs sm:text-sm text-slate-600 mt-1">Trích dẫn nguồn: {currentQuestion.source}</p>
         </div>
       )}
 
-      <div className="mt-6 sm:mt-8 pt-4 border-t flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 sm:gap-0">
+      <div className="mt-4 sm:mt-5 pt-3 border-t flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 sm:gap-0">
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
           <button
             onClick={goToPrevious}

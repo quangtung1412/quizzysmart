@@ -7,11 +7,149 @@ import { Strategy as GoogleStrategy, Profile } from 'passport-google-oauth20';
 import { Strategy as LocalStrategy } from 'passport-local';
 import bcrypt from 'bcrypt';
 import { PrismaClient, User } from '@prisma/client';
+import { createServer } from 'http';
+import { Server as SocketIOServer } from 'socket.io';
+import { geminiModelRotation } from './gemini-model-rotation';
+import crypto from 'crypto';
 
 const prisma = new PrismaClient();
 // Temporary any-cast for newly added models if type generation not up-to-date
 const prismaAny = prisma as any;
 const app = express();
+const httpServer = createServer(app);
+
+// Setup Socket.IO with CORS
+const io = new SocketIOServer(httpServer, {
+  path: '/socket.io',  // Explicit path
+  cors: {
+    origin: (origin, callback) => {
+      // Allow all origins in development, specific in production
+      const allowedOrigins = [
+        'http://localhost:5173',
+        'http://localhost:3000',
+        'http://13.229.10.40',
+        'http://13.229.10.40:3000',
+        'https://13.229.10.40',
+        'https://giadinhnhimsoc.site',
+        'https://www.giadinhnhimsoc.site',
+        'http://giadinhnhimsoc.site',
+        'http://www.giadinhnhimsoc.site',
+        process.env.FRONTEND_URL || '',
+      ].filter(Boolean);
+
+      // In development, allow any origin
+      if (!origin || allowedOrigins.length === 0 || process.env.NODE_ENV !== 'production') {
+        console.log('[Socket.IO CORS] Allowing origin (dev mode):', origin);
+        callback(null, true);
+      } else if (allowedOrigins.some(allowed => origin.includes(allowed) || allowed === origin)) {
+        console.log('[Socket.IO CORS] Allowing origin:', origin);
+        callback(null, true);
+      } else {
+        // In production, also allow same-origin requests
+        console.log('[Socket.IO CORS] Allowing origin (same-origin):', origin);
+        callback(null, true);
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST']
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  transports: ['polling', 'websocket'],  // Try polling first, then upgrade to websocket
+  allowEIO3: true,  // Allow compatibility with older clients
+  connectTimeout: 45000,
+  upgradeTimeout: 30000
+});
+
+// Socket.IO connection handler
+io.on('connection', (socket) => {
+  console.log('[Socket.IO] Client connected:', socket.id);
+  console.log('[Socket.IO] Transport:', socket.conn.transport.name);
+  console.log('[Socket.IO] Address:', socket.handshake.address);
+  console.log('[Socket.IO] Headers:', socket.handshake.headers.origin);
+
+  // Store userId when client authenticates
+  socket.on('authenticate', (userId: string) => {
+    socket.data.userId = userId;
+    socket.join(`user:${userId}`); // Join room specific to this user
+    console.log('[Socket.IO] User authenticated:', userId, 'rooms:', Array.from(socket.rooms));
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log('[Socket.IO] Client disconnected:', socket.id, 'reason:', reason);
+  });
+
+  socket.on('error', (error) => {
+    console.error('[Socket.IO] Socket error:', socket.id, error);
+  });
+});
+
+// Log Socket.IO errors
+io.engine.on('connection_error', (err) => {
+  console.error('[Socket.IO Engine] Connection error:', {
+    message: err.message,
+    code: (err as any).code,
+    context: (err as any).context
+  });
+});
+
+// Device Management Helpers
+function generateSessionToken(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+async function handleDeviceLogin(userId: string, deviceId: string): Promise<{ sessionToken: string; needsLogout: boolean }> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { currentDeviceId: true, currentSessionToken: true }
+  }) as any;
+
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  const sessionToken = generateSessionToken();
+  const needsLogout = !!(user.currentDeviceId && user.currentDeviceId !== deviceId);
+
+  // If user is logged in on a different device, notify that device to logout
+  if (needsLogout) {
+    console.log(`[Device] User ${userId} logging in from new device. Logging out device: ${user.currentDeviceId}`);
+
+    // Emit logout event to the old device via Socket.IO
+    io.to(`user:${userId}`).emit('force-logout', {
+      reason: 'new-device-login',
+      message: 'Bạn đã đăng nhập từ thiết bị khác'
+    });
+  }
+
+  // Update user with new device and session token
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      currentDeviceId: deviceId,
+      currentSessionToken: sessionToken
+    } as any
+  });
+
+  console.log(`[Device] User ${userId} logged in from device: ${deviceId}`);
+
+  return { sessionToken, needsLogout };
+}
+
+async function validateDeviceSession(userId: string, deviceId: string, sessionToken: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { currentDeviceId: true, currentSessionToken: true }
+  }) as any;
+
+  if (!user) {
+    return false;
+  }
+
+  // Check if device and session match
+  return user.currentDeviceId === deviceId && user.currentSessionToken === sessionToken;
+}
+
 const bodyLimit = process.env.MAX_BODY_SIZE || '5mb';
 
 // Allow multiple origins (localhost + production domains/IP) configurable via env
@@ -154,7 +292,7 @@ app.get('/api/auth/google', (req, res, next) => {
   console.log('[OAuth] Start flow callback=', dynamicCallback);
   return passport.authenticate('google', { scope: ['profile', 'email'], callbackURL: dynamicCallback } as any)(req, res, next);
 });
-app.get('/api/auth/google/callback', passport.authenticate('google', { failureRedirect: '/api/auth/fail' }), (req: Request, res: Response) => {
+app.get('/api/auth/google/callback', passport.authenticate('google', { failureRedirect: '/api/auth/fail' }), async (req: Request, res: Response) => {
   // If APP_BASE_URL provided, always trust it. Otherwise derive from forwarded headers (production behind Nginx)
   let finalBase = appBaseUrl;
   if (!process.env.APP_BASE_URL) {
@@ -164,6 +302,22 @@ app.get('/api/auth/google/callback', passport.authenticate('google', { failureRe
       finalBase = `${proto}://${host.replace(/\/$/, '')}`;
     }
   }
+
+  // Handle device tracking for OAuth login
+  try {
+    const user = req.user as any;
+    const deviceId = req.query.deviceId as string || `google-${Date.now()}`;
+
+    // Generate session token and handle device logout
+    const { sessionToken } = await handleDeviceLogin(user.id, deviceId);
+
+    // Store sessionToken in session for later retrieval
+    (req.session as any).deviceSessionToken = sessionToken;
+    (req.session as any).deviceId = deviceId;
+  } catch (error) {
+    console.error('Device tracking error during OAuth:', error);
+  }
+
   res.redirect(finalBase + '/');
 });
 
@@ -194,25 +348,156 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/auth/login', passport.authenticate('local'), (req: Request, res: Response) => {
+app.post('/api/auth/login', passport.authenticate('local'), async (req: Request, res: Response) => {
   // If this function gets called, authentication was successful.
   // `req.user` contains the authenticated user.
-  res.json({ user: req.user });
-});
+  try {
+    const user = req.user as any;
+    const deviceId = req.body.deviceId || req.headers['x-device-id'] as string;
 
-app.get('/api/auth/logout', (req: Request, res: Response) => {
-  req.logout(err => {
-    if (err) console.error(err);
-    req.session.destroy(() => {
-      res.clearCookie('connect.sid');
-      res.json({ ok: true });
+    if (!deviceId) {
+      return res.status(400).json({ error: 'Device ID is required' });
+    }
+
+    // Handle device login (will logout other devices if needed)
+    const { sessionToken, needsLogout } = await handleDeviceLogin(user.id, deviceId);
+
+    res.json({
+      user: req.user,
+      sessionToken,
+      deviceId,
+      wasLoggedOutFromOtherDevice: needsLogout
     });
-  });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
 });
 
-app.get('/api/auth/me', (req: Request, res: Response) => {
+app.get('/api/auth/logout', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+
+    // Clear device session from database if user is logged in
+    if (user?.id) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          currentDeviceId: null,
+          currentSessionToken: null
+        } as any
+      });
+    }
+
+    req.logout(err => {
+      if (err) console.error(err);
+      req.session.destroy(() => {
+        res.clearCookie('connect.sid');
+        res.json({ ok: true });
+      });
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ error: 'Logout failed' });
+  }
+});
+
+// Device session validation endpoint
+app.post('/api/auth/validate-device', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) {
+      return res.status(401).json({ valid: false, error: 'Not authenticated' });
+    }
+
+    const { deviceId, sessionToken } = req.body;
+    if (!deviceId || !sessionToken) {
+      return res.status(400).json({ valid: false, error: 'Missing deviceId or sessionToken' });
+    }
+
+    const isValid = await validateDeviceSession(user.id, deviceId, sessionToken);
+
+    if (!isValid) {
+      return res.status(401).json({
+        valid: false,
+        error: 'invalid-session',
+        message: 'Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại.'
+      });
+    }
+
+    res.json({ valid: true });
+  } catch (error) {
+    console.error('Device validation error:', error);
+    res.status(500).json({ valid: false, error: 'Validation failed' });
+  }
+});
+
+// Helper function to get active subscription
+async function getActiveSubscription(userId: string) {
+  const now = new Date();
+  return await prismaAny.subscription.findFirst({
+    where: {
+      userId: userId,
+      status: 'active',
+      expiresAt: {
+        gt: now
+      }
+    },
+    orderBy: {
+      expiresAt: 'desc' // Get the one that expires latest
+    }
+  });
+}
+
+app.get('/api/auth/me', async (req: Request, res: Response) => {
   if (!req.user) return res.status(401).json({ user: null });
-  res.json({ user: req.user });
+
+  try {
+    const userId = (req.user as any).id;
+    const dbUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        name: true,
+        branchCode: true,
+        picture: true,
+        role: true,
+        aiSearchQuota: true,
+        quickSearchQuota: true
+      }
+    });
+
+    if (!dbUser) {
+      return res.status(404).json({ user: null });
+    }
+
+    // Get active subscription
+    const activeSubscription = await getActiveSubscription(userId);
+
+    // Get device session info from session
+    const sessionToken = (req.session as any)?.deviceSessionToken;
+    const deviceId = (req.session as any)?.deviceId;
+
+    // Build response with premium info from subscription
+    // Admin users automatically get premium benefits
+    const userWithPremium = {
+      ...dbUser,
+      isPremium: dbUser.role === 'admin' || !!activeSubscription,
+      premiumPlan: dbUser.role === 'admin' ? 'premium' : (activeSubscription?.plan || null),
+      premiumExpiresAt: dbUser.role === 'admin' ? null : (activeSubscription?.expiresAt || null),
+      hasQuickSearchAccess: dbUser.role === 'admin' || !!activeSubscription, // Admin and premium users have quick search access
+      quickSearchQuota: dbUser.quickSearchQuota,
+      sessionToken,
+      deviceId
+    };
+
+    res.json({ user: userWithPremium });
+  } catch (error) {
+    console.error('Error fetching user data:', error);
+    res.json({ user: req.user });
+  }
 });
 
 app.put('/api/user/details', async (req: Request, res: Response) => {
@@ -310,10 +595,71 @@ app.delete('/api/bases/:id', async (req: Request, res: Response) => {
 // Quick Search - Get questions from multiple knowledge bases
 app.post('/api/quick-search/questions', async (req: Request, res: Response) => {
   try {
-    const { knowledgeBaseIds } = req.body;
+    const { knowledgeBaseIds, userEmail } = req.body;
 
     if (!knowledgeBaseIds || !Array.isArray(knowledgeBaseIds) || knowledgeBaseIds.length === 0) {
       return res.status(400).json({ error: 'Invalid knowledge base IDs' });
+    }
+
+    if (!userEmail) {
+      return res.status(400).json({ error: 'User email is required' });
+    }
+
+    // Check if user has access to quick search feature
+    // Try to find user by email first, then by username
+    let user = await prisma.user.findUnique({
+      where: { email: userEmail },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        role: true,
+        quickSearchQuota: true
+      }
+    });
+
+    if (!user) {
+      user = await prisma.user.findUnique({
+        where: { username: userEmail },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          role: true,
+          quickSearchQuota: true
+        }
+      });
+    }
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Get active subscription
+    const activeSubscriptions = await prisma.subscription.findMany({
+      where: {
+        userId: user.id,
+        status: 'active',
+        expiresAt: {
+          gt: new Date()
+        }
+      }
+    });
+
+    const hasActiveSubscription = activeSubscriptions.length > 0;
+
+    // Check if user is admin or has active subscription (Plus/Premium)
+    const isPremiumUser = user.role === 'admin' || hasActiveSubscription;
+
+    // If not premium user, check quota
+    if (!isPremiumUser) {
+      if (user.quickSearchQuota <= 0) {
+        return res.status(403).json({
+          error: 'Bạn đã hết lượt tra cứu nhanh. Vui lòng nâng cấp Premium để tiếp tục sử dụng.',
+          needsUpgrade: true,
+          remainingQuota: 0
+        });
+      }
     }
 
     // Fetch questions from all selected knowledge bases
@@ -347,10 +693,77 @@ app.post('/api/quick-search/questions', async (req: Request, res: Response) => {
       knowledgeBaseName: q.base.name
     }));
 
-    res.json(result);
+    // Return current quota (don't decrement here - only decrement on actual search)
+    // For premium users (admin or active subscription), don't return quota limit
+    const remainingQuota = isPremiumUser ? null : user.quickSearchQuota;
+
+    res.json({ questions: result, remainingQuota });
   } catch (error) {
     console.error('Failed to fetch questions for quick search:', error);
     res.status(500).json({ error: 'Failed to fetch questions' });
+  }
+});
+
+// Decrement quick search quota
+app.post('/api/users/decrement-quick-search-quota', async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).session?.passport?.user;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        quickSearchQuota: true
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Get active subscription
+    const activeSubscriptions = await prisma.subscription.findMany({
+      where: {
+        userId: user.id,
+        status: 'active',
+        expiresAt: {
+          gt: new Date()
+        }
+      }
+    });
+
+    const hasActiveSubscription = activeSubscriptions && activeSubscriptions.length > 0;
+    const isPremiumUser = user.role === 'admin' || hasActiveSubscription;
+
+    // Premium users have unlimited searches
+    if (isPremiumUser) {
+      return res.json({ remainingQuota: -1 });
+    }
+
+    // Check if user has quota
+    if (user.quickSearchQuota <= 0) {
+      return res.status(403).json({
+        error: 'Bạn đã hết lượt tra cứu nhanh',
+        needsUpgrade: true,
+        remainingQuota: 0
+      });
+    }
+
+    // Decrement quota
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: { quickSearchQuota: { decrement: 1 } }
+    });
+
+    res.json({ remainingQuota: updatedUser.quickSearchQuota });
+  } catch (error) {
+    console.error('Failed to decrement quick search quota:', error);
+    res.status(500).json({ error: 'Failed to decrement quota' });
   }
 });
 
@@ -878,8 +1291,169 @@ async function requireAdmin(req: Request, res: Response): Promise<User | null> {
 
 app.get('/api/admin/users', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
-  const users = await prisma.user.findMany();
-  res.json(users);
+
+  // Fetch users with their active subscriptions
+  const users = await prisma.user.findMany({
+    include: {
+      subscriptions: {
+        where: {
+          status: 'active'
+        },
+        orderBy: {
+          expiresAt: 'desc'
+        },
+        take: 1 // Get the most recent active subscription
+      }
+    }
+  });
+
+  // Transform data to include subscription info
+  const usersWithSubscriptions = users.map(user => {
+    const activeSubscription = user.subscriptions[0];
+    return {
+      ...user,
+      subscriptionPlan: activeSubscription?.plan || null,
+      subscriptionStatus: activeSubscription?.status || null,
+      subscriptionExpiresAt: activeSubscription?.expiresAt || null,
+      subscriptions: undefined // Remove the subscriptions array from response
+    };
+  });
+
+  res.json(usersWithSubscriptions);
+});
+
+// Create new user
+app.post('/api/admin/users', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const { username, password, email, name, branchCode, role, aiSearchQuota } = req.body;
+
+  try {
+    // Hash password if provided
+    let hashedPassword = undefined;
+    if (password) {
+      const bcrypt = await import('bcrypt');
+      hashedPassword = await bcrypt.hash(password, 10);
+    }
+
+    // Check for existing user with same username or email
+    if (username) {
+      const existing = await prisma.user.findUnique({ where: { username } });
+      if (existing) {
+        return res.status(400).json({ error: 'Username already exists' });
+      }
+    }
+    if (email) {
+      const existing = await prisma.user.findUnique({ where: { email } });
+      if (existing) {
+        return res.status(400).json({ error: 'Email already exists' });
+      }
+    }
+
+    const newUser = await prisma.user.create({
+      data: {
+        username,
+        password: hashedPassword,
+        email,
+        name,
+        branchCode,
+        role: role || 'user',
+        aiSearchQuota: aiSearchQuota !== undefined ? aiSearchQuota : 10
+      }
+    });
+
+    res.json(newUser);
+  } catch (error: any) {
+    console.error('Error creating user:', error);
+    res.status(500).json({ error: error.message || 'Failed to create user' });
+  }
+});
+
+// Update user
+app.put('/api/admin/users/:id', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const { id } = req.params;
+  const { username, password, email, name, branchCode, role, aiSearchQuota } = req.body;
+
+  try {
+    // Get the target user to check if they are root
+    const targetUser = await prisma.user.findUnique({ where: { id } });
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Root user protection
+    const ROOT_USER_EMAIL = 'quangtung1412@gmail.com';
+    const isTargetRoot = targetUser.email === ROOT_USER_EMAIL;
+    const isAdminRoot = admin.email === ROOT_USER_EMAIL;
+
+    // Only root user can edit root user
+    if (isTargetRoot && !isAdminRoot) {
+      return res.status(403).json({ error: 'Không thể chỉnh sửa người dùng root' });
+    }
+
+    const updateData: any = {};
+
+    if (username !== undefined) updateData.username = username;
+    if (email !== undefined) updateData.email = email;
+    if (name !== undefined) updateData.name = name;
+    if (branchCode !== undefined) updateData.branchCode = branchCode;
+    if (role !== undefined) updateData.role = role;
+    if (aiSearchQuota !== undefined) updateData.aiSearchQuota = aiSearchQuota;
+
+    // Hash password if provided
+    if (password) {
+      const bcrypt = await import('bcrypt');
+      updateData.password = await bcrypt.hash(password, 10);
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: updateData
+    });
+
+    res.json(updatedUser);
+  } catch (error: any) {
+    console.error('Error updating user:', error);
+    res.status(500).json({ error: error.message || 'Failed to update user' });
+  }
+});
+
+// Delete user
+app.delete('/api/admin/users/:id', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const { id } = req.params;
+
+  try {
+    // Prevent admin from deleting themselves
+    if (admin.id === id) {
+      return res.status(400).json({ error: 'Cannot delete your own account' });
+    }
+
+    // Get the target user to check if they are root
+    const targetUser = await prisma.user.findUnique({ where: { id } });
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Root user protection
+    const ROOT_USER_EMAIL = 'quangtung1412@gmail.com';
+    const isTargetRoot = targetUser.email === ROOT_USER_EMAIL;
+    const isAdminRoot = admin.email === ROOT_USER_EMAIL;
+
+    // Only root user can delete root user (though deleting self is already blocked above)
+    if (isTargetRoot && !isAdminRoot) {
+      return res.status(403).json({ error: 'Không thể xóa người dùng root' });
+    }
+
+    await prisma.user.delete({
+      where: { id }
+    });
+
+    res.json({ ok: true });
+  } catch (error: any) {
+    console.error('Error deleting user:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete user' });
+  }
 });
 
 // Admin knowledge base management endpoints
@@ -1239,9 +1813,1125 @@ app.get('/api/admin/tests/:id/ranking', async (req: Request, res: Response) => {
   res.json(ranked);
 });
 
+// Get Gemini model usage statistics (Admin only)
+app.get('/api/admin/model-usage', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const stats = geminiModelRotation.getUsageStats();
+  res.json({
+    stats,
+    totalModels: stats.length,
+    availableModels: stats.filter(s => s.available).length
+  });
+});
+
+// Reset model usage (Admin only - for testing)
+app.post('/api/admin/reset-model-usage', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const { modelName } = req.body;
+
+  if (modelName) {
+    geminiModelRotation.resetModelUsage(modelName);
+    res.json({ message: `Reset usage for ${modelName}` });
+  } else {
+    geminiModelRotation.resetAllUsage();
+    res.json({ message: 'Reset all model usage' });
+  }
+});
+
+// Get AI search history (Admin only)
+app.get('/api/admin/ai-search-history', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    const {
+      page = 1,
+      limit = 50,
+      userId,
+      modelUsed,
+      success,
+      startDate,
+      endDate
+    } = req.query;
+
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Build filter conditions
+    const where: any = {};
+
+    if (userId) {
+      where.userId = parseInt(userId as string);
+    }
+
+    if (modelUsed) {
+      where.modelUsed = modelUsed as string;
+    }
+
+    if (success !== undefined) {
+      where.success = success === 'true';
+    }
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) {
+        where.createdAt.gte = new Date(startDate as string);
+      }
+      if (endDate) {
+        where.createdAt.lte = new Date(endDate as string);
+      }
+    }
+
+    // Get history with pagination
+    const [history, total] = await Promise.all([
+      (prisma as any).aiSearchHistory.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              email: true,
+              name: true
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limitNum
+      }),
+      (prisma as any).aiSearchHistory.count({ where })
+    ]);
+
+    // Get statistics
+    const stats = await (prisma as any).aiSearchHistory.groupBy({
+      by: ['modelUsed', 'success'],
+      _count: { id: true },
+      _avg: {
+        responseTime: true,
+        inputTokens: true,
+        outputTokens: true,
+        totalTokens: true
+      },
+      _sum: {
+        inputTokens: true,
+        outputTokens: true,
+        totalTokens: true
+      }
+    });
+
+    // Calculate total tokens by model
+    const modelStats: any = {};
+    stats.forEach((stat: any) => {
+      if (!modelStats[stat.modelUsed]) {
+        modelStats[stat.modelUsed] = {
+          total: 0,
+          success: 0,
+          failed: 0,
+          avgResponseTime: 0,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0
+        };
+      }
+
+      const ms = modelStats[stat.modelUsed];
+      ms.total += stat._count.id;
+      if (stat.success) {
+        ms.success += stat._count.id;
+      } else {
+        ms.failed += stat._count.id;
+      }
+      ms.avgResponseTime = stat._avg.responseTime || 0;
+      ms.totalInputTokens += stat._sum.inputTokens || 0;
+      ms.totalOutputTokens += stat._sum.outputTokens || 0;
+      ms.totalTokens += stat._sum.totalTokens || 0;
+    });
+
+    res.json({
+      history,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum)
+      },
+      stats: {
+        byModel: modelStats,
+        totalSearches: total,
+        successRate: total > 0 ? (history.filter((h: any) => h.success).length / total * 100).toFixed(2) : 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching AI search history:', error);
+    res.status(500).json({ error: 'Failed to fetch AI search history' });
+  }
+});
+
+// Subscription Plan Management (Admin only)
+app.get('/api/admin/subscription-plans', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    const plans = await (prisma as any).subscriptionPlan.findMany({
+      orderBy: { displayOrder: 'asc' }
+    });
+
+    const formattedPlans = plans.map((plan: any) => ({
+      ...plan,
+      features: JSON.parse(plan.features)
+    }));
+
+    res.json(formattedPlans);
+  } catch (error) {
+    console.error('Error fetching subscription plans:', error);
+    res.status(500).json({ error: 'Failed to fetch subscription plans' });
+  }
+});
+
+app.post('/api/admin/subscription-plans', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    const { planId, name, price, aiQuota, duration, features, isActive, displayOrder, popular, bestChoice } = req.body;
+
+    if (!planId || !name || price === undefined || aiQuota === undefined || duration === undefined) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const plan = await (prisma as any).subscriptionPlan.create({
+      data: {
+        planId,
+        name,
+        price,
+        aiQuota,
+        duration,
+        features: JSON.stringify(features || []),
+        isActive: isActive !== undefined ? isActive : true,
+        displayOrder: displayOrder || 0,
+        popular: popular || false,
+        bestChoice: bestChoice || false
+      }
+    });
+
+    res.json({
+      ...plan,
+      features: JSON.parse(plan.features)
+    });
+  } catch (error: any) {
+    console.error('Error creating subscription plan:', error);
+    if (error.code === 'P2002') {
+      return res.status(400).json({ error: 'Plan ID already exists' });
+    }
+    res.status(500).json({ error: 'Failed to create subscription plan' });
+  }
+});
+
+app.put('/api/admin/subscription-plans/:id', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    const { id } = req.params;
+    const { planId, name, price, aiQuota, duration, features, isActive, displayOrder, popular, bestChoice } = req.body;
+
+    const updateData: any = {};
+    if (planId !== undefined) updateData.planId = planId;
+    if (name !== undefined) updateData.name = name;
+    if (price !== undefined) updateData.price = price;
+    if (aiQuota !== undefined) updateData.aiQuota = aiQuota;
+    if (duration !== undefined) updateData.duration = duration;
+    if (features !== undefined) updateData.features = JSON.stringify(features);
+    if (isActive !== undefined) updateData.isActive = isActive;
+    if (displayOrder !== undefined) updateData.displayOrder = displayOrder;
+    if (popular !== undefined) updateData.popular = popular;
+    if (bestChoice !== undefined) updateData.bestChoice = bestChoice;
+
+    const plan = await (prisma as any).subscriptionPlan.update({
+      where: { id },
+      data: updateData
+    });
+
+    res.json({
+      ...plan,
+      features: JSON.parse(plan.features)
+    });
+  } catch (error: any) {
+    console.error('Error updating subscription plan:', error);
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Subscription plan not found' });
+    }
+    if (error.code === 'P2002') {
+      return res.status(400).json({ error: 'Plan ID already exists' });
+    }
+    res.status(500).json({ error: 'Failed to update subscription plan' });
+  }
+});
+
+app.delete('/api/admin/subscription-plans/:id', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    const { id } = req.params;
+
+    await (prisma as any).subscriptionPlan.delete({
+      where: { id }
+    });
+
+    res.json({ ok: true });
+  } catch (error: any) {
+    console.error('Error deleting subscription plan:', error);
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Subscription plan not found' });
+    }
+    res.status(500).json({ error: 'Failed to delete subscription plan' });
+  }
+});
+
+// ==================== System Settings Endpoints ====================
+
+// Get system settings (Admin only)
+app.get('/api/admin/system-settings', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    // Get the first (and should be only) settings record
+    let settings = await (prisma as any).systemSettings.findFirst();
+
+    // If no settings exist yet, create default settings
+    if (!settings) {
+      settings = await (prisma as any).systemSettings.create({
+        data: {
+          modelRotationEnabled: true,
+          defaultModel: 'gemini-2.5-flash',
+          peakHoursEnabled: false,
+          peakHoursStart: '18:00',
+          peakHoursEnd: '22:00',
+          peakHoursDays: JSON.stringify([1, 2, 3, 4, 5]) // Monday to Friday
+        }
+      });
+    }
+
+    res.json({
+      ...settings,
+      peakHoursDays: JSON.parse(settings.peakHoursDays)
+    });
+  } catch (error: any) {
+    console.error('Error fetching system settings:', error);
+    res.status(500).json({ error: 'Failed to fetch system settings' });
+  }
+});
+
+// Update system settings (Admin only)
+app.put('/api/admin/system-settings', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    const {
+      modelRotationEnabled,
+      defaultModel,
+      peakHoursEnabled,
+      peakHoursStart,
+      peakHoursEnd,
+      peakHoursDays
+    } = req.body;
+
+    const updateData: any = {};
+    if (modelRotationEnabled !== undefined) updateData.modelRotationEnabled = modelRotationEnabled;
+    if (defaultModel !== undefined) updateData.defaultModel = defaultModel;
+    if (peakHoursEnabled !== undefined) updateData.peakHoursEnabled = peakHoursEnabled;
+    if (peakHoursStart !== undefined) updateData.peakHoursStart = peakHoursStart;
+    if (peakHoursEnd !== undefined) updateData.peakHoursEnd = peakHoursEnd;
+    if (peakHoursDays !== undefined) updateData.peakHoursDays = JSON.stringify(peakHoursDays);
+    updateData.updatedBy = admin.id;
+
+    // Get existing settings or create new one
+    let settings = await (prisma as any).systemSettings.findFirst();
+
+    if (settings) {
+      settings = await (prisma as any).systemSettings.update({
+        where: { id: settings.id },
+        data: updateData
+      });
+    } else {
+      settings = await (prisma as any).systemSettings.create({
+        data: {
+          modelRotationEnabled: modelRotationEnabled ?? true,
+          defaultModel: defaultModel ?? 'gemini-2.5-flash',
+          peakHoursEnabled: peakHoursEnabled ?? false,
+          peakHoursStart: peakHoursStart ?? '18:00',
+          peakHoursEnd: peakHoursEnd ?? '22:00',
+          peakHoursDays: JSON.stringify(peakHoursDays ?? [1, 2, 3, 4, 5]),
+          updatedBy: admin.id
+        }
+      });
+    }
+
+    console.log('[SystemSettings] Updated by admin:', admin.email, updateData);
+
+    res.json({
+      ...settings,
+      peakHoursDays: JSON.parse(settings.peakHoursDays)
+    });
+  } catch (error: any) {
+    console.error('Error updating system settings:', error);
+    res.status(500).json({ error: 'Failed to update system settings' });
+  }
+});
+
+// Public endpoint to get peak hours status (for client-side checks)
+app.get('/api/peak-hours-status', async (req: Request, res: Response) => {
+  try {
+    const settings = await (prisma as any).systemSettings.findFirst();
+
+    if (!settings || !settings.peakHoursEnabled) {
+      return res.json({ isPeakHours: false, enabled: false });
+    }
+
+    const now = new Date();
+    const currentDay = now.getDay(); // 0 = Sunday, 6 = Saturday
+    const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+    const peakDays = JSON.parse(settings.peakHoursDays);
+    const isDayMatch = peakDays.includes(currentDay);
+    const isTimeMatch = currentTime >= settings.peakHoursStart && currentTime <= settings.peakHoursEnd;
+
+    res.json({
+      isPeakHours: isDayMatch && isTimeMatch,
+      enabled: settings.peakHoursEnabled,
+      peakHoursStart: settings.peakHoursStart,
+      peakHoursEnd: settings.peakHoursEnd,
+      peakHoursDays: peakDays
+    });
+  } catch (error: any) {
+    console.error('Error checking peak hours status:', error);
+    res.json({ isPeakHours: false, enabled: false });
+  }
+});
+
+// Public endpoint to get active subscription plans
+app.get('/api/subscription-plans', async (req: Request, res: Response) => {
+  try {
+    const plans = await (prisma as any).subscriptionPlan.findMany({
+      where: { isActive: true },
+      orderBy: { displayOrder: 'asc' }
+    });
+
+    const formattedPlans = plans.map((plan: any) => ({
+      id: plan.planId,
+      planId: plan.planId,
+      name: plan.name,
+      price: plan.price,
+      priceText: `${(plan.price / 1000).toFixed(0)}.000đ`,
+      aiQuota: plan.aiQuota,
+      duration: plan.duration,
+      durationText: plan.duration === 30 ? '30 ngày' : plan.duration === 365 ? '1 năm' : `${plan.duration} ngày`,
+      features: JSON.parse(plan.features),
+      popular: plan.popular,
+      bestChoice: plan.bestChoice
+    }));
+
+    res.json(formattedPlans);
+  } catch (error) {
+    console.error('Error fetching subscription plans:', error);
+    res.status(500).json({ error: 'Failed to fetch subscription plans' });
+  }
+});
+
 
 const port = parseInt(process.env.PORT || '3000', 10);
-app.listen(port, () => console.log('API server on :' + port));
+httpServer.listen(port, () => {
+  console.log('API server on :' + port);
+  console.log('Socket.IO enabled for real-time updates');
+});
+
+// Initialize Telegram Bot for subscription management
+(async () => {
+  try {
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.TELEGRAM_CHAT_ID;
+
+    if (botToken && chatId) {
+      const TelegramBot = (await import('node-telegram-bot-api')).default;
+      const bot = new TelegramBot(botToken, { polling: true });
+
+      console.log('✅ Telegram Bot started');
+
+      // Handle /activate command
+      bot.onText(/\/activate (.+)/, async (msg, match) => {
+        const subscriptionId = match?.[1];
+
+        if (!subscriptionId) {
+          bot.sendMessage(msg.chat.id, '❌ Vui lòng cung cấp ID subscription');
+          return;
+        }
+
+        try {
+          // Get subscription
+          const subscription = await (prisma as any).subscription.findUnique({
+            where: { id: subscriptionId },
+            include: { user: true }
+          });
+
+          if (!subscription) {
+            bot.sendMessage(msg.chat.id, '❌ Không tìm thấy subscription');
+            return;
+          }
+
+          if (subscription.status === 'active') {
+            bot.sendMessage(msg.chat.id, '⚠️ Subscription đã được kích hoạt rồi');
+            return;
+          }
+
+          const now = new Date();
+          const expiresAt = new Date(now.getTime() + subscription.duration * 24 * 60 * 60 * 1000);
+
+          // Activate subscription
+          await (prisma as any).subscription.update({
+            where: { id: subscriptionId },
+            data: {
+              status: 'active',
+              activatedAt: now,
+              expiresAt: expiresAt
+            }
+          });
+
+          // Update user
+          await prisma.user.update({
+            where: { id: subscription.userId },
+            data: {
+              aiSearchQuota: { increment: subscription.aiQuota },
+              pendingThankYouPopup: 1 // Set flag to show thank you popup on next homepage visit
+            }
+          });
+
+          const responseMessage = `✅ ĐÃ KÍCH HOẠT THÀNH CÔNG\n\n` +
+            `👤 User: ${subscription.user.name || subscription.user.username || subscription.user.email}\n` +
+            `📦 Gói: ${subscription.plan.toUpperCase()}\n` +
+            `🎁 +${subscription.aiQuota} lượt AI search\n` +
+            `✨ Mở khóa tra cứu không giới hạn\n` +
+            `⏰ Hết hạn: ${expiresAt.toLocaleDateString('vi-VN')}`;
+
+          bot.sendMessage(msg.chat.id, responseMessage);
+        } catch (error) {
+          console.error('Activation error:', error);
+          bot.sendMessage(msg.chat.id, '❌ Lỗi khi kích hoạt subscription');
+        }
+      });
+
+      // Handle /cancel command
+      bot.onText(/\/cancel (.+)/, async (msg, match) => {
+        const subscriptionId = match?.[1];
+
+        if (!subscriptionId) {
+          bot.sendMessage(msg.chat.id, '❌ Vui lòng cung cấp ID subscription');
+          return;
+        }
+
+        try {
+          await (prisma as any).subscription.update({
+            where: { id: subscriptionId },
+            data: { status: 'cancelled' }
+          });
+
+          bot.sendMessage(msg.chat.id, '✅ Đã hủy yêu cầu');
+        } catch (error) {
+          console.error('Cancel error:', error);
+          bot.sendMessage(msg.chat.id, '❌ Lỗi khi hủy subscription');
+        }
+      });
+
+      // Handle /help command
+      bot.onText(/\/help/, (msg) => {
+        const helpText = `📚 HƯỚNG DẪN SỬ DỤNG BOT\n\n` +
+          `/activate <id> - Kích hoạt subscription\n` +
+          `/cancel <id> - Hủy yêu cầu subscription\n` +
+          `/help - Xem hướng dẫn`;
+
+        bot.sendMessage(msg.chat.id, helpText);
+      });
+
+    } else {
+      console.log('⚠️ Telegram Bot not configured (missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID)');
+    }
+  } catch (error) {
+    console.error('❌ Telegram Bot initialization error:', error);
+  }
+})();
+
+
+// Get user info including AI quota
+app.get('/api/user/me', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        name: true,
+        role: true,
+        aiSearchQuota: true,
+        quickSearchQuota: true
+      }
+    });
+
+    if (!dbUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Get active subscription from Subscription table
+    const activeSubscription = await getActiveSubscription(user.id);
+
+    // Build response with premium info from subscription
+    // Admin users automatically get premium benefits
+    const userWithPremium = {
+      ...dbUser,
+      isPremium: dbUser.role === 'admin' || !!activeSubscription,
+      premiumPlan: dbUser.role === 'admin' ? 'premium' : (activeSubscription?.plan || null),
+      premiumExpiresAt: dbUser.role === 'admin' ? null : (activeSubscription?.expiresAt || null),
+      hasQuickSearchAccess: dbUser.role === 'admin' || !!activeSubscription, // Admin and premium users have quick search access
+      quickSearchQuota: dbUser.quickSearchQuota
+    };
+
+    res.json(userWithPremium);
+  } catch (error) {
+    console.error('Error fetching user info:', error);
+    res.status(500).json({ error: 'Failed to fetch user info' });
+  }
+});
+
+// Subscription APIs
+app.post('/api/subscriptions/purchase', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { plan, transactionCode } = req.body;
+
+    if (!plan || !transactionCode) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Validate plan
+    const planDetails: { [key: string]: { price: number; aiQuota: number; duration: number } } = {
+      plus: { price: 50000, aiQuota: 100, duration: 30 },
+      premium: { price: 500000, aiQuota: 1500, duration: 365 }
+    };
+
+    if (!planDetails[plan]) {
+      return res.status(400).json({ error: 'Invalid plan' });
+    }
+
+    const details = planDetails[plan];
+
+    // Create subscription
+    const subscription = await (prisma as any).subscription.create({
+      data: {
+        userId: user.id,
+        plan: plan,
+        price: details.price,
+        aiQuota: details.aiQuota,
+        duration: details.duration,
+        transactionCode: transactionCode,
+        status: 'pending'
+      }
+    });
+
+    // Send notification to Telegram
+    try {
+      const TelegramBot = (await import('node-telegram-bot-api')).default;
+      const botToken = process.env.TELEGRAM_BOT_TOKEN;
+      const chatId = process.env.TELEGRAM_CHAT_ID;
+
+      if (botToken && chatId) {
+        const bot = new TelegramBot(botToken);
+
+        const dbUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { username: true, email: true, name: true }
+        });
+
+        const message = `🛒 YÊU CẦU MUA GÓI PREMIUM\n\n` +
+          `👤 User: ${dbUser?.name || dbUser?.username || dbUser?.email}\n` +
+          `📧 Email: ${dbUser?.email || 'N/A'}\n` +
+          `📦 Gói: ${plan.toUpperCase()}\n` +
+          `💰 Giá: ${details.price.toLocaleString('vi-VN')}đ\n` +
+          `🔢 Mã GD: ${transactionCode}\n` +
+          `📅 Thời gian: ${new Date().toLocaleString('vi-VN')}\n\n` +
+          `Để kích hoạt, trả lời: /activate ${subscription.id}`;
+
+        const sentMessage = await bot.sendMessage(chatId, message);
+
+        // Send separate message with just the activation command for easy copy
+        const commandMessage = `/activate ${subscription.id}`;
+        await bot.sendMessage(chatId, commandMessage);
+
+        // Update subscription with telegram message ID
+        await (prisma as any).subscription.update({
+          where: { id: subscription.id },
+          data: { telegramMessageId: sentMessage.message_id.toString() }
+        });
+      }
+    } catch (telegramError) {
+      console.error('Telegram notification error:', telegramError);
+      // Continue even if telegram fails
+    }
+
+    res.json({
+      success: true,
+      subscriptionId: subscription.id,
+      message: 'Yêu cầu đã được gửi thành công'
+    });
+
+  } catch (error) {
+    console.error('Purchase error:', error);
+    res.status(500).json({ error: 'Failed to create subscription' });
+  }
+});
+
+app.post('/api/subscriptions/activate', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin only' });
+    }
+
+    const { subscriptionId } = req.body;
+
+    if (!subscriptionId) {
+      return res.status(400).json({ error: 'Missing subscriptionId' });
+    }
+
+    // Get subscription
+    const subscription = await (prisma as any).subscription.findUnique({
+      where: { id: subscriptionId }
+    });
+
+    if (!subscription) {
+      return res.status(404).json({ error: 'Subscription not found' });
+    }
+
+    if (subscription.status === 'active') {
+      return res.status(400).json({ error: 'Subscription already active' });
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + subscription.duration * 24 * 60 * 60 * 1000);
+
+    // Activate subscription
+    await (prisma as any).subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        status: 'active',
+        activatedAt: now,
+        expiresAt: expiresAt
+      }
+    });
+
+    // Update user with AI quota (premium info comes from active subscription)
+    await prisma.user.update({
+      where: { id: subscription.userId },
+      data: {
+        aiSearchQuota: { increment: subscription.aiQuota },
+        pendingThankYouPopup: 1 // Set flag to show thank you popup on next homepage visit
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Subscription activated successfully'
+    });
+
+  } catch (error) {
+    console.error('Activation error:', error);
+    res.status(500).json({ error: 'Failed to activate subscription' });
+  }
+});
+
+// Premium API - Image Search with Gemini
+app.post('/api/premium/search-by-image', async (req: Request, res: Response) => {
+  // Variables for error logging
+  let startTime = 0;
+  let user: any = null;
+  let knowledgeBaseIds: any[] = [];
+  let selectedModel: any = null;
+
+  try {
+    user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Check AI search quota
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { aiSearchQuota: true, role: true }
+    });
+
+    if (!dbUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Admin has unlimited quota
+    if (dbUser.role !== 'admin' && dbUser.aiSearchQuota <= 0) {
+      return res.status(403).json({
+        error: 'Bạn đã hết lượt tìm kiếm AI. Vui lòng nạp thêm để tiếp tục sử dụng.',
+        quota: 0
+      });
+    }
+
+    const { image, knowledgeBaseIds: kbIds } = req.body;
+    knowledgeBaseIds = kbIds;
+
+    if (!image || !knowledgeBaseIds || !Array.isArray(knowledgeBaseIds)) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Check if GEMINI_API_KEY is configured
+    if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'your_gemini_api_key_here') {
+      console.error('GEMINI_API_KEY not configured');
+      return res.status(500).json({ error: 'GEMINI_API_KEY chưa được cấu hình. Vui lòng thêm API key vào file .env' });
+    }
+
+    // Import Gemini AI (Google Generative AI)
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+    // Check system settings for model rotation
+    const systemSettings = await (prisma as any).systemSettings.findFirst();
+
+    if (systemSettings && !systemSettings.modelRotationEnabled) {
+      // Model rotation is disabled - using paid/upgraded model (no RPM/RPD limits)
+      // When admin disables rotation, it means they have upgraded the default model
+      // to a paid tier with much higher limits (e.g., 1000+ RPM), so no need to track quotas
+      const defaultModelName = systemSettings.defaultModel || 'gemini-2.5-flash';
+      console.log(`[AI Search] Model rotation DISABLED - Using paid/upgraded model: ${defaultModelName}`);
+      console.log(`[AI Search] Note: Assuming paid tier with high limits, RPM/RPD tracking disabled`);
+      selectedModel = {
+        name: defaultModelName,
+        priority: 0,
+        rpm: 999,  // High dummy value - not tracked for paid tier
+        rpd: 999,  // High dummy value - not tracked for paid tier
+        tpm: 999999,
+        category: 'Paid/Upgraded'
+      };
+    } else {
+      // Model rotation is enabled - using free tier models with quota management
+      // Need to track and enforce RPM/RPD limits for free models
+      console.log(`[AI Search] Model rotation ENABLED - Using free tier with quota management`);
+      selectedModel = geminiModelRotation.getNextAvailableModel();
+      if (!selectedModel) {
+        return res.status(503).json({
+          error: 'Tất cả các model AI (free tier) đã đạt giới hạn. Vui lòng thử lại sau ít phút.',
+          usageStats: geminiModelRotation.getUsageStats()
+        });
+      }
+      console.log(`[AI Search] Using model from rotation: ${selectedModel.name} (priority ${selectedModel.priority})`);
+    }
+
+    const model = genAI.getGenerativeModel({ model: selectedModel.name });
+
+    // Convert base64 to proper format for Gemini
+    const imagePart = {
+      inlineData: {
+        data: image,
+        mimeType: 'image/jpeg',
+      },
+    };
+
+    // Prompt for Gemini to extract question text in structured JSON format
+    const prompt = `Hãy trích xuất văn bản từ ảnh này và trả về CHÍNH XÁC theo định dạng JSON sau:
+
+{
+  "question": "Nội dung câu hỏi (không bao gồm A, B, C, D)",
+  "optionA": "Nội dung đáp án A (nếu có)",
+  "optionB": "Nội dung đáp án B (nếu có)",
+  "optionC": "Nội dung đáp án C (nếu có)",
+  "optionD": "Nội dung đáp án D (nếu có)"
+}
+
+QUY TẮC:
+- Chỉ trả về JSON, KHÔNG thêm markdown code block hay giải thích
+- "question" chỉ chứa NỘI DUNG CÂU HỎI, bỏ qua phần đáp án A/B/C/D
+- Giữ nguyên dấu câu, chính tả
+- Nếu không có đáp án nào, để giá trị rỗng ""
+- Không thêm văn bản không có trong ảnh
+
+Ví dụ:
+{"question":"Agribank được thành lập năm nào?","optionA":"1988","optionB":"1990","optionC":"1995","optionD":"2000"}`;
+
+    const startTime = Date.now(); // Track response time
+    const result = await model.generateContent([prompt, imagePart]);
+    const response = await result.response;
+    const responseTime = Date.now() - startTime; // Calculate response time
+
+    let responseText = response.text().trim();
+
+    // Record successful request for rate limiting (ONLY if rotation is enabled)
+    // When rotation is DISABLED: We assume using paid/upgraded model with high limits,
+    // so no need to track RPM/RPD quotas
+    // When rotation is ENABLED: We use free tier models, so must track quotas to avoid hitting limits
+    if (!systemSettings || systemSettings.modelRotationEnabled) {
+      geminiModelRotation.recordRequest(selectedModel.name);
+      console.log(`[AI Search] Recorded request for quota tracking (free tier mode)`);
+    } else {
+      console.log(`[AI Search] Skipped quota tracking (paid/upgraded model mode)`);
+    }
+
+    // Get token usage from response
+    const usageMetadata = (response as any).usageMetadata || {};
+    const inputTokens = usageMetadata.promptTokenCount || 0;
+    const outputTokens = usageMetadata.candidatesTokenCount || 0;
+    const totalTokens = usageMetadata.totalTokenCount || (inputTokens + outputTokens);
+
+    // Remove markdown code blocks if present
+    responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+    let extractedData: any;
+    try {
+      extractedData = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('Failed to parse AI response as JSON:', responseText);
+      // Fallback: treat as plain text
+      extractedData = {
+        question: responseText,
+        optionA: '',
+        optionB: '',
+        optionC: '',
+        optionD: ''
+      };
+    }
+
+    const recognizedText = extractedData.question || responseText;
+
+    console.log('AI Extracted Data:', extractedData);
+
+    // Search for matching question in selected knowledge bases
+    const questions = await prisma.question.findMany({
+      where: {
+        baseId: {
+          in: knowledgeBaseIds
+        }
+      },
+      include: {
+        base: {
+          select: {
+            name: true
+          }
+        }
+      }
+    });
+
+    // Simple text matching - AI already extracted accurately
+    let bestMatch: any = null;
+    let bestScore = 0;
+
+    // Simple normalization
+    const normalizeText = (text: string) => {
+      return text.toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Remove Vietnamese accents
+        .replace(/đ/g, 'd')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
+    const recognizedNormalized = normalizeText(recognizedText);
+
+    // Store all matches with scores
+    const allMatches: Array<{ question: any; score: number }> = [];
+
+    for (const question of questions) {
+      const questionNormalized = normalizeText(question.text);
+
+      // Strategy 1: Exact match (100%)
+      if (questionNormalized === recognizedNormalized) {
+        allMatches.push({ question, score: 1.0 });
+        continue;
+      }
+
+      // Strategy 2: Contains match (90%)
+      if (questionNormalized.includes(recognizedNormalized)) {
+        allMatches.push({ question, score: 0.9 });
+        continue;
+      }
+
+      if (recognizedNormalized.includes(questionNormalized)) {
+        allMatches.push({ question, score: 0.85 });
+        continue;
+      }
+
+      // Strategy 3: Simple word matching
+      const recognizedWords = recognizedNormalized.split(' ').filter(w => w.length > 2);
+      const questionWords = questionNormalized.split(' ').filter(w => w.length > 2);
+
+      if (recognizedWords.length === 0 || questionWords.length === 0) continue;
+
+      // Count matching words
+      const matchingWords = recognizedWords.filter(word => questionWords.includes(word));
+      const matchRatio = matchingWords.length / Math.max(recognizedWords.length, questionWords.length);
+
+      if (matchRatio > 0.5) { // At least 50% words match
+        allMatches.push({ question, score: matchRatio * 0.8 }); // Max 80% for word matching
+      }
+    }
+
+    // Sort by score and get top matches
+    allMatches.sort((a, b) => b.score - a.score);
+    bestMatch = allMatches.length > 0 ? allMatches[0].question : null;
+    bestScore = allMatches.length > 0 ? allMatches[0].score : 0;
+
+    // Log for debugging
+    console.log('=== IMAGE SEARCH DEBUG ===');
+    console.log('Recognized Question:', recognizedText);
+    console.log('Extracted Options:', {
+      A: extractedData.optionA || 'N/A',
+      B: extractedData.optionB || 'N/A',
+      C: extractedData.optionC || 'N/A',
+      D: extractedData.optionD || 'N/A'
+    });
+    console.log('Total questions in DB:', questions.length);
+    console.log('Matches found:', allMatches.length);
+    console.log('Top 3 matches:', allMatches.slice(0, 3).map(m => ({
+      score: Math.round(m.score * 100) + '%',
+      questionPreview: m.question.text.substring(0, 80) + '...'
+    })));
+    console.log('========================');
+
+    // Prepare alternative matches (top 3)
+    const alternativeMatches = allMatches.slice(1, 4).map(match => ({
+      id: match.question.id,
+      question: match.question.text,
+      options: JSON.parse(match.question.options),
+      correctAnswerIndex: match.question.correctAnswerIdx,
+      source: match.question.source || '',
+      category: match.question.category || '',
+      knowledgeBaseName: match.question.base.name,
+      confidence: Math.round(match.score * 100)
+    }));
+
+    const result_data: any = {
+      recognizedText: recognizedText,
+      extractedOptions: extractedData.optionA ? {
+        A: extractedData.optionA,
+        B: extractedData.optionB,
+        C: extractedData.optionC,
+        D: extractedData.optionD
+      } : undefined,
+      matchedQuestion: bestMatch ? {
+        id: bestMatch.id,
+        question: bestMatch.text,
+        options: JSON.parse(bestMatch.options),
+        correctAnswerIndex: bestMatch.correctAnswerIdx,
+        source: bestMatch.source || '',
+        category: bestMatch.category || '',
+        knowledgeBaseName: bestMatch.base.name
+      } : null,
+      confidence: Math.round(bestScore * 100),
+      alternativeMatches: alternativeMatches.length > 0 ? alternativeMatches : undefined,
+      modelUsed: selectedModel.name, // Include model used
+      modelPriority: selectedModel.priority
+    };
+
+    // Deduct quota for non-admin users (after successful search)
+    if (dbUser.role !== 'admin') {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { aiSearchQuota: { decrement: 1 } }
+      });
+
+      // Add remaining quota to response
+      result_data.remainingQuota = dbUser.aiSearchQuota - 1;
+    } else {
+      result_data.remainingQuota = -1; // Unlimited for admin
+    }
+
+    // Save AI search history to database
+    try {
+      await (prisma as any).aiSearchHistory.create({
+        data: {
+          userId: user.id,
+          // Input data (don't store image to save space - can be optional)
+          // imageBase64: image.substring(0, 1000), // Store only first 1000 chars as preview
+          knowledgeBaseIds: JSON.stringify(knowledgeBaseIds),
+          // AI Response
+          recognizedText: recognizedText,
+          extractedOptions: extractedData.optionA ? JSON.stringify({
+            A: extractedData.optionA,
+            B: extractedData.optionB,
+            C: extractedData.optionC,
+            D: extractedData.optionD
+          }) : null,
+          matchedQuestionId: bestMatch?.id || null,
+          matchedQuestion: bestMatch ? JSON.stringify({
+            id: bestMatch.id,
+            question: bestMatch.text,
+            options: JSON.parse(bestMatch.options),
+            correctAnswerIndex: bestMatch.correctAnswerIdx,
+            source: bestMatch.source || '',
+            category: bestMatch.category || '',
+            knowledgeBaseName: bestMatch.base.name
+          }) : null,
+          confidence: Math.round(bestScore * 100),
+          // Model & Token info
+          modelUsed: selectedModel.name,
+          modelPriority: selectedModel.priority,
+          inputTokens: inputTokens,
+          outputTokens: outputTokens,
+          totalTokens: totalTokens,
+          // Metadata
+          responseTime: responseTime,
+          success: true
+        }
+      });
+      console.log('[AI Search History] Saved search history for user:', user.id);
+    } catch (historyError) {
+      console.error('[AI Search History] Failed to save history:', historyError);
+      // Don't fail the request if history save fails
+    }
+
+    res.json(result_data);
+  } catch (error: any) {
+    console.error('Image search error:', error);
+
+    // Provide more specific error messages
+    let errorMessage = 'Failed to process image search';
+
+    if (error.message && error.message.includes('API key')) {
+      errorMessage = 'API key không hợp lệ. Vui lòng kiểm tra GEMINI_API_KEY.';
+    } else if (error.message && error.message.includes('quota')) {
+      errorMessage = 'Đã vượt quá giới hạn API. Vui lòng thử lại sau.';
+    } else if (error.message && error.message.includes('network')) {
+      errorMessage = 'Lỗi kết nối mạng. Vui lòng kiểm tra internet.';
+    } else if (error.message) {
+      errorMessage = error.message;
+    }
+
+    // Save failed search to history
+    try {
+      const responseTime = startTime > 0 ? Date.now() - startTime : 0;
+      await (prisma as any).aiSearchHistory.create({
+        data: {
+          userId: user?.id || 0,
+          knowledgeBaseIds: JSON.stringify(knowledgeBaseIds),
+          modelUsed: selectedModel?.name || 'unknown',
+          modelPriority: selectedModel?.priority || 0,
+          responseTime: responseTime,
+          success: false,
+          errorMessage: errorMessage
+        }
+      });
+      console.log('[AI Search History] Saved failed search for user:', user?.id);
+    } catch (historyError) {
+      console.error('[AI Search History] Failed to save error history:', historyError);
+    }
+
+    res.status(500).json({ error: errorMessage });
+  }
+});
+
 // Promote first user as admin if no admin
 (async () => {
   try {
@@ -1966,5 +3656,627 @@ app.post('/api/study-plans/:id/reset-progress', async (req: Request, res: Respon
   } catch (error) {
     console.error('Error resetting progress:', error);
     res.status(500).json({ error: 'Failed to reset progress' });
+  }
+});
+
+// ==================== PayOS Payment Integration ====================
+
+// Test endpoint
+app.get('/api/premium/test-payos', async (req: Request, res: Response) => {
+  try {
+    const clientId = process.env.PAYOS_CLIENT_ID;
+    const apiKey = process.env.PAYOS_API_KEY;
+    const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
+
+    res.json({
+      configured: !!(clientId && apiKey && checksumKey),
+      clientId: clientId ? clientId.slice(0, 8) + '...' : 'not set',
+      hasApiKey: !!apiKey,
+      hasChecksumKey: !!checksumKey
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create payment link with QR code
+app.post('/api/premium/create-payment-link', async (req: Request, res: Response) => {
+  try {
+    console.log('[PayOS] Received payment link request');
+    console.log('[PayOS] Request body:', JSON.stringify(req.body));
+
+    const user = req.user as any;
+    if (!user) {
+      console.log('[PayOS] User not authenticated');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    console.log('[PayOS] User:', user.id, user.username);
+    const { planId } = req.body;
+    console.log('[PayOS] Plan ID:', planId);
+
+    if (!planId) {
+      console.log('[PayOS] Missing plan ID');
+      return res.status(400).json({ error: 'Missing plan ID' });
+    }
+
+    // Fetch plan from database
+    const dbPlan = await prismaAny.subscriptionPlan.findUnique({
+      where: { planId: planId }
+    });
+
+    if (!dbPlan || !dbPlan.isActive) {
+      console.log('[PayOS] Plan not found or not active:', planId);
+      return res.status(400).json({ error: 'Invalid or inactive plan' });
+    }
+
+    console.log('[PayOS] Found plan:', dbPlan.name, dbPlan.price);
+
+    // Check PayOS configuration
+    const clientId = process.env.PAYOS_CLIENT_ID;
+    const apiKey = process.env.PAYOS_API_KEY;
+    const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
+
+    if (!clientId || !apiKey || !checksumKey ||
+      clientId === 'your_client_id_here' ||
+      apiKey === 'your_api_key_here' ||
+      checksumKey === 'your_checksum_key_here') {
+      return res.status(500).json({
+        error: 'PayOS chưa được cấu hình. Vui lòng thêm PAYOS_CLIENT_ID, PAYOS_API_KEY, và PAYOS_CHECKSUM_KEY vào file .env'
+      });
+    }
+
+    // Check if user already has a pending subscription for this plan
+    const existingSubscription = await prismaAny.subscription.findFirst({
+      where: {
+        userId: user.id,
+        plan: planId,
+        status: 'pending'
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    // If existing pending subscription found, check if PayOS link is still valid
+    if (existingSubscription && existingSubscription.transactionCode) {
+      console.log('[PayOS] Found existing pending subscription:', existingSubscription.id);
+
+      // Check if subscription has complete payment info (qrCode, checkoutUrl, accountNumber)
+      const hasCompleteInfo = existingSubscription.qrCode &&
+        existingSubscription.checkoutUrl &&
+        existingSubscription.accountNumber;
+
+      if (!hasCompleteInfo) {
+        console.log('[PayOS] Existing subscription missing payment info, creating new one');
+        await prismaAny.subscription.update({
+          where: { id: existingSubscription.id },
+          data: { status: 'cancelled' }
+        });
+      } else {
+        // Has complete info, verify with PayOS
+        const { PayOS } = await import('@payos/node');
+        const payOS = new PayOS({ clientId, apiKey, checksumKey });
+
+        try {
+          // Check payment status from PayOS
+          const paymentInfo = await payOS.paymentRequests.get(parseInt(existingSubscription.transactionCode));
+
+          console.log('[PayOS] Existing payment status:', paymentInfo.status);
+
+          // If payment is still pending or processing, return existing link
+          if (paymentInfo.status === 'PENDING' || paymentInfo.status === 'PROCESSING') {
+            console.log('[PayOS] Reusing existing payment link with complete info');
+
+            return res.json({
+              success: true,
+              orderCode: parseInt(existingSubscription.transactionCode),
+              amount: existingSubscription.price,
+              description: existingSubscription.description || existingSubscription.transactionCode,
+              qrCode: existingSubscription.qrCode,
+              checkoutUrl: existingSubscription.checkoutUrl,
+              paymentLinkId: existingSubscription.paymentLinkId || '',
+              accountNumber: existingSubscription.accountNumber,
+              accountName: existingSubscription.accountName || '',
+              bin: existingSubscription.bin || '',
+              isExisting: true // Flag to indicate this is an existing link
+            });
+          } else {
+            // Payment is cancelled or expired, mark as cancelled and create new one
+            console.log('[PayOS] Old payment link expired/cancelled, creating new one');
+            await prismaAny.subscription.update({
+              where: { id: existingSubscription.id },
+              data: { status: 'cancelled' }
+            });
+          }
+        } catch (error: any) {
+          // If PayOS API fails (404 or other), assume link expired, create new one
+          console.log('[PayOS] Error checking existing payment, creating new one:', error.message);
+          await prismaAny.subscription.update({
+            where: { id: existingSubscription.id },
+            data: { status: 'cancelled' }
+          });
+        }
+      }
+    }
+
+    // Use plan from database
+    const plan = {
+      name: dbPlan.name,
+      price: dbPlan.price,
+      aiQuota: dbPlan.aiQuota,
+      duration: dbPlan.duration
+    };
+
+    // Import PayOS SDK
+    const { PayOS } = await import('@payos/node');
+    const payOS = new PayOS({
+      clientId,
+      apiKey,
+      checksumKey
+    });
+
+    // Generate unique order code (timestamp + random)
+    const orderCode = parseInt(`${Date.now()}${Math.floor(Math.random() * 1000)}`);
+
+    // Get user info
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { username: true, email: true }
+    });
+
+    // Description tối đa 25 ký tự cho PayOS
+    // Format: PLAN-timestamp6digit (ví dụ: PLUS-123456, PREMIUM-123456)
+    const shortDescription = `${planId.toUpperCase()}-${Date.now().toString().slice(-6)}`;
+
+    // Create payment link
+    const paymentData = {
+      orderCode: orderCode,
+      amount: plan.price,
+      description: shortDescription,
+      cancelUrl: `${appBaseUrl}/premium/cancel`,
+      returnUrl: `${appBaseUrl}/premium/success`,
+      buyerName: dbUser?.username || user.username || 'User',
+      buyerEmail: dbUser?.email || user.email || undefined,
+    };
+
+    console.log('Creating PayOS payment link:', paymentData);
+
+    // Call PayOS API v2
+    const paymentResponse = await payOS.paymentRequests.create({
+      orderCode: paymentData.orderCode,
+      amount: paymentData.amount,
+      description: paymentData.description,
+      cancelUrl: paymentData.cancelUrl,
+      returnUrl: paymentData.returnUrl,
+      buyerName: paymentData.buyerName,
+      buyerEmail: paymentData.buyerEmail,
+    });
+
+    console.log('PayOS Response:', paymentResponse);
+
+    // Convert QR code text to base64 image
+    let qrCodeBase64 = '';
+    if (paymentResponse.qrCode) {
+      const QRCode = (await import('qrcode')).default;
+      // Generate QR code as data URL (base64)
+      const qrDataURL = await QRCode.toDataURL(paymentResponse.qrCode, {
+        errorCorrectionLevel: 'M',
+        type: 'image/png',
+        width: 512,
+        margin: 2
+      });
+      // Extract base64 part (remove "data:image/png;base64," prefix)
+      qrCodeBase64 = qrDataURL.replace(/^data:image\/png;base64,/, '');
+    }
+
+    // Lưu subscription record với đầy đủ thông tin PayOS link
+    await prismaAny.subscription.create({
+      data: {
+        userId: user.id,
+        plan: planId,
+        price: plan.price,
+        aiQuota: plan.aiQuota,
+        duration: plan.duration,
+        status: 'pending',
+        paymentMethod: 'payos',
+        transactionCode: orderCode.toString(),
+        description: shortDescription,
+        qrCode: qrCodeBase64,
+        checkoutUrl: paymentResponse.checkoutUrl,
+        paymentLinkId: paymentResponse.paymentLinkId,
+        accountNumber: paymentResponse.accountNumber,
+        accountName: paymentResponse.accountName,
+        bin: paymentResponse.bin,
+      }
+    });
+
+    // Return payment info with QR code
+    res.json({
+      success: true,
+      orderCode: orderCode,
+      amount: plan.price,
+      description: shortDescription,
+      qrCode: qrCodeBase64, // Base64 QR code image
+      checkoutUrl: paymentResponse.checkoutUrl,
+      paymentLinkId: paymentResponse.paymentLinkId,
+      accountNumber: paymentResponse.accountNumber,
+      accountName: paymentResponse.accountName,
+      bin: paymentResponse.bin,
+    });
+
+  } catch (error: any) {
+    console.error('Error creating payment link:', error);
+    res.status(500).json({
+      error: 'Không thể tạo link thanh toán',
+      details: error.message
+    });
+  }
+});
+
+// Get pending payment for current user
+app.get('/api/premium/pending-payment', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Find the most recent pending subscription
+    const pendingSubscription = await prismaAny.subscription.findFirst({
+      where: {
+        userId: user.id,
+        status: 'pending'
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    if (!pendingSubscription) {
+      return res.json({ hasPending: false });
+    }
+
+    // Check if PayOS link is still valid
+    const clientId = process.env.PAYOS_CLIENT_ID;
+    const apiKey = process.env.PAYOS_API_KEY;
+    const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
+
+    if (!clientId || !apiKey || !checksumKey) {
+      return res.json({ hasPending: false });
+    }
+
+    try {
+      const { PayOS } = await import('@payos/node');
+      const payOS = new PayOS({ clientId, apiKey, checksumKey });
+
+      const paymentInfo = await payOS.paymentRequests.get(parseInt(pendingSubscription.transactionCode));
+
+      // If payment is still pending, return the subscription info
+      if (paymentInfo.status === 'PENDING' || paymentInfo.status === 'PROCESSING') {
+        return res.json({
+          hasPending: true,
+          planId: pendingSubscription.plan,
+          orderCode: parseInt(pendingSubscription.transactionCode),
+          amount: pendingSubscription.price,
+          description: pendingSubscription.description,
+          qrCode: pendingSubscription.qrCode,
+          checkoutUrl: pendingSubscription.checkoutUrl,
+          paymentLinkId: pendingSubscription.paymentLinkId,
+          accountNumber: pendingSubscription.accountNumber,
+          accountName: pendingSubscription.accountName,
+          bin: pendingSubscription.bin,
+          createdAt: pendingSubscription.createdAt
+        });
+      } else {
+        // Payment expired or cancelled, mark as cancelled
+        await prismaAny.subscription.update({
+          where: { id: pendingSubscription.id },
+          data: { status: 'cancelled' }
+        });
+        return res.json({ hasPending: false });
+      }
+    } catch (error) {
+      // PayOS API error, assume link expired
+      await prismaAny.subscription.update({
+        where: { id: pendingSubscription.id },
+        data: { status: 'cancelled' }
+      });
+      return res.json({ hasPending: false });
+    }
+
+  } catch (error: any) {
+    console.error('Error checking pending payment:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Check payment status
+app.get('/api/premium/payment-status/:orderCode', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { orderCode } = req.params;
+
+    // Check with PayOS first to get real-time status
+    const clientId = process.env.PAYOS_CLIENT_ID;
+    const apiKey = process.env.PAYOS_API_KEY;
+    const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
+
+    if (!clientId || !apiKey || !checksumKey) {
+      return res.status(500).json({ error: 'PayOS not configured' });
+    }
+
+    try {
+      const { PayOS } = await import('@payos/node');
+      const payOS = new PayOS({ clientId, apiKey, checksumKey });
+
+      // Get payment info from PayOS
+      const paymentInfo = await payOS.paymentRequests.get(parseInt(orderCode));
+
+      console.log('[PayOS] Payment status from PayOS:', paymentInfo.status);
+
+      // If payment is PAID, check if we've already activated the user
+      if (paymentInfo.status === 'PAID') {
+        const subscription = await prismaAny.subscription.findUnique({
+          where: { transactionCode: orderCode },
+        });
+
+        if (subscription && subscription.status === 'active') {
+          // Already activated
+          return res.json({
+            success: true,
+            status: 'active',
+            paid: true,
+            amount: subscription.price,
+            activatedAt: subscription.activatedAt,
+            expiresAt: subscription.expiresAt
+          });
+        } else if (subscription && subscription.status === 'pending') {
+          // Payment confirmed by PayOS but not yet activated by webhook
+          // This shouldn't happen if webhook is working, but handle it
+          console.log('[PayOS] Payment PAID but subscription still pending - webhook may have failed');
+          return res.json({
+            success: true,
+            status: 'PAID',
+            paid: true,
+            amount: paymentInfo.amount,
+            amountPaid: paymentInfo.amountPaid,
+            transactions: paymentInfo.transactions || [],
+            note: 'Payment confirmed, waiting for system activation'
+          });
+        }
+      }
+
+      // Return PayOS status
+      return res.json({
+        success: true,
+        status: paymentInfo.status, // PENDING, PAID, CANCELLED, PROCESSING
+        paid: paymentInfo.status === 'PAID',
+        amount: paymentInfo.amount,
+        amountPaid: paymentInfo.amountPaid,
+        transactions: paymentInfo.transactions || [],
+      });
+
+    } catch (payosError: any) {
+      console.error('[PayOS] Error checking with PayOS:', payosError.message);
+
+      // If PayOS fails, fall back to database
+      const subscription = await prismaAny.subscription.findUnique({
+        where: { transactionCode: orderCode },
+      });
+
+      if (subscription) {
+        return res.json({
+          success: true,
+          status: subscription.status,
+          paid: subscription.status === 'active',
+          amount: subscription.price,
+          activatedAt: subscription.activatedAt,
+          expiresAt: subscription.expiresAt,
+          note: 'Status from database (PayOS unavailable)'
+        });
+      }
+
+      throw payosError;
+    }
+
+  } catch (error: any) {
+    console.error('Error checking payment status:', error);
+    res.status(500).json({
+      error: 'Không thể kiểm tra trạng thái thanh toán',
+      details: error.message
+    });
+  }
+});
+
+// PayOS Webhook to receive payment confirmation
+app.post('/api/premium/payos-webhook', async (req: Request, res: Response) => {
+  try {
+    const webhookData = req.body;
+
+    console.log('PayOS Webhook received:', webhookData);
+
+    // Verify signature
+    const checksumKey = process.env.PAYOS_CHECKSUM_KEY;
+    if (!checksumKey) {
+      return res.status(500).json({ error: 'Checksum key not configured' });
+    }
+
+    const { PayOS } = await import('@payos/node');
+    const payOS = new PayOS({
+      clientId: process.env.PAYOS_CLIENT_ID || '',
+      apiKey: process.env.PAYOS_API_KEY || '',
+      checksumKey: checksumKey
+    });
+
+    // Verify webhook signature
+    const verifiedData = await payOS.webhooks.verify(webhookData);
+
+    console.log('Verified webhook data:', verifiedData);
+
+    // Process payment success
+    if (verifiedData) {
+      const { orderCode, amount } = verifiedData;
+
+      // Tìm subscription record từ database bằng orderCode
+      const subscription = await prismaAny.subscription.findUnique({
+        where: { transactionCode: orderCode.toString() },
+        include: { user: true }
+      });
+
+      if (subscription && subscription.status === 'pending') {
+        const userId = subscription.userId;
+        const planId = subscription.plan;
+        const aiQuota = subscription.aiQuota;
+        const duration = subscription.duration;
+
+        // Get plan details from database for better display
+        const planDetails = await prismaAny.subscriptionPlan.findUnique({
+          where: { planId: planId }
+        });
+
+        // Calculate expiry date
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + duration);
+
+        // Only update AI search quota in User table
+        await prisma.user.update({
+          where: { id: userId },
+          data: {
+            aiSearchQuota: { increment: aiQuota },
+            pendingThankYouPopup: 1 // Set flag to show thank you popup on next homepage visit
+          }
+        });
+
+        // Update subscription status with expiry date
+        await prismaAny.subscription.update({
+          where: { id: subscription.id },
+          data: {
+            status: 'active',
+            activatedAt: new Date(),
+            expiresAt: expiresAt
+          }
+        });
+
+        console.log(`✅ Auto-activated ${planId} for user ${userId}, expires at ${expiresAt}`);
+
+        // Emit Socket.IO event to notify client
+        const eventData = {
+          plan: planId,
+          planName: planDetails?.name || planId,
+          expiresAt: expiresAt,
+          aiQuota: aiQuota,
+          duration: duration,
+          price: subscription.price
+        };
+
+        const room = `user:${userId}`;
+        const socketsInRoom = await io.in(room).fetchSockets();
+        console.log(`[Socket.IO] Emitting to room: ${room}, sockets in room: ${socketsInRoom.length}`);
+
+        io.to(room).emit('subscription-activated', eventData);
+        console.log(`[Socket.IO] Emitted subscription-activated:`, eventData);
+
+        // Send Telegram notification
+        const botToken = process.env.TELEGRAM_BOT_TOKEN;
+        const chatId = process.env.TELEGRAM_CHAT_ID;
+        if (botToken && chatId) {
+          const TelegramBot = (await import('node-telegram-bot-api')).default;
+          const bot = new TelegramBot(botToken);
+          const username = subscription.user?.username || userId;
+          const message = `✅ *Thanh toán thành công*\n\n` +
+            `👤 User: ${username}\n` +
+            `📦 Gói: ${planId.toUpperCase()}\n` +
+            `💰 Số tiền: ${amount.toLocaleString()}đ\n` +
+            `🔍 AI Search: +${aiQuota}\n` +
+            `⏰ Hết hạn: ${expiresAt.toLocaleDateString('vi-VN')}\n` +
+            `🔖 Mã đơn: ${orderCode}\n\n` +
+            `_Đã tự động kích hoạt_`;
+          await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+        }
+      } else {
+        console.log('Subscription not found or already processed:', orderCode);
+      }
+    }
+
+    // Always return success to PayOS
+    res.status(200).json({ success: true });
+
+  } catch (error: any) {
+    console.error('Error processing PayOS webhook:', error);
+    // Still return 200 to prevent PayOS from retrying
+    res.status(200).json({ success: true });
+  }
+});
+
+// Check subscription status for current user (for auto-refresh after payment)
+app.get('/api/premium/check-subscription', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Get active subscription
+    const activeSubscription = await getActiveSubscription(user.id);
+
+    if (activeSubscription) {
+      return res.json({
+        hasActiveSubscription: true,
+        plan: activeSubscription.plan,
+        expiresAt: activeSubscription.expiresAt,
+        activatedAt: activeSubscription.activatedAt
+      });
+    }
+
+    // Check for pending subscription
+    const pendingSubscription = await prismaAny.subscription.findFirst({
+      where: {
+        userId: user.id,
+        status: 'pending'
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    res.json({
+      hasActiveSubscription: false,
+      hasPendingSubscription: !!pendingSubscription
+    });
+
+  } catch (error: any) {
+    console.error('Error checking subscription:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Check and reset thank you popup flag
+app.get('/api/premium/check-thank-you-popup', async (req: Request, res: Response) => {
+  try {
+    const user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Get current user's pendingThankYouPopup value
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { pendingThankYouPopup: true }
+    });
+
+    const shouldShow = (dbUser?.pendingThankYouPopup || 0) > 0;
+
+    // If popup should be shown, reset the flag to 0
+    if (shouldShow) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { pendingThankYouPopup: 0 }
+      });
+    }
+
+    res.json({
+      shouldShow: shouldShow
+    });
+
+  } catch (error: any) {
+    console.error('Error checking thank you popup:', error);
+    res.status(500).json({ error: error.message });
   }
 });

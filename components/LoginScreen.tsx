@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { api, API_BASE } from '../src/api';
 import { User } from '../types';
+import { getDeviceId, setSessionToken } from '../src/utils/deviceId';
 
 interface LoginScreenProps {
   onLoginSuccess: (user: User) => void;
@@ -24,7 +25,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onSwitchToReg
   const [loading, setLoading] = useState(false);
 
   const handleGoogleLogin = () => {
-    window.location.href = `${API_BASE}/api/auth/google`;
+    const deviceId = getDeviceId();
+    window.location.href = `${API_BASE}/api/auth/google?deviceId=${encodeURIComponent(deviceId)}`;
   };
 
   const handleLocalLogin = async (e: React.FormEvent) => {
@@ -32,8 +34,18 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onSwitchToReg
     setError('');
     setLoading(true);
     try {
-      const response = await api.post('/api/auth/login', { username, password });
-      onLoginSuccess((response as any).user);
+      const deviceId = getDeviceId();
+      const response = await api.login(username, password, deviceId);
+
+      // Store session token
+      setSessionToken(response.sessionToken);
+
+      // Show message if user was logged out from another device
+      if (response.wasLoggedOutFromOtherDevice) {
+        console.log('Previous device session has been terminated');
+      }
+
+      onLoginSuccess(response.user);
     } catch (err) {
       setError('Tên đăng nhập hoặc mật khẩu không đúng.');
     } finally {

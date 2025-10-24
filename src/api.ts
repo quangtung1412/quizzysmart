@@ -51,10 +51,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  get: (path: string) => request(path),
   post: (path: string, body: any) => request(path, { method: 'POST', body: JSON.stringify(body) }),
   put: (path: string, body: any) => request(path, { method: 'PUT', body: JSON.stringify(body) }),
   me: () => request<{ user: any }>('/api/auth/me'),
   logout: () => request<{ ok: boolean }>('/api/auth/logout'),
+  login: (username: string, password: string, deviceId: string) =>
+    request<{ user: any; sessionToken: string; deviceId: string; wasLoggedOutFromOtherDevice: boolean }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password, deviceId })
+    }),
+  validateDevice: (deviceId: string, sessionToken: string) =>
+    request<{ valid: boolean; error?: string; message?: string }>('/api/auth/validate-device', {
+      method: 'POST',
+      body: JSON.stringify({ deviceId, sessionToken })
+    }),
   getBases: (email: string) => request<any[]>(`/api/bases?email=${encodeURIComponent(email)}`),
   createBase: (email: string, base: any) => request<any>('/api/bases', { method: 'POST', body: JSON.stringify({ email, base }) }),
   deleteBase: (id: string) => request<{ ok: boolean }>(`/api/bases/${id}`, { method: 'DELETE' }),
@@ -79,6 +90,9 @@ export const api = {
   getQuizResults: (attemptId: string, email: string) => request<{ attemptId: string; score: number; completedAt: string; results: any[] }>(`/api/attempts/${attemptId}/results?email=${encodeURIComponent(email)}`),
   // admin
   adminListUsers: () => request<any[]>(`/api/admin/users`),
+  adminCreateUser: (userData: any) => request<any>(`/api/admin/users`, { method: 'POST', body: JSON.stringify(userData) }),
+  adminUpdateUser: (userId: string, userData: any) => request<any>(`/api/admin/users/${userId}`, { method: 'PUT', body: JSON.stringify(userData) }),
+  adminDeleteUser: (userId: string) => request<{ ok: boolean }>(`/api/admin/users/${userId}`, { method: 'DELETE' }),
   adminListTests: () => request<any[]>(`/api/admin/tests`),
   adminCreateTest: (payload: {
     name: string;
@@ -141,7 +155,142 @@ export const api = {
     return request<{ success: boolean }>(`/api/study-plans/${studyPlanId}/reset-progress`, { method: 'POST' });
   },
   // Quick Search
-  getQuickSearchQuestions: (knowledgeBaseIds: string[]) => {
-    return request<any[]>(`/api/quick-search/questions`, { method: 'POST', body: JSON.stringify({ knowledgeBaseIds }) });
-  }
+  getQuickSearchQuestions: (knowledgeBaseIds: string[], userEmail: string) => {
+    return request<{ questions: any[]; remainingQuota: number }>(`/api/quick-search/questions`, { method: 'POST', body: JSON.stringify({ knowledgeBaseIds, userEmail }) });
+  },
+  // Premium Features
+  searchByImage: async (imageBase64: string, knowledgeBaseIds: string[]) => {
+    const res = await fetch(API_BASE + '/api/premium/search-by-image', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: imageBase64, knowledgeBaseIds })
+    });
+
+    if (!res.ok) {
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const error = await res.json();
+
+        // Special handling for 401 Unauthorized
+        if (res.status === 401) {
+          throw new Error('Bạn cần đăng nhập để sử dụng tính năng này. Vui lòng đăng nhập lại.');
+        }
+
+        throw new Error(error.error || `API error: ${res.status}`);
+      }
+
+      if (res.status === 401) {
+        throw new Error('Bạn cần đăng nhập để sử dụng tính năng này. Vui lòng đăng nhập lại.');
+      }
+
+      throw new Error(`API error: ${res.status} - ${res.statusText}`);
+    }
+
+    return res.json();
+  },
+  // Subscription/Premium Plans
+  purchaseSubscription: (plan: string, transactionCode: string) => {
+    return request<{ subscriptionId: string; message: string }>(`/api/subscriptions/purchase`, {
+      method: 'POST',
+      body: JSON.stringify({ plan, transactionCode })
+    });
+  },
+  // PayOS Payment
+  createPaymentLink: (planId: string) => {
+    return request<{
+      success: boolean;
+      orderCode: number;
+      amount: number;
+      description: string;
+      qrCode: string;
+      checkoutUrl: string;
+      paymentLinkId: string;
+      accountNumber: string;
+      accountName: string;
+      bin: string;
+      isExisting?: boolean;
+    }>(`/api/premium/create-payment-link`, {
+      method: 'POST',
+      body: JSON.stringify({ planId })
+    });
+  },
+  checkPaymentStatus: (orderCode: number) => {
+    return request<{
+      success: boolean;
+      status: string;
+      paid: boolean;
+      amount: number;
+      amountPaid?: number;
+      transactions?: any[];
+      activatedAt?: string;
+      expiresAt?: string;
+    }>(`/api/premium/payment-status/${orderCode}`);
+  },
+  getPendingPayment: () => {
+    return request<{
+      hasPending: boolean;
+      planId?: string;
+      orderCode?: number;
+      amount?: number;
+      description?: string;
+      qrCode?: string;
+      checkoutUrl?: string;
+      paymentLinkId?: string;
+      accountNumber?: string;
+      accountName?: string;
+      bin?: string;
+      createdAt?: string;
+    }>(`/api/premium/pending-payment`);
+  },
+  checkSubscription: () => {
+    return request<{
+      hasActiveSubscription: boolean;
+      hasPendingSubscription?: boolean;
+      plan?: string;
+      expiresAt?: string;
+      activatedAt?: string;
+    }>(`/api/premium/check-subscription`);
+  },
+  checkThankYouPopup: () => {
+    return request<{
+      shouldShow: boolean;
+    }>(`/api/premium/check-thank-you-popup`);
+  },
+  // Subscription Plan Management (Admin)
+  adminGetSubscriptionPlans: () => request<any[]>(`/api/admin/subscription-plans`),
+  adminCreateSubscriptionPlan: (payload: {
+    planId: string;
+    name: string;
+    price: number;
+    aiQuota: number;
+    duration: number;
+    features: string[];
+    isActive?: boolean;
+    displayOrder?: number;
+    popular?: boolean;
+  }) => request<any>(`/api/admin/subscription-plans`, { method: 'POST', body: JSON.stringify(payload) }),
+  adminUpdateSubscriptionPlan: (id: string, payload: {
+    planId?: string;
+    name?: string;
+    price?: number;
+    aiQuota?: number;
+    duration?: number;
+    features?: string[];
+    isActive?: boolean;
+    displayOrder?: number;
+    popular?: boolean;
+  }) => request<any>(`/api/admin/subscription-plans/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  adminDeleteSubscriptionPlan: (id: string) => request<{ ok: boolean }>(`/api/admin/subscription-plans/${id}`, { method: 'DELETE' }),
+  // Public endpoint
+  getSubscriptionPlans: () => request<any[]>(`/api/subscription-plans`),
+  decrementQuickSearchQuota: () => request<{ remainingQuota: number }>('/api/users/decrement-quick-search-quota', { method: 'POST' }),
+  // Peak Hours Status
+  getPeakHoursStatus: () => request<{
+    isPeakHours: boolean;
+    enabled: boolean;
+    peakHoursStart?: string;
+    peakHoursEnd?: string;
+    peakHoursDays?: number[];
+  }>('/api/peak-hours-status'),
 };

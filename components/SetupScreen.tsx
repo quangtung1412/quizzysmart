@@ -48,9 +48,9 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ mode, allQuestions, onStartQu
   const displayedCategories = showAllCategories ? uniqueCategories : uniqueCategories.slice(0, 5);
 
   return (
-    <div className="flex flex-col items-center p-4 sm:p-0">
-      <div className="text-center mb-4 sm:mb-6">
-        <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mb-2">
+    <div className="flex flex-col items-center p-2 sm:p-0">
+      <div className="text-center mb-3 sm:mb-4">
+        <h2 className="text-lg sm:text-xl font-bold text-slate-800 mb-1.5 sm:mb-2">
           Cài đặt bài {mode === QuizMode.Study ? 'học' : 'thi'}
         </h2>
         <p className="text-sm sm:text-base text-slate-600">
@@ -58,11 +58,11 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ mode, allQuestions, onStartQu
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="w-full max-w-lg space-y-4 sm:space-y-6">
+      <form onSubmit={handleSubmit} className="w-full max-w-lg space-y-3 sm:space-y-4">
         {mode === QuizMode.Study && (
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2 sm:mb-3">Chọn mảng kiến thức (tùy chọn)</label>
-            <div className="bg-slate-50 p-3 sm:p-4 rounded-xl border border-slate-200 max-h-48 sm:max-h-56 overflow-y-auto">
+            <label className="block text-sm font-medium text-slate-700 mb-2">Chọn mảng kiến thức (tùy chọn)</label>
+            <div className="bg-slate-50 p-2.5 sm:p-3 rounded-xl border border-slate-200 max-h-48 sm:max-h-56 overflow-y-auto">
               <div className="flex items-center mb-3">
                 <input
                   id="all-categories"
@@ -131,18 +131,18 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ mode, allQuestions, onStartQu
           />
         </div>
 
-        <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4 pt-4 sm:pt-6">
+        <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-3 pt-3 sm:pt-4">
           <button
             type="button"
             onClick={onBack}
-            className="w-full sm:w-auto px-4 sm:px-6 py-3 text-sm sm:text-base font-medium text-slate-700 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500 transition-colors min-h-[44px]"
+            className="w-full sm:w-auto px-4 sm:px-6 py-2.5 sm:py-3 text-sm sm:text-base font-medium text-slate-700 bg-slate-100 border border-slate-200 rounded-lg hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500 transition-colors min-h-[44px]"
           >
             Quay lại
           </button>
           <button
             type="submit"
             disabled={maxQuestions === 0}
-            className="w-full sm:w-auto px-6 sm:px-8 py-3 text-sm sm:text-base font-medium text-white bg-sky-600 border border-transparent rounded-lg shadow-sm hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors min-h-[44px]"
+            className="w-full sm:w-auto px-6 sm:px-8 py-2.5 sm:py-3 text-sm sm:text-base font-medium text-white bg-sky-600 border border-transparent rounded-lg shadow-sm hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors min-h-[44px]"
           >
             Bắt đầu
           </button>

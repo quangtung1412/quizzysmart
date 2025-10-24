@@ -17,9 +17,16 @@ model User {
   picture     String?
   createdAt   DateTime  @default(now())
   role        String    @default("user") // 'admin' or 'user'
+  aiSearchQuota Int     @default(10) // Number of AI search queries remaining
+  quickSearchQuota Int  @default(50) // Number of quick search queries remaining (free trial)
+  currentDeviceId String? // Currently logged in device ID
+  currentSessionToken String? // Current session token for device validation
+  pendingThankYouPopup Int @default(0) // Number of thank you popups pending to show (set to 1 after payment)
   bases       KnowledgeBase[]
   attempts    Attempt[]
   assignments TestAssignment[]
+  subscriptions Subscription[]
+  aiSearchHistory AiSearchHistory[]
 }
 
 model KnowledgeBase {
@@ -133,4 +140,96 @@ model QuestionProgress {
   updatedAt       DateTime   @updatedAt
   
   @@unique([studyPlanId, questionId])
+}
+
+model SubscriptionPlan {
+  id          String   @id @default(cuid())
+  planId      String   @unique // 'plus' or 'premium'
+  name        String   // Display name
+  price       Int      // Price in VND
+  aiQuota     Int      // AI search quota included
+  duration    Int      // Duration in days
+  features    String   // JSON array of feature strings
+  isActive    Boolean  @default(true)
+  displayOrder Int     @default(0) // Order to display plans
+  popular     Boolean  @default(false) // Is this the popular/recommended plan?
+  bestChoice  Boolean  @default(false) // Is this the best choice/recommended plan?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("subscription_plans")
+}
+
+model Subscription {
+  id              String   @id @default(cuid())
+  user            User     @relation(fields: [userId], references: [id])
+  userId          String
+  plan            String   // 'plus' or 'premium'
+  price           Int      // Price in VND
+  aiQuota         Int      // AI search quota included
+  duration        Int      // Duration in days
+  status          String   @default("pending") // 'pending', 'active', 'expired', 'cancelled'
+  paymentMethod   String   @default("bank_transfer") // 'bank_transfer'
+  transactionCode String   @unique // User ID + Plan code for transfer content
+  telegramMessageId String? // ID of Telegram message for this subscription
+  // PayOS payment link info
+  qrCode          String?  // Base64 QR code image
+  checkoutUrl     String?  // PayOS checkout URL
+  accountNumber   String?  // Bank account number
+  accountName     String?  // Bank account name
+  bin             String?  // Bank BIN
+  paymentLinkId   String?  // PayOS payment link ID
+  description     String?  // Payment description (short code)
+  purchasedAt     DateTime @default(now())
+  activatedAt     DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model AiSearchHistory {
+  id                String   @id @default(cuid())
+  user              User     @relation(fields: [userId], references: [id])
+  userId            String
+  // Input data
+  imageBase64       String?  // Optionally store the image (can be large)
+  knowledgeBaseIds  String   // JSON array of knowledge base IDs searched
+  // AI Response
+  recognizedText    String   // Question text extracted by AI
+  extractedOptions  String?  // JSON object of extracted A/B/C/D options
+  matchedQuestionId String?  // ID of matched question (if found)
+  matchedQuestion   String?  // Full matched question data (JSON)
+  confidence        Int      // Confidence score (0-100)
+  // Model & Token info
+  modelUsed         String   // e.g., "gemini-2.5-flash"
+  modelPriority     Int      // Priority of model used
+  inputTokens       Int      // Number of input tokens
+  outputTokens      Int      // Number of output tokens
+  totalTokens       Int      // Total tokens used
+  // Metadata
+  responseTime      Int      // Response time in milliseconds
+  success           Boolean  @default(true) // Whether search was successful
+  errorMessage      String?  // Error message if failed
+  createdAt         DateTime @default(now())
+  
+  @@index([userId])
+  @@index([createdAt])
+  @@index([modelUsed])
+}
+
+model SystemSettings {
+  id                    String   @id @default(cuid())
+  // Model Rotation Settings
+  modelRotationEnabled  Boolean  @default(true) // Whether to use model rotation or stick to default model
+  defaultModel          String   @default("gemini-2.5-flash") // Default model to use when rotation is disabled
+  // Peak Hours Settings
+  peakHoursEnabled      Boolean  @default(false) // Whether peak hours restrictions are active
+  peakHoursStart        String?  // Start time in HH:MM format (24-hour)
+  peakHoursEnd          String?  // End time in HH:MM format (24-hour)
+  peakHoursDays         String   @default("[]") // JSON array of days (0=Sunday, 6=Saturday)
+  // Metadata
+  updatedAt             DateTime @updatedAt
+  updatedBy             String?  // Admin user ID who last updated
+  
+  @@map("system_settings")
 }
