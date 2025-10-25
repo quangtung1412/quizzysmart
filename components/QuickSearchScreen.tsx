@@ -66,8 +66,9 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
 
   // Effect to decrement quota after user stops searching (inactivity timeout)
   useEffect(() => {
-    // Premium users don't consume quota
-    if (!hasActiveSearch || !lastSearchTime || user?.premiumPlan === 'premium') return;
+    // Admin, Premium, and Plus users don't consume quota
+    const isPremiumUser = user?.role === 'admin' || user?.premiumPlan === 'premium' || user?.premiumPlan === 'plus';
+    if (!hasActiveSearch || !lastSearchTime || isPremiumUser) return;
 
     // After 5 seconds of no changes to search keyword, assume user found the answer
     const inactivityTimer = setTimeout(async () => {
@@ -93,7 +94,7 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
     }, 5000); // 5 seconds of inactivity
 
     return () => clearTimeout(inactivityTimer);
-  }, [lastSearchTime, hasActiveSearch, user?.premiumPlan, onQuotaUpdate]);
+  }, [lastSearchTime, hasActiveSearch, user?.role, user?.premiumPlan, onQuotaUpdate]);
   // Toggle knowledge base selection
   const toggleBaseSelection = (baseId: string) => {
     setSelectedBaseIds(prev => {
@@ -229,8 +230,9 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
       return [];
     }
 
-    // Only check quota for non-premium users
-    if (user?.premiumPlan !== 'premium' && remainingQuota !== null && remainingQuota <= 0) {
+    // Only check quota for non-premium users (admin, premium, plus users have unlimited access)
+    const isPremiumUser = user?.role === 'admin' || user?.premiumPlan === 'premium' || user?.premiumPlan === 'plus';
+    if (!isPremiumUser && remainingQuota !== null && remainingQuota <= 0) {
       return [];
     }
 
@@ -266,7 +268,7 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
     }
 
     return results;
-  }, [allQuestions, debouncedSearchKeyword, remainingQuota, user?.premiumPlan]);
+  }, [allQuestions, debouncedSearchKeyword, remainingQuota, user?.role, user?.premiumPlan]);
 
   // Load more results function - defined after searchResults
   const loadMoreResults = useCallback(() => {
@@ -323,7 +325,8 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
               Đã chọn {selectedBaseIds.size} CSKT • {allQuestions.length} câu hỏi
             </p>
           )}
-          {user?.premiumPlan !== 'premium' && remainingQuota !== null && (
+          {/* Show quota only for non-premium users (not admin, not premium, not plus) */}
+          {user?.role !== 'admin' && user?.premiumPlan !== 'premium' && user?.premiumPlan !== 'plus' && remainingQuota !== null && (
             <p className="text-sm text-purple-600 mt-1 flex items-center gap-2">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
@@ -465,7 +468,7 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
                 value={searchKeyword}
                 onChange={(e) => setSearchKeyword(e.target.value)}
                 placeholder="Nhập từ khóa để tìm kiếm..."
-                disabled={isLoadingQuestions || (user?.premiumPlan !== 'premium' && remainingQuota !== null && remainingQuota <= 0)}
+                disabled={isLoadingQuestions || (user?.role !== 'admin' && user?.premiumPlan !== 'premium' && user?.premiumPlan !== 'plus' && remainingQuota !== null && remainingQuota <= 0)}
                 className="w-full px-5 py-3 pr-12 text-base border-2 border-slate-300 rounded-xl focus:border-purple-500 focus:outline-none transition-colors disabled:bg-slate-100 disabled:cursor-not-allowed"
               />
               {searchKeyword !== debouncedSearchKeyword && searchKeyword.length > 0 ? (
@@ -513,12 +516,12 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <p className="text-slate-500 text-lg">
-                {user?.premiumPlan !== 'premium' && remainingQuota !== null && remainingQuota <= 0
+                {user?.role !== 'admin' && user?.premiumPlan !== 'premium' && user?.premiumPlan !== 'plus' && remainingQuota !== null && remainingQuota <= 0
                   ? "Bạn đã hết lượt tra cứu"
                   : "Không tìm thấy kết quả nào"}
               </p>
               <p className="text-slate-400 text-sm mt-2">
-                {user?.premiumPlan !== 'premium' && remainingQuota !== null && remainingQuota <= 0
+                {user?.role !== 'admin' && user?.premiumPlan !== 'premium' && user?.premiumPlan !== 'plus' && remainingQuota !== null && remainingQuota <= 0
                   ? "Vui lòng nâng cấp để tiếp tục."
                   : "Thử tìm kiếm với từ khóa khác"}
               </p>

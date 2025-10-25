@@ -2088,6 +2088,349 @@ app.delete('/api/admin/subscription-plans/:id', async (req: Request, res: Respon
   }
 });
 
+// ==================== Subscription Management Endpoints ====================
+
+// Get all subscriptions with user info (Admin only)
+app.get('/api/admin/subscriptions', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    const { status, userId, planId } = req.query;
+
+    const where: any = {};
+
+    if (status) {
+      where.status = status;
+    }
+
+    if (userId) {
+      where.userId = userId;
+    }
+
+    if (planId) {
+      where.planId = planId;
+    }
+
+    const subscriptions = await (prisma as any).subscription.findMany({
+      where,
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            name: true,
+            role: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    // Get all subscription plans to enrich the response
+    const plans = await (prisma as any).subscriptionPlan.findMany();
+    const planMap = new Map(plans.map((p: any) => [p.planId, p]));
+
+    // Enrich subscriptions with plan details
+    const enrichedSubscriptions = subscriptions.map((sub: any) => ({
+      ...sub,
+      plan: planMap.get(sub.plan) || {
+        id: sub.plan,
+        name: sub.plan,
+        tier: sub.plan,
+        price: sub.price,
+        durationDays: sub.duration
+      }
+    }));
+
+    res.json(enrichedSubscriptions);
+  } catch (error: any) {
+    console.error('Error fetching subscriptions:', error);
+    res.status(500).json({ error: 'Failed to fetch subscriptions' });
+  }
+});
+
+// Create manual subscription (Admin only)
+app.post('/api/admin/subscriptions', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    const { userId, planId, durationDays, notes } = req.body;
+
+    if (!userId || !planId) {
+      return res.status(400).json({ error: 'userId and planId are required' });
+    }
+
+    // Check if user exists
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Check if plan exists
+    const plan = await (prisma as any).subscriptionPlan.findUnique({
+      where: { planId: planId } // Use planId instead of id
+    });
+
+    if (!plan) {
+      return res.status(404).json({ error: 'Subscription plan not found' });
+    }
+
+    // Use custom duration or plan's default duration
+    const days = durationDays || plan.duration;
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + days);
+
+    const activatedAt = new Date();
+
+    // Generate transaction code
+    const transactionCode = `${userId.substring(0, 8)}_${plan.planId}_${Date.now()}`;
+
+    // Create subscription based on actual schema
+    const subscription = await (prisma as any).subscription.create({
+      data: {
+        userId,
+        plan: plan.planId, // Store plan ID as string
+        price: plan.price,
+        aiQuota: plan.aiQuota,
+        duration: days,
+        status: 'active',
+        paymentMethod: 'manual_admin',
+        transactionCode,
+        activatedAt,
+        expiresAt,
+        description: notes || `Manually activated by admin ${admin.email || admin.username}`
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    // Enrich with plan details
+    const enrichedSubscription = {
+      ...subscription,
+      plan: {
+        id: plan.id,
+        name: plan.name,
+        tier: plan.planId,
+        price: plan.price,
+        durationDays: plan.duration
+      }
+    };
+
+    res.json(enrichedSubscription);
+  } catch (error: any) {
+    console.error('Error creating subscription:', error);
+    res.status(500).json({ error: 'Failed to create subscription' });
+  }
+});
+
+// Update subscription (Admin only)
+app.put('/api/admin/subscriptions/:id', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    const { id } = req.params;
+    const { status, expiresAt, notes } = req.body;
+
+    // Get current subscription to check if we're activating a pending one
+    const currentSub = await (prisma as any).subscription.findUnique({
+      where: { id }
+    });
+
+    if (!currentSub) {
+      return res.status(404).json({ error: 'Subscription not found' });
+    }
+
+    const data: any = {};
+
+    if (status !== undefined) {
+      data.status = status;
+
+      // If activating a pending subscription, auto-set dates
+      if (status === 'active' && currentSub.status === 'pending') {
+        const now = new Date();
+        data.activatedAt = now;
+
+        // Calculate expiry based on duration
+        const expiryDate = new Date(now);
+        expiryDate.setDate(expiryDate.getDate() + currentSub.duration);
+        data.expiresAt = expiryDate;
+
+        // Add activation note
+        const activationNote = `\nActivated by admin ${admin.email || admin.username} on ${now.toISOString()}`;
+        data.description = (currentSub.description || '') + activationNote;
+      }
+    }
+
+    // Allow manual expiry date override (only if not auto-activating)
+    if (expiresAt !== undefined && !(status === 'active' && currentSub.status === 'pending')) {
+      data.expiresAt = expiresAt ? new Date(expiresAt) : null;
+    }
+
+    // Allow manual notes update
+    if (notes !== undefined && !(status === 'active' && currentSub.status === 'pending')) {
+      data.description = notes;
+    }
+
+    const subscription = await (prisma as any).subscription.update({
+      where: { id },
+      data,
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    // Enrich with plan details
+    const plan = await (prisma as any).subscriptionPlan.findUnique({
+      where: { planId: subscription.plan }
+    });
+
+    const enrichedSubscription = {
+      ...subscription,
+      plan: plan ? {
+        id: plan.id,
+        name: plan.name,
+        tier: plan.planId,
+        price: plan.price,
+        durationDays: plan.duration
+      } : {
+        id: subscription.plan,
+        name: subscription.plan,
+        tier: subscription.plan,
+        price: subscription.price,
+        durationDays: subscription.duration
+      }
+    };
+
+    res.json(enrichedSubscription);
+  } catch (error: any) {
+    console.error('Error updating subscription:', error);
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Subscription not found' });
+    }
+    res.status(500).json({ error: 'Failed to update subscription' });
+  }
+});
+
+// Delete subscription (Admin only)
+app.delete('/api/admin/subscriptions/:id', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    const { id } = req.params;
+
+    await (prisma as any).subscription.delete({
+      where: { id }
+    });
+
+    res.json({ ok: true });
+  } catch (error: any) {
+    console.error('Error deleting subscription:', error);
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Subscription not found' });
+    }
+    res.status(500).json({ error: 'Failed to delete subscription' });
+  }
+});
+
+// Extend subscription (Admin only)
+app.post('/api/admin/subscriptions/:id/extend', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    const { id } = req.params;
+    const { days } = req.body;
+
+    if (!days || days <= 0) {
+      return res.status(400).json({ error: 'Valid days parameter is required' });
+    }
+
+    const subscription = await (prisma as any).subscription.findUnique({
+      where: { id }
+    });
+
+    if (!subscription) {
+      return res.status(404).json({ error: 'Subscription not found' });
+    }
+
+    // Extend from current expiry date or now (whichever is later)
+    const baseDate = new Date(subscription.expiresAt) > new Date()
+      ? new Date(subscription.expiresAt)
+      : new Date();
+
+    baseDate.setDate(baseDate.getDate() + days);
+
+    const currentDescription = subscription.description || '';
+    const extensionNote = `\nExtended ${days} days by admin ${admin.email || admin.username} on ${new Date().toISOString()}`;
+
+    const updated = await (prisma as any).subscription.update({
+      where: { id },
+      data: {
+        expiresAt: baseDate,
+        status: 'active', // Reactivate if it was expired
+        description: currentDescription + extensionNote
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    // Enrich with plan details
+    const plan = await (prisma as any).subscriptionPlan.findUnique({
+      where: { planId: updated.plan }
+    });
+
+    const enrichedSubscription = {
+      ...updated,
+      plan: plan ? {
+        id: plan.id,
+        name: plan.name,
+        tier: plan.planId,
+        price: plan.price,
+        durationDays: plan.duration
+      } : {
+        id: updated.plan,
+        name: updated.plan,
+        tier: updated.plan,
+        price: updated.price,
+        durationDays: updated.duration
+      }
+    };
+
+    res.json(enrichedSubscription);
+  } catch (error: any) {
+    console.error('Error extending subscription:', error);
+    res.status(500).json({ error: 'Failed to extend subscription' });
+  }
+});
+
 // ==================== System Settings Endpoints ====================
 
 // Get system settings (Admin only)

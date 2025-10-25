@@ -282,6 +282,28 @@ export const api = {
     popular?: boolean;
   }) => request<any>(`/api/admin/subscription-plans/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   adminDeleteSubscriptionPlan: (id: string) => request<{ ok: boolean }>(`/api/admin/subscription-plans/${id}`, { method: 'DELETE' }),
+  // Subscription Management (Admin)
+  getAdminSubscriptions: (status?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    return request<any[]>(`/api/admin/subscriptions?${params.toString()}`);
+  },
+  createAdminSubscription: (payload: {
+    userId: string;
+    planId: string;
+    durationDays?: number;
+    notes?: string;
+  }) => request<any>(`/api/admin/subscriptions`, { method: 'POST', body: JSON.stringify(payload) }),
+  updateAdminSubscription: (id: string, payload: {
+    status?: string;
+    expiresAt?: string;
+    notes?: string;
+  }) => request<any>(`/api/admin/subscriptions/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteAdminSubscription: (id: string) => request<{ ok: boolean }>(`/api/admin/subscriptions/${id}`, { method: 'DELETE' }),
+  extendAdminSubscription: (id: string, days: number) =>
+    request<any>(`/api/admin/subscriptions/${id}/extend`, { method: 'POST', body: JSON.stringify({ days }) }),
+  getAdminSubscriptionPlans: () => request<any[]>(`/api/admin/subscription-plans`),
+  getAdminUsers: () => request<any[]>(`/api/admin/users`),
   // Public endpoint
   getSubscriptionPlans: () => request<any[]>(`/api/subscription-plans`),
   decrementQuickSearchQuota: () => request<{ remainingQuota: number }>('/api/users/decrement-quick-search-quota', { method: 'POST' }),

@@ -7,10 +7,11 @@ import KnowledgeManagement from './admin/KnowledgeManagement';
 import ModelUsageStats from './admin/ModelUsageStats';
 import AiSearchHistory from './admin/AiSearchHistory';
 import SubscriptionPlanManagement from './admin/SubscriptionPlanManagement';
+import SubscriptionManagement from './admin/SubscriptionManagement';
 import SystemSettings from './admin/SystemSettings';
 import { Question } from '../types';
 
-type AdminTab = 'overview' | 'users' | 'tests' | 'knowledge' | 'categories' | 'settings' | 'model-usage' | 'ai-history' | 'subscription-plans';
+type AdminTab = 'overview' | 'users' | 'tests' | 'knowledge' | 'categories' | 'settings' | 'model-usage' | 'ai-history' | 'subscription-plans' | 'subscriptions';
 
 interface AdminDashboardProps {
   userEmail: string;
@@ -54,6 +55,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         return <AiSearchHistory />;
       case 'subscription-plans':
         return <SubscriptionPlanManagement />;
+      case 'subscriptions':
+        return <SubscriptionManagement />;
       case 'settings':
         return <SystemSettings />;
       default:
@@ -108,6 +111,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
           <TabButton tab="tests" label="Quản lý bài thi" icon="📝" />
           <TabButton tab="knowledge" label="Quản lý kiến thức" icon="📚" />
           <TabButton tab="subscription-plans" label="Quản lý gói" icon="💎" />
+          <TabButton tab="subscriptions" label="Quản lý Subscriptions" icon="🎫" />
           <TabButton tab="model-usage" label="AI Model Stats" icon="🤖" />
           <TabButton tab="ai-history" label="AI Search History" icon="🔍" />
           <TabButton tab="categories" label="Quản lý chuyên mục" icon="📂" />

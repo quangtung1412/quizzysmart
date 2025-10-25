@@ -1012,8 +1012,8 @@ const App: React.FC = () => {
                   </span>
                 </div>
 
-                {/* Quick Search Quota Display - Only for free users */}
-                {!user.premiumPlan && (
+                {/* Quick Search Quota Display - Only for free users (not admin, not premium, not plus) */}
+                {user.role !== 'admin' && !user.premiumPlan && (
                   <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full shadow-sm bg-gradient-to-r from-purple-50 to-violet-50 border border-purple-200">
                     <span className="text-lg">⚡</span>
                     <span className="text-sm font-bold text-blue-700">
