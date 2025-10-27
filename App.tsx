@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Question, QuizMode, QuizSettings, UserAnswer, KnowledgeBase, QuizAttempt, User, StudyPlan, DifficultyLevel } from './types';
 import { useKnowledgeBaseStore, useAttemptStore } from './src/hooks/usePersistentStores';
 import { useStudyPlanStore } from './src/hooks/useStudyPlanStore';
@@ -76,7 +76,7 @@ const App: React.FC = () => {
     };
   }, [user?.id]);
 
-  // Device session validation on app start
+  // Device session validation on app start (only once per user login)
   useEffect(() => {
     if (!user?.id) return;
 
@@ -96,13 +96,19 @@ const App: React.FC = () => {
           console.log('[Device] Session invalid:', result.message);
           setForceLogoutMessage(result.message || 'Phiên đăng nhập không hợp lệ');
           handleLogout();
+        } else {
+          console.log('[Device] Session is valid');
         }
       } catch (error) {
         console.error('[Device] Validation error:', error);
+        // Don't logout on validation error to prevent interruption during quiz
+        // Only logout on explicit invalid session from server
       }
     };
 
+    // Only validate once when user is logged in
     validateSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   // Check for pending thank you popup when entering ModeSelectionScreen
@@ -246,6 +252,7 @@ const App: React.FC = () => {
     setCurrentScreen('modeSelection');
   }, []);
 
+  // Initial user data refresh on app start (only once)
   useEffect(() => {
     refreshUserData().then(userData => {
       if (userData) {
@@ -257,7 +264,8 @@ const App: React.FC = () => {
         }
       }
     });
-  }, [refreshUserData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only once on mount
 
   const handleLogout = useCallback(async () => {
     try {
@@ -965,8 +973,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-1 sm:p-2 bg-slate-50 text-slate-800">
-      {/* Thank You Modal */}
+    <div className="min-h-screen flex flex-col items-center justify-center p-1 sm:p-2 bg-slate-50 text-slate-800">{/* Thank You Modal */}
       <ThankYouModal />
 
       <div className="w-full max-w-8xl mx-auto relative">

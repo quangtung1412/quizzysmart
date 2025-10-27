@@ -41,7 +41,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     ...options,
   });
-  if (!res.ok) throw new Error(`API ${res.status}`);
+  
+  if (!res.ok) {
+    // Handle 401 Unauthorized - session expired or invalid
+    if (res.status === 401) {
+      // Don't auto-logout here to prevent interruption during quiz
+      // Let the component handle the error gracefully
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Unauthorized');
+      }
+      throw new Error('Unauthorized');
+    }
+    throw new Error(`API ${res.status}`);
+  }
+  
   const contentType = res.headers.get("content-type");
   if (contentType && contentType.indexOf("application/json") !== -1) {
     return res.json();

@@ -231,7 +231,12 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
   };
 
   const handleSelect = (idx: string) => {
-    if (!revealed) setSelected(idx);
+    if (!revealed) {
+      setSelected(idx);
+      // Auto reveal answer and show rating buttons immediately after selection
+      setRevealed(true);
+      setRatingMode(true);
+    }
   };
 
   const handleReveal = () => {
@@ -526,7 +531,7 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
       </div>
 
       {/* Main Content */}
-      <div className="p-4 sm:p-6">
+      <div className="p-4 sm:p-6 pb-32 sm:pb-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-4 sm:mb-6 border-b pb-4">
           <button
@@ -616,21 +621,6 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
 
         {/* Action Buttons */}
         <div className="mt-6 sm:mt-8 pt-4 border-t flex justify-center space-x-4">
-          {!revealed && (
-            <button
-              onClick={handleReveal}
-              disabled={selected === null}
-              className={`flex items-center px-6 py-3 rounded-xl font-medium transition-all duration-200 ${selected !== null
-                ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg hover:shadow-xl transform hover:scale-105'
-                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                }`}
-            >
-              <Eye className="w-5 h-5 mr-2" />
-              <span className="hidden sm:inline">Xem đáp án</span>
-              <span className="sm:hidden">Xem</span>
-            </button>
-          )}
-
           {ratingMode === true && (
             <div className="flex flex-wrap justify-center gap-3">
               <button
