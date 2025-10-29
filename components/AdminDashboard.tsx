@@ -9,9 +9,10 @@ import AiSearchHistory from './admin/AiSearchHistory';
 import SubscriptionPlanManagement from './admin/SubscriptionPlanManagement';
 import SubscriptionManagement from './admin/SubscriptionManagement';
 import SystemSettings from './admin/SystemSettings';
+import DocumentManagement from './admin/DocumentManagement';
 import { Question } from '../types';
 
-type AdminTab = 'overview' | 'users' | 'tests' | 'knowledge' | 'categories' | 'settings' | 'model-usage' | 'ai-history' | 'subscription-plans' | 'subscriptions';
+type AdminTab = 'overview' | 'users' | 'tests' | 'knowledge' | 'categories' | 'settings' | 'model-usage' | 'ai-history' | 'subscription-plans' | 'subscriptions' | 'documents';
 
 interface AdminDashboardProps {
   userEmail: string;
@@ -49,6 +50,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         return <TestManagement />;
       case 'knowledge':
         return <KnowledgeManagement onSaveNewBase={handleSaveNewBase} />;
+      case 'documents':
+        return <DocumentManagement />;
       case 'model-usage':
         return <ModelUsageStats onBack={() => setActiveTab('overview')} />;
       case 'ai-history':
@@ -110,6 +113,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
           <TabButton tab="users" label="Quản lý người dùng" icon="👥" />
           <TabButton tab="tests" label="Quản lý bài thi" icon="📝" />
           <TabButton tab="knowledge" label="Quản lý kiến thức" icon="📚" />
+          <TabButton tab="documents" label="Quản lý Văn bản (RAG)" icon="📄" />
           <TabButton tab="subscription-plans" label="Quản lý gói" icon="💎" />
           <TabButton tab="subscriptions" label="Quản lý Subscriptions" icon="🎫" />
           <TabButton tab="model-usage" label="AI Model Stats" icon="🤖" />

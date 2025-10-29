@@ -330,4 +330,36 @@ export const api = {
     peakHoursEnd?: string;
     peakHoursDays?: number[];
   }>('/api/peak-hours-status'),
+  
+  // Chat / RAG Q&A
+  chatAsk: (question: string) => request<{
+    message: {
+      id: number;
+      userId: number;
+      question: string;
+      answer: string;
+      sources: any[];
+      confidence?: number;
+      createdAt: string;
+    };
+  }>('/api/chat/ask', { method: 'POST', body: JSON.stringify({ question }) }),
+  chatHistory: (limit: number = 50, offset: number = 0) => request<{
+    messages: any[];
+    total: number;
+  }>(`/api/chat/history?limit=${limit}&offset=${offset}`),
+  chatDeleteMessage: (messageId: number) => request<{ ok: boolean }>(`/api/chat/history/${messageId}`, { method: 'DELETE' }),
+  chatStats: () => request<{
+    totalMessages: number;
+    totalTokensUsed: number;
+    averageConfidence: number;
+  }>('/api/chat/stats'),
+  chatGetDocuments: () => request<{
+    documents: Array<{
+      id: string;
+      fileName: string;
+      documentName: string;
+      documentNumber: string;
+      documentType: string;
+    }>;
+  }>('/api/chat/documents'),
 };

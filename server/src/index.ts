@@ -12,6 +12,12 @@ import { Server as SocketIOServer } from 'socket.io';
 import { geminiModelRotation } from './gemini-model-rotation';
 import crypto from 'crypto';
 
+// RAG imports
+import documentRoutes from './routes/document.routes.js';
+import chatRoutes from './routes/chat.routes.js';
+import { pdfProcessorService } from './services/pdf-processor.service.js';
+import { qdrantService } from './services/qdrant.service.js';
+
 const prisma = new PrismaClient();
 // Temporary any-cast for newly added models if type generation not up-to-date
 const prismaAny = prisma as any;
@@ -83,6 +89,9 @@ io.on('connection', (socket) => {
     console.error('[Socket.IO] Socket error:', socket.id, error);
   });
 });
+
+// Initialize RAG services (PDF processor needs Socket.IO for progress updates)
+pdfProcessorService.setSocketIO(io);
 
 // Log Socket.IO errors
 io.engine.on('connection_error', (err) => {
@@ -276,6 +285,12 @@ passport.use(new GoogleStrategy(
 app.get('/api/healthcheck', (req, res) => {
   return res.json({ status: 'ok' });
 });
+
+// Mount RAG document routes (admin only)
+app.use('/api/documents', documentRoutes);
+
+// Mount chat routes (authenticated users)
+app.use('/api/chat', chatRoutes);
 
 
 // OAuth routes (canonical path /api/auth/...)
@@ -2583,6 +2598,19 @@ app.get('/api/subscription-plans', async (req: Request, res: Response) => {
 
 
 const port = parseInt(process.env.PORT || '3000', 10);
+
+// Initialize Qdrant service before starting server
+(async () => {
+  try {
+    console.log('[RAG] Initializing Qdrant service...');
+    await qdrantService.initialize();
+    console.log('[RAG] Qdrant service initialized successfully');
+  } catch (error) {
+    console.error('[RAG] Failed to initialize Qdrant:', error);
+    console.error('[RAG] RAG features will be disabled');
+  }
+})();
+
 httpServer.listen(port, () => {
   console.log('API server on :' + port);
   console.log('Socket.IO enabled for real-time updates');
@@ -2596,7 +2624,8 @@ httpServer.listen(port, () => {
 
     if (botToken && chatId) {
       const TelegramBot = (await import('node-telegram-bot-api')).default;
-      const bot = new TelegramBot(botToken, { polling: true });
+      // const bot = new TelegramBot(botToken, { polling: true });
+      const bot = new TelegramBot(botToken, { polling: false });
 
       console.log('✅ Telegram Bot started');
 
@@ -2695,10 +2724,10 @@ httpServer.listen(port, () => {
       });
 
     } else {
-      console.log('⚠️ Telegram Bot not configured (missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID)');
+      // console.log('⚠️ Telegram Bot not configured (missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID)');
     }
   } catch (error) {
-    console.error('❌ Telegram Bot initialization error:', error);
+    // console.error('❌ Telegram Bot initialization error:', error);
   }
 })();
 
@@ -2938,9 +2967,9 @@ app.post('/api/premium/search-by-image', async (req: Request, res: Response) => 
       return res.status(500).json({ error: 'GEMINI_API_KEY chưa được cấu hình. Vui lòng thêm API key vào file .env' });
     }
 
-    // Import Gemini AI (Google Generative AI)
-    const { GoogleGenerativeAI } = await import('@google/generative-ai');
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    // Import Gemini AI (new SDK)
+    const { GoogleGenAI } = await import('@google/genai');
+    const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     // Check system settings for model rotation
     const systemSettings = await (prisma as any).systemSettings.findFirst();
@@ -2974,8 +3003,6 @@ app.post('/api/premium/search-by-image', async (req: Request, res: Response) => 
       console.log(`[AI Search] Using model from rotation: ${selectedModel.name} (priority ${selectedModel.priority})`);
     }
 
-    const model = genAI.getGenerativeModel({ model: selectedModel.name });
-
     // Convert base64 to proper format for Gemini
     const imagePart = {
       inlineData: {
@@ -3006,11 +3033,13 @@ Ví dụ:
 {"question":"Agribank được thành lập năm nào?","optionA":"1988","optionB":"1990","optionC":"1995","optionD":"2000"}`;
 
     const startTime = Date.now(); // Track response time
-    const result = await model.generateContent([prompt, imagePart]);
-    const response = await result.response;
+    const result = await genAI.models.generateContent({
+      model: selectedModel.name,
+      contents: [prompt, imagePart],
+    });
     const responseTime = Date.now() - startTime; // Calculate response time
 
-    let responseText = response.text().trim();
+    let responseText = (result.text || '').trim();
 
     // Record successful request for rate limiting (ONLY if rotation is enabled)
     // When rotation is DISABLED: We assume using paid/upgraded model with high limits,
@@ -3024,7 +3053,7 @@ Ví dụ:
     }
 
     // Get token usage from response
-    const usageMetadata = (response as any).usageMetadata || {};
+    const usageMetadata = (result as any).usageMetadata || {};
     const inputTokens = usageMetadata.promptTokenCount || 0;
     const outputTokens = usageMetadata.candidatesTokenCount || 0;
     const totalTokens = usageMetadata.totalTokenCount || (inputTokens + outputTokens);

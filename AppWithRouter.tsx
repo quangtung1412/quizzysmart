@@ -31,6 +31,7 @@ import QuickSearchScreen from './components/QuickSearchScreen';
 import PremiumIntroScreen from './components/PremiumIntroScreen';
 import LiveCameraSearch from './components/LiveCameraSearch';
 import PremiumPlansScreen from './components/PremiumPlansScreen';
+import ChatFloatingButton from './components/ChatFloatingButton';
 
 // Protected Route Component
 const ProtectedRoute: React.FC<{ children: React.ReactElement; user: User | null }> = ({ children, user }) => {
@@ -1046,6 +1047,9 @@ const AppContent: React.FC = () => {
         {/* Fallback */}
         <Route path="*" element={<Navigate to={user ? "/" : "/login"} replace />} />
       </Routes>
+
+      {/* Chat Floating Button - Always visible when user is logged in */}
+      {user && <ChatFloatingButton />}
     </>
   );
 };

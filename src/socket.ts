@@ -104,3 +104,6 @@ export default {
     get: getSocket,
     disconnect: disconnectSocket
 };
+
+// Export socket instance for direct access
+export { socket, getSocket as getSocketInstance };

@@ -27,6 +27,7 @@ model User {
   assignments TestAssignment[]
   subscriptions Subscription[]
   aiSearchHistory AiSearchHistory[]
+  chatMessages ChatMessage[]  // RAG chat history
 }
 
 model KnowledgeBase {
@@ -232,4 +233,106 @@ model SystemSettings {
   updatedBy             String?  // Admin user ID who last updated
   
   @@map("system_settings")
+}
+
+// ============================================
+// RAG (Retrieval-Augmented Generation) Models
+// ============================================
+
+model Document {
+  id                String   @id @default(cuid())
+  fileName          String   // Original PDF filename
+  fileSize          Int      // File size in bytes
+  filePath          String   // Local file path
+  uploadedAt        DateTime @default(now())
+  uploadedBy        String   // Admin user ID
+  
+  // Document metadata (extracted by Gemini)
+  documentNumber    String?  // Số văn bản
+  documentName      String   // Tên văn bản
+  documentType      String?  // Loại văn bản (Thông tư, Nghị định, etc.)
+  issuingAgency     String?  // Cơ quan ban hành
+  signerName        String?  // Người ký
+  signerTitle       String?  // Chức danh người ký
+  signedDate        DateTime? // Ngày ký
+  
+  // Content storage
+  rawContent        String   // Full JSON extracted content
+  markdownContent   String   // Markdown formatted full content
+  
+  // Vector database references
+  qdrantCollectionName String @default("vietnamese_documents")
+  qdrantPointIds    String   @default("[]") // JSON array of point IDs in Qdrant
+  
+  // Processing status
+  processingStatus  String   @default("processing") // processing, completed, failed
+  errorMessage      String?
+  processingStartedAt DateTime @default(now())
+  processingCompletedAt DateTime?
+  
+  // Relations
+  chunks            DocumentChunk[]
+  chatMessages      ChatMessage[]
+  
+  @@index([uploadedBy])
+  @@index([processingStatus])
+  @@index([uploadedAt])
+  @@map("documents")
+}
+
+model DocumentChunk {
+  id              String   @id @default(cuid())
+  documentId      String
+  chunkIndex      Int      // Sequential index
+  chunkType       String   // 'overview', 'basis', 'chapter', 'article', 'section'
+  
+  // Content
+  content         String   // Markdown text content of this chunk
+  
+  // Hierarchy metadata (JSON string)
+  metadata        String   // {documentNumber, documentName, chapter?, article?, section?, etc}
+  
+  // Vector reference
+  qdrantPointId   String?  // Point ID in Qdrant vector DB
+  embeddingStatus String   @default("pending") // pending, completed, failed
+  
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  document        Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  @@index([documentId])
+  @@index([chunkType])
+  @@index([embeddingStatus])
+  @@map("document_chunks")
+}
+
+model ChatMessage {
+  id              String   @id @default(cuid())
+  userId          String
+  documentId      String?  // Optional: specific document context
+  
+  // Conversation
+  userMessage     String   // User's question
+  botResponse     String   // AI generated answer
+  
+  // RAG metadata (JSON strings)
+  retrievedChunks String?  // JSON array of {chunkId, score, content}
+  modelUsed       String?  // Which Gemini model was used
+  
+  // Token usage
+  inputTokens     Int      @default(0)
+  outputTokens    Int      @default(0)
+  totalTokens     Int      @default(0)
+  
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  user            User     @relation(fields: [userId], references: [id])
+  document        Document? @relation(fields: [documentId], references: [id])
+  
+  @@index([userId])
+  @@index([documentId])
+  @@index([createdAt])
+  @@map("chat_messages")
 }

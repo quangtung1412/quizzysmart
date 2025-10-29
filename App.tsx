@@ -28,6 +28,7 @@ import DailyStudy from './components/DailyStudy';
 import SmartReview from './components/SmartReview';
 import QuickSearchScreen from './components/QuickSearchScreen';
 import PremiumIntroScreen from './components/PremiumIntroScreen';
+import ChatFloatingButton from './components/ChatFloatingButton';
 import LiveCameraSearch from './components/LiveCameraSearch';
 import PremiumPlansScreen from './components/PremiumPlansScreen';
 
@@ -1076,6 +1077,35 @@ const App: React.FC = () => {
           <p>©2025 - Quizzy Smart</p>
         </footer>
       </div>
+
+      {/* Debug: Test if this renders */}
+      <div 
+        style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          width: '60px',
+          height: '60px',
+          borderRadius: '50%',
+          background: 'linear-gradient(to right, #3b82f6, #9333ea)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'white',
+          fontSize: '24px',
+          cursor: 'pointer',
+          boxShadow: '0 10px 40px rgba(0,0,0,0.3)',
+          zIndex: 9999
+        }}
+        onClick={() => alert('Chat button clicked!')}
+      >
+        💬
+      </div>
+
+      {/* Chat Floating Button - Always visible (for testing) */}
+      <ChatFloatingButton />
+      
+      {/* Original condition: {user && <ChatFloatingButton />} */}
     </div>
   );
 };

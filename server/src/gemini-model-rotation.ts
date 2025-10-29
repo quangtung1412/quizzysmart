@@ -62,7 +62,7 @@ class GeminiModelRotationService {
             if (now - usage.lastResetTime > 60 * 1000) {
                 usage.requestCount = 0;
                 usage.lastResetTime = now;
-                console.log(`[ModelRotation] Reset minute counter for ${modelName}`);
+                // console.log(`[ModelRotation] Reset minute counter for ${modelName}`);
             }
         }
     }
@@ -74,7 +74,7 @@ class GeminiModelRotationService {
             if (now - usage.lastDailyResetTime > 24 * 60 * 60 * 1000) {
                 usage.dailyRequestCount = 0;
                 usage.lastDailyResetTime = now;
-                console.log(`[ModelRotation] Reset daily counter for ${modelName}`);
+                // console.log(`[ModelRotation] Reset daily counter for ${modelName}`);
             }
         }
     }
