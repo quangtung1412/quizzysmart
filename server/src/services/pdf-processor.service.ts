@@ -56,7 +56,7 @@ class PDFProcessorService {
       // Update status to processing
       await prisma.document.update({
         where: { id: documentId },
-        data: { 
+        data: {
           processingStatus: 'processing',
           processingStartedAt: new Date(),
         },
@@ -261,7 +261,7 @@ class PDFProcessorService {
       const points: QdrantPoint[] = dbChunks.map((chunk, idx) => {
         const pointId = randomUUID();
         const metadata = JSON.parse(chunk.metadata);
-        
+
         return {
           id: pointId,
           vector: embeddings[idx],
@@ -381,14 +381,21 @@ class PDFProcessorService {
     // Chunks for Chapters/Articles
     if (content.chapters && content.chapters.length > 0) {
       // Document has chapters
-      for (const chapter of content.chapters) {
-        for (const article of chapter.articles) {
-          const articleChunks = this.createArticleChunks(
+      for (let chapterIdx = 0; chapterIdx < content.chapters.length; chapterIdx++) {
+        const chapter = content.chapters[chapterIdx];
+        for (let artIdx = 0; artIdx < chapter.articles.length; artIdx++) {
+          const article = chapter.articles[artIdx];
+          const prevArticle = artIdx > 0 ? chapter.articles[artIdx - 1] : null;
+          const nextArticle = artIdx < chapter.articles.length - 1 ? chapter.articles[artIdx + 1] : null;
+
+          const articleChunks = this.createArticleChunksWithContext(
             article,
             baseMetadata,
             chunkIndex,
             chapter.number,
-            chapter.title
+            chapter.title,
+            prevArticle,
+            nextArticle
           );
           chunks.push(...articleChunks);
           chunkIndex += articleChunks.length;
@@ -396,11 +403,19 @@ class PDFProcessorService {
       }
     } else if (content.articles && content.articles.length > 0) {
       // Document has no chapters, only articles
-      for (const article of content.articles) {
-        const articleChunks = this.createArticleChunks(
+      for (let artIdx = 0; artIdx < content.articles.length; artIdx++) {
+        const article = content.articles[artIdx];
+        const prevArticle = artIdx > 0 ? content.articles[artIdx - 1] : null;
+        const nextArticle = artIdx < content.articles.length - 1 ? content.articles[artIdx + 1] : null;
+
+        const articleChunks = this.createArticleChunksWithContext(
           article,
           baseMetadata,
-          chunkIndex
+          chunkIndex,
+          undefined,
+          undefined,
+          prevArticle,
+          nextArticle
         );
         chunks.push(...articleChunks);
         chunkIndex += articleChunks.length;
@@ -430,7 +445,7 @@ class PDFProcessorService {
   private createOverviewChunk(content: DocumentContent): string {
     const { overview } = content;
     let text = `# ${overview.documentName}\n\n`;
-    
+
     if (overview.documentNumber) text += `**Số:** ${overview.documentNumber}\n`;
     if (overview.documentType) text += `**Loại:** ${overview.documentType}\n`;
     if (overview.issuingAgency) text += `**Cơ quan:** ${overview.issuingAgency}\n`;
@@ -457,6 +472,84 @@ class PDFProcessorService {
       text += '\n';
     });
     return text;
+  }
+
+  /**
+   * Create chunks for an article WITH OVERLAPPING CONTEXT
+   * Includes context from chapter title and surrounding articles
+   */
+  private createArticleChunksWithContext(
+    article: any,
+    baseMetadata: any,
+    startIndex: number,
+    chapterNumber?: string,
+    chapterTitle?: string,
+    prevArticle?: any,
+    nextArticle?: any
+  ): DocumentChunkData[] {
+    const chunks: DocumentChunkData[] = [];
+
+    // Build article content with context
+    let content = '';
+
+    // Add chapter context if exists
+    if (chapterNumber && chapterTitle) {
+      content += `[Context: Chương ${chapterNumber}. ${chapterTitle}]\n\n`;
+    }
+
+    // Add previous article context (abbreviated)
+    if (prevArticle) {
+      content += `[Context trước] Điều ${prevArticle.number}`;
+      if (prevArticle.title) content += `. ${prevArticle.title}`;
+      content += '\n\n';
+    }
+
+    // Main article content
+    content += `## Điều ${article.number}`;
+    if (article.title) content += `. ${article.title}`;
+    content += '\n\n';
+
+    if (article.content) {
+      content += `${article.content}\n\n`;
+    }
+
+    if (article.sections && article.sections.length > 0) {
+      article.sections.forEach((section: any) => {
+        if (section.number) {
+          content += `${section.number}. ${section.content}\n\n`;
+        } else {
+          content += `${section.content}\n\n`;
+        }
+
+        if (section.subsections && section.subsections.length > 0) {
+          section.subsections.forEach((sub: string) => {
+            content += `   ${sub}\n\n`;
+          });
+        }
+      });
+    }
+
+    // Add next article context (abbreviated)
+    if (nextArticle) {
+      content += `[Context sau] Điều ${nextArticle.number}`;
+      if (nextArticle.title) content += `. ${nextArticle.title}`;
+      content += '\n\n';
+    }
+
+    chunks.push({
+      content,
+      metadata: {
+        ...baseMetadata,
+        chunkType: 'article',
+        chunkIndex: startIndex,
+        chapterNumber,
+        chapterTitle,
+        articleNumber: article.number,
+        articleTitle: article.title,
+      },
+    });
+
+    return chunks;
   }
 
   /**
@@ -538,7 +631,7 @@ class PDFProcessorService {
         // Generate a consistent UUID based on documentId and chunk index
         // Use randomUUID() for unique IDs each time
         const pointId = randomUUID();
-        
+
         return {
           id: pointId,
           vector: embeddings[idx],

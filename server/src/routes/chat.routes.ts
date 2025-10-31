@@ -67,7 +67,7 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
         'tóm tắt', 'tổng hợp', 'liệt kê tất cả', 'liệt kê toàn bộ',
         'danh sách đầy đủ', 'toàn bộ', 'tất cả các'
       ];
-      
+
       const questionLower = question.toLowerCase();
       const needsFullDocument = analysisKeywords.some(keyword => questionLower.includes(keyword));
 
@@ -79,7 +79,7 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
 
       if (needsFullDocument && selectedDocumentNames) {
         sendEvent('status', { message: 'Đang tải toàn bộ văn bản...' });
-        
+
         // Get all chunks from selected documents
         const documents = await (prisma as any).document.findMany({
           where: {
@@ -104,7 +104,7 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
         }
 
         // Flatten all chunks
-        const allChunks = documents.flatMap((doc: any) => 
+        const allChunks = documents.flatMap((doc: any) =>
           doc.chunks.map((chunk: any) => ({
             chunkId: chunk.id,
             content: chunk.content,
@@ -132,12 +132,22 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
         console.log(`[Chat Stream] Retrieved ${allChunks.length} chunks for full analysis`);
       } else {
         sendEvent('status', { message: 'Đang tìm kiếm thông tin...' });
-        
+
         // Generate embedding for question
         const questionEmbedding = await geminiRAGService.generateEmbedding(question);
 
-        // Search similar chunks in Qdrant
-        const searchResults = await qdrantService.searchSimilar(questionEmbedding, 5);
+        // Search similar chunks in Qdrant (increase to 20 for more diverse results)
+        let searchResults = await qdrantService.searchSimilar(questionEmbedding, 20);
+
+        // Apply reranking for better diversity and relevance
+        searchResults = qdrantService.rerankResults(searchResults, question, {
+          diversityWeight: 0.2,
+          keywordWeight: 0.2,
+          maxPerDocument: 5,
+        });
+
+        // Take top 10 after reranking
+        searchResults = searchResults.slice(0, 10);
 
         if (searchResults.length === 0) {
           sendEvent('error', { message: 'Không tìm thấy thông tin liên quan.' });
@@ -251,7 +261,7 @@ router.post('/ask', requireAuth, async (req: Request, res: Response) => {
       'tóm tắt', 'tổng hợp', 'liệt kê tất cả', 'liệt kê toàn bộ',
       'danh sách đầy đủ', 'toàn bộ', 'tất cả các'
     ];
-    
+
     const questionLower = question.toLowerCase();
     const needsFullDocument = analysisKeywords.some(keyword => questionLower.includes(keyword));
 
@@ -264,7 +274,7 @@ router.post('/ask', requireAuth, async (req: Request, res: Response) => {
 
     if (needsFullDocument && selectedDocumentNames) {
       console.log(`[Chat] Full document analysis needed for: ${selectedDocumentNames.join(', ')}`);
-      
+
       // Get all chunks from selected documents
       const documents = await (prisma as any).document.findMany({
         where: {
@@ -294,7 +304,7 @@ router.post('/ask', requireAuth, async (req: Request, res: Response) => {
       }
 
       // Flatten all chunks
-      const allChunks = documents.flatMap((doc: any) => 
+      const allChunks = documents.flatMap((doc: any) =>
         doc.chunks.map((chunk: any) => ({
           chunkId: chunk.id,
           content: chunk.content,
@@ -324,10 +334,20 @@ router.post('/ask', requireAuth, async (req: Request, res: Response) => {
       // Step 1: Generate embedding for question
       const questionEmbedding = await geminiRAGService.generateEmbedding(question);
 
-      // Step 2: Search similar chunks in Qdrant
-      searchResults = await qdrantService.searchSimilar(questionEmbedding, 5);
+      // Step 2: Search similar chunks in Qdrant (increase to 20 for more diverse results)
+      searchResults = await qdrantService.searchSimilar(questionEmbedding, 20);
 
-      console.log(`[Chat] Found ${searchResults.length} relevant chunks`);
+      // Apply reranking for better diversity and relevance
+      searchResults = qdrantService.rerankResults(searchResults, question, {
+        diversityWeight: 0.2,
+        keywordWeight: 0.2,
+        maxPerDocument: 5,
+      });
+
+      // Take top 10 after reranking
+      searchResults = searchResults.slice(0, 10);
+
+      console.log(`[Chat] Found ${searchResults.length} relevant chunks after reranking`);
 
       if (searchResults.length === 0) {
         return res.json({

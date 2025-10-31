@@ -5,10 +5,10 @@
  */
 
 import { QdrantClient } from '@qdrant/js-client-rest';
-import type { 
-  QdrantPoint, 
+import type {
+  QdrantPoint,
   QdrantSearchResult,
-  ChunkMetadata 
+  ChunkMetadata
 } from '../types/rag.types.js';
 
 class QdrantService {
@@ -239,7 +239,7 @@ class QdrantService {
   async searchSimilar(
     queryVector: number[],
     topK: number = 5,
-    minScore: number = 0.5
+    minScore: number = 0.7  // Lowered from 0.5 to get more diverse results
   ): Promise<QdrantSearchResult[]> {
     return this.search(queryVector, { topK, minScore });
   }
@@ -335,6 +335,109 @@ class QdrantService {
    */
   isInitialized(): boolean {
     return this.client !== null;
+  }
+
+  /**
+   * Rerank search results for diversity and relevance
+   * 
+   * Scoring factors:
+   * 1. Original vector similarity score (60%)
+   * 2. Keyword matching with query (20%)
+   * 3. Document diversity penalty (10%)
+   * 4. Article diversity penalty (10%)
+   */
+  rerankResults(
+    results: QdrantSearchResult[],
+    query: string,
+    options: {
+      diversityWeight?: number;
+      keywordWeight?: number;
+      maxPerDocument?: number;
+    } = {}
+  ): QdrantSearchResult[] {
+    if (results.length === 0) return results;
+
+    const {
+      diversityWeight = 0.2,
+      keywordWeight = 0.2,
+      maxPerDocument = 5,
+    } = options;
+
+    // Normalize query for keyword matching
+    const queryLower = query.toLowerCase();
+    const queryKeywords = queryLower
+      .split(/\s+/)
+      .filter((w) => w.length > 2); // Filter short words
+
+    // Calculate scores for each result
+    const scoredResults = results.map((result, index) => {
+      // 1. Original vector score (already 0-1)
+      const vectorScore = result.score;
+
+      // 2. Keyword matching score
+      const content = result.payload.content?.toLowerCase() || '';
+      const articleTitle = result.payload.articleTitle?.toLowerCase() || '';
+      const chapterTitle = result.payload.chapterTitle?.toLowerCase() || '';
+
+      let keywordMatches = 0;
+      queryKeywords.forEach((keyword) => {
+        if (content.includes(keyword)) keywordMatches += 1;
+        if (articleTitle.includes(keyword)) keywordMatches += 2; // Title matches are more important
+        if (chapterTitle.includes(keyword)) keywordMatches += 1.5;
+      });
+
+      const keywordScore = Math.min(keywordMatches / (queryKeywords.length * 2), 1.0);
+
+      // 3. Position penalty (prefer earlier results slightly)
+      const positionPenalty = 1 - (index / results.length) * 0.1;
+
+      // Combined score
+      const baseScore =
+        vectorScore * (1 - keywordWeight - diversityWeight) +
+        keywordScore * keywordWeight;
+
+      return {
+        ...result,
+        rerankScore: baseScore * positionPenalty,
+        keywordScore,
+        originalIndex: index,
+      };
+    });
+
+    // Sort by rerank score
+    scoredResults.sort((a, b) => b.rerankScore - a.rerankScore);
+
+    // Apply diversity filtering
+    const diverseResults: typeof scoredResults = [];
+    const documentCounts = new Map<string, number>();
+    const articlesSeen = new Set<string>();
+
+    for (const result of scoredResults) {
+      const docId = result.payload.documentId;
+      const articleKey = `${docId}_${result.payload.articleNumber}`;
+
+      // Skip if we've seen this exact article
+      if (articlesSeen.has(articleKey)) continue;
+
+      // Check document quota
+      const docCount = documentCounts.get(docId) || 0;
+      if (docCount >= maxPerDocument) {
+        // Apply diversity penalty but still consider if score is high enough
+        if (result.rerankScore < 0.7) continue;
+      }
+
+      diverseResults.push(result);
+      articlesSeen.add(articleKey);
+      documentCounts.set(docId, docCount + 1);
+    }
+
+    console.log(`[Qdrant] Reranked ${results.length} → ${diverseResults.length} diverse results`);
+
+    // Return without the extra metadata
+    return diverseResults.map(({ rerankScore, keywordScore, originalIndex, ...rest }) => ({
+      ...rest,
+      score: rerankScore, // Replace with reranked score
+    }));
   }
 }
 
