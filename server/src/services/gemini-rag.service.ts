@@ -379,7 +379,15 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
 
           // Calculate confidence based on retrieval scores
           const avgScore = retrievedChunks.reduce((sum, c) => sum + c.score, 0) / retrievedChunks.length;
+          const maxScore = Math.max(...retrievedChunks.map(c => c.score));
+          const minScore = Math.min(...retrievedChunks.map(c => c.score));
           const confidence = Math.round(avgScore * 100);
+
+          console.log(`[Gemini] Confidence calculation:`);
+          console.log(`  - Avg Score: ${avgScore.toFixed(4)} (${confidence}%)`);
+          console.log(`  - Max Score: ${maxScore.toFixed(4)}`);
+          console.log(`  - Min Score: ${minScore.toFixed(4)}`);
+          console.log(`  - Chunks used: ${retrievedChunks.length}`);
 
           return {
             answer,
@@ -444,6 +452,8 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
 
       const prompt = this.buildRAGPrompt(query.question, context);
 
+      console.log(prompt);
+
       const modelInfo = await geminiModelRotation.getNextAvailableModel();
       if (!modelInfo) {
         throw new Error('No available Gemini models');
@@ -492,7 +502,7 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
    */
   private buildRAGPrompt(question: string, context: string): string {
     return `
-Bạn là một trợ lý AI chuyên về pháp luật Việt Nam. Nhiệm vụ của bạn là trả lời câu hỏi của người dùng dựa trên các văn bản pháp luật được cung cấp.
+Bạn là một trợ lý AI chuyên về nghiệp vụ ngân hàng. Nhiệm vụ của bạn là trả lời câu hỏi của người dùng dựa trên các văn bản quy định được cung cấp.
 
 NGUYÊN TẮC TRẢ LỜI:
 1. Trả lời CHÍNH XÁC dựa trên nội dung văn bản được cung cấp

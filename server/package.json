@@ -13,10 +13,14 @@
     "promote-user": "npx tsx scripts/promote-user.ts",
     "change-password": "npx tsx scripts/change-password.ts",
     "add-quota": "npx tsx scripts/add-quota.ts",
+    "test:qdrant": "npx tsx test-qdrant-search.ts",
+    "test:tiengui": "npx tsx test-search-tiengui.ts",
     "setup": "prisma generate && prisma migrate deploy"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
     "@google/genai": "^1.27.0",
+    "@google/generative-ai": "^0.24.1",
     "@payos/node": "^2.0.3",
     "@prisma/client": "^5.18.0",
     "@qdrant/js-client-rest": "^1.9.0",

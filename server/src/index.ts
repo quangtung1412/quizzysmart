@@ -15,6 +15,7 @@ import crypto from 'crypto';
 // RAG imports
 import documentRoutes from './routes/document.routes.js';
 import chatRoutes from './routes/chat.routes.js';
+import collectionRoutes from './routes/collection.routes.js';
 import { pdfProcessorService } from './services/pdf-processor.service.js';
 import { qdrantService } from './services/qdrant.service.js';
 
@@ -291,6 +292,9 @@ app.use('/api/documents', documentRoutes);
 
 // Mount chat routes (authenticated users)
 app.use('/api/chat', chatRoutes);
+
+// Mount collection management routes (admin only)
+app.use('/api/admin', collectionRoutes);
 
 
 // OAuth routes (canonical path /api/auth/...)

@@ -51,6 +51,7 @@ router.post(
     try {
       const files = req.files as Express.Multer.File[];
       const userId = (req as any).user?.id;
+      const { collectionName } = req.body; // NEW: Get collection name from request
 
       if (!files || files.length === 0) {
         return res.status(400).json({
@@ -59,7 +60,38 @@ router.post(
         });
       }
 
-      console.log(`[Documents] Received ${files.length} files from user ${userId}`);
+      // NEW: Validate collection name is provided
+      if (!collectionName) {
+        // Clean up uploaded files
+        files.forEach(file => {
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        });
+        
+        return res.status(400).json({
+          success: false,
+          error: 'Bắt buộc phải chọn collection cho tài liệu',
+        });
+      }
+
+      // NEW: Validate collection exists in Qdrant
+      const collectionExists = await qdrantService.collectionExists(collectionName);
+      if (!collectionExists) {
+        // Clean up uploaded files
+        files.forEach(file => {
+          if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+          }
+        });
+        
+        return res.status(400).json({
+          success: false,
+          error: `Collection "${collectionName}" không tồn tại trong Qdrant`,
+        });
+      }
+
+      console.log(`[Documents] Received ${files.length} files from user ${userId} for collection: ${collectionName}`);
 
       const documents: any[] = [];
       const errors: any[] = [];
@@ -77,6 +109,7 @@ router.post(
               markdownContent: '',
               rawContent: '{}',
               processingStatus: 'processing',
+              qdrantCollectionName: collectionName, // NEW: Save collection name
             },
           });
 
@@ -84,6 +117,7 @@ router.post(
             id: document.id,
             fileName: document.fileName,
             status: document.processingStatus,
+            collectionName: document.qdrantCollectionName,
           });
 
           // Start processing in background (don't await)

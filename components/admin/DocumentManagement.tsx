@@ -18,6 +18,7 @@ interface Document {
   uploadedAt: string;
   processingStatus: 'processing' | 'completed' | 'failed';
   chunksCount: number;
+  qdrantCollectionName?: string; // NEW
 }
 
 interface ProcessingProgress {
@@ -30,6 +31,11 @@ interface ProcessingProgress {
   chunksEmbedded?: number;
 }
 
+interface Collection {
+  name: string;
+  pointsCount?: number;
+}
+
 const DocumentManagement: React.FC = () => {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +44,34 @@ const DocumentManagement: React.FC = () => {
   const [dragOver, setDragOver] = useState(false);
   const [processingProgress, setProcessingProgress] = useState<Map<string, ProcessingProgress>>(new Map());
   const [selectedDocument, setSelectedDocument] = useState<string | null>(null);
+  
+  // NEW: Collection management
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [selectedCollection, setSelectedCollection] = useState<string>('');
+  const [loadingCollections, setLoadingCollections] = useState(false);
+
+  // NEW: Fetch collections
+  const fetchCollections = useCallback(async () => {
+    try {
+      setLoadingCollections(true);
+      const response = await fetch('/api/admin/collections', {
+        credentials: 'include',
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setCollections(data.collections || []);
+        // Auto-select first collection if none selected
+        if (!selectedCollection && data.collections.length > 0) {
+          setSelectedCollection(data.collections[0].name);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch collections:', error);
+    } finally {
+      setLoadingCollections(false);
+    }
+  }, [selectedCollection]);
 
   // Fetch documents list
   const fetchDocuments = useCallback(async () => {
@@ -59,6 +93,7 @@ const DocumentManagement: React.FC = () => {
 
   useEffect(() => {
     fetchDocuments();
+    fetchCollections(); // NEW: Also fetch collections
 
     // Listen for processing updates via Socket.IO
     socket.on('document:processing', (progress: ProcessingProgress) => {
@@ -74,12 +109,12 @@ const DocumentManagement: React.FC = () => {
     return () => {
       socket.off('document:processing');
     };
-  }, [fetchDocuments]);
+  }, [fetchDocuments, fetchCollections]); // NEW: Add fetchCollections to deps
 
   // Handle file selection
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    const pdfFiles = files.filter(f => f.type === 'application/pdf');
+    const pdfFiles = files.filter((f: File) => f.type === 'application/pdf');
     
     if (pdfFiles.length !== files.length) {
       alert('Chỉ chấp nhận file PDF!');
@@ -108,7 +143,7 @@ const DocumentManagement: React.FC = () => {
     setDragOver(false);
 
     const files = Array.from(e.dataTransfer.files);
-    const pdfFiles = files.filter(f => f.type === 'application/pdf');
+    const pdfFiles = files.filter((f: File) => f.type === 'application/pdf');
     
     if (pdfFiles.length > 10) {
       alert('Tối đa 10 files!');
@@ -125,6 +160,12 @@ const DocumentManagement: React.FC = () => {
       return;
     }
 
+    // NEW: Validate collection selected
+    if (!selectedCollection) {
+      alert('Vui lòng chọn collection trước khi upload!');
+      return;
+    }
+
     setUploading(true);
 
     try {
@@ -132,6 +173,9 @@ const DocumentManagement: React.FC = () => {
       selectedFiles.forEach(file => {
         formData.append('documents', file);
       });
+      
+      // NEW: Add collection name to form data
+      formData.append('collectionName', selectedCollection);
 
       const response = await fetch('/api/documents/upload', {
         method: 'POST',
@@ -141,7 +185,7 @@ const DocumentManagement: React.FC = () => {
 
       if (response.ok) {
         const result = await response.json();
-        alert(`Upload thành công ${result.documents.length} files!`);
+        alert(`Upload thành công ${result.documents.length} files vào collection "${selectedCollection}"!`);
         setSelectedFiles([]);
         fetchDocuments();
       } else {
@@ -223,6 +267,29 @@ const DocumentManagement: React.FC = () => {
       {/* Upload Section */}
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
         <h2 className="text-xl font-semibold mb-4">📤 Upload Văn bản PDF</h2>
+        
+        {/* NEW: Collection Selector */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Chọn Collection <span className="text-red-500">*</span>
+          </label>
+          <select
+            value={selectedCollection}
+            onChange={(e) => setSelectedCollection(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            disabled={loadingCollections}
+          >
+            <option value="">-- Chọn collection --</option>
+            {collections.map((collection) => (
+              <option key={collection.name} value={collection.name}>
+                {collection.name} ({collection.pointsCount || 0} vectors)
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-500 mt-1">
+            Văn bản sẽ được lưu vào collection này để phân loại và tìm kiếm hiệu quả hơn
+          </p>
+        </div>
         
         <div
           className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
@@ -328,6 +395,10 @@ const DocumentManagement: React.FC = () => {
                         <div>📁 File: {doc.fileName}</div>
                         <div>📅 Upload: {new Date(doc.uploadedAt).toLocaleString('vi-VN')}</div>
                         <div>🔢 Chunks: {doc.chunksCount}</div>
+                        {/* NEW: Show collection name */}
+                        {doc.qdrantCollectionName && (
+                          <div>📦 Collection: <span className="font-medium text-blue-600">{doc.qdrantCollectionName}</span></div>
+                        )}
                       </div>
 
                       {/* Processing Progress */}

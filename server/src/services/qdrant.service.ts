@@ -123,11 +123,13 @@ class QdrantService {
   /**
    * Upsert a single vector point
    */
-  async upsertPoint(point: QdrantPoint): Promise<void> {
+  async upsertPoint(point: QdrantPoint, collectionName?: string): Promise<void> {
     if (!this.client) throw new Error('Qdrant client not initialized');
 
+    const targetCollection = collectionName || this.collectionName;
+
     try {
-      await this.client.upsert(this.collectionName, {
+      await this.client.upsert(targetCollection, {
         wait: true,
         points: [
           {
@@ -138,7 +140,7 @@ class QdrantService {
         ],
       });
 
-      console.log(`[Qdrant] Upserted point: ${point.id}`);
+      console.log(`[Qdrant] Upserted point: ${point.id} to collection: ${targetCollection}`);
     } catch (error) {
       console.error(`[Qdrant] Failed to upsert point ${point.id}:`, error);
       throw error;
@@ -148,12 +150,14 @@ class QdrantService {
   /**
    * Upsert multiple vector points (batch)
    */
-  async upsertPoints(points: QdrantPoint[]): Promise<void> {
+  async upsertPoints(points: QdrantPoint[], collectionName?: string): Promise<void> {
     if (!this.client) throw new Error('Qdrant client not initialized');
     if (points.length === 0) return;
 
+    const targetCollection = collectionName || this.collectionName;
+
     try {
-      await this.client.upsert(this.collectionName, {
+      await this.client.upsert(targetCollection, {
         wait: true,
         points: points.map((p) => ({
           id: p.id,
@@ -162,7 +166,7 @@ class QdrantService {
         })),
       });
 
-      console.log(`[Qdrant] Upserted ${points.length} points`);
+      console.log(`[Qdrant] Upserted ${points.length} points to collection: ${targetCollection}`);
     } catch (error) {
       console.error('[Qdrant] Batch upsert failed:', error);
       throw error;
@@ -179,16 +183,21 @@ class QdrantService {
       minScore?: number;
       documentIds?: string[];
       chunkTypes?: string[];
+      excludeKeywords?: string[]; // NEW: Keywords to exclude from document names
+      requireKeywords?: string[]; // NEW: Keywords that must be in document names
+      collectionName?: string; // NEW: Specify collection to search in
     } = {}
   ): Promise<QdrantSearchResult[]> {
     if (!this.client) throw new Error('Qdrant client not initialized');
 
-    const { topK = 5, minScore = 0.5, documentIds, chunkTypes } = options;
+    const { topK = 5, minScore = 0.5, documentIds, chunkTypes, excludeKeywords, requireKeywords, collectionName } = options;
+    const targetCollection = collectionName || this.collectionName;
 
     try {
       // Build filter
       const filter: any = {
         must: [],
+        must_not: [], // NEW: For exclusions
       };
 
       if (documentIds && documentIds.length > 0) {
@@ -209,6 +218,30 @@ class QdrantService {
         });
       }
 
+      // NEW: Require specific keywords in document name
+      if (requireKeywords && requireKeywords.length > 0) {
+        requireKeywords.forEach(keyword => {
+          filter.must.push({
+            key: 'documentName',
+            match: {
+              text: keyword,
+            },
+          });
+        });
+      }
+
+      // NEW: Exclude documents with specific keywords
+      if (excludeKeywords && excludeKeywords.length > 0) {
+        excludeKeywords.forEach(keyword => {
+          filter.must_not.push({
+            key: 'documentName',
+            match: {
+              text: keyword,
+            },
+          });
+        });
+      }
+
       const searchParams: any = {
         vector: queryVector,
         limit: topK,
@@ -216,11 +249,11 @@ class QdrantService {
       };
 
       // Only add filter if we have conditions
-      if (filter.must.length > 0) {
+      if (filter.must.length > 0 || filter.must_not.length > 0) {
         searchParams.filter = filter;
       }
 
-      const results = await this.client.search(this.collectionName, searchParams);
+      const results = await this.client.search(targetCollection, searchParams);
 
       return results.map((result) => ({
         id: String(result.id),
@@ -292,20 +325,6 @@ class QdrantService {
   }
 
   /**
-   * Get collection info
-   */
-  async getCollectionInfo(): Promise<any> {
-    if (!this.client) throw new Error('Qdrant client not initialized');
-
-    try {
-      return await this.client.getCollection(this.collectionName);
-    } catch (error) {
-      console.error('[Qdrant] Failed to get collection info:', error);
-      throw error;
-    }
-  }
-
-  /**
    * Get point by ID
    */
   async getPoint(pointId: string): Promise<QdrantPoint | null> {
@@ -341,10 +360,10 @@ class QdrantService {
    * Rerank search results for diversity and relevance
    * 
    * Scoring factors:
-   * 1. Original vector similarity score (60%)
-   * 2. Keyword matching with query (20%)
-   * 3. Document diversity penalty (10%)
-   * 4. Article diversity penalty (10%)
+   * 1. Original vector similarity score (base)
+   * 2. Keyword matching bonus (additive)
+   * 3. Position penalty (slight preference for earlier results)
+   * 4. Document diversity filtering (not affecting score)
    */
   rerankResults(
     results: QdrantSearchResult[],
@@ -358,8 +377,7 @@ class QdrantService {
     if (results.length === 0) return results;
 
     const {
-      diversityWeight = 0.2,
-      keywordWeight = 0.2,
+      keywordWeight = 0.1, // Reduced from 0.2, now it's a BONUS not a replacement
       maxPerDocument = 5,
     } = options;
 
@@ -371,10 +389,28 @@ class QdrantService {
 
     // Calculate scores for each result
     const scoredResults = results.map((result, index) => {
-      // 1. Original vector score (already 0-1)
+      // 1. Original vector score (keep full value as base)
       const vectorScore = result.score;
 
-      // 2. Keyword matching score
+      // 2. Document name matching bonus (VERY HIGH priority for exact match)
+      const documentName = result.payload.documentName?.toLowerCase() || '';
+      let docNameBonus = 0;
+      let hasAnyKeywordMatch = false;
+      
+      queryKeywords.forEach((keyword) => {
+        if (documentName.includes(keyword)) {
+          docNameBonus += 0.25; // INCREASED from 0.15 to 0.25
+          hasAnyKeywordMatch = true;
+        }
+      });
+      
+      // Cap document name bonus at 0.5 (INCREASED from 0.3)
+      docNameBonus = Math.min(docNameBonus, 0.5);
+      
+      // Apply penalty for documents with NO keyword match (push them down)
+      const noMatchPenalty = !hasAnyKeywordMatch ? -0.2 : 0;
+
+      // 3. Content keyword matching bonus (additive, not replacement)
       const content = result.payload.content?.toLowerCase() || '';
       const articleTitle = result.payload.articleTitle?.toLowerCase() || '';
       const chapterTitle = result.payload.chapterTitle?.toLowerCase() || '';
@@ -386,20 +422,20 @@ class QdrantService {
         if (chapterTitle.includes(keyword)) keywordMatches += 1.5;
       });
 
-      const keywordScore = Math.min(keywordMatches / (queryKeywords.length * 2), 1.0);
+      const keywordBonus = Math.min(keywordMatches / (queryKeywords.length * 2), 1.0) * keywordWeight;
 
-      // 3. Position penalty (prefer earlier results slightly)
-      const positionPenalty = 1 - (index / results.length) * 0.1;
+      // 4. Position penalty (prefer earlier results slightly)
+      const positionPenalty = 1 - (index / results.length) * 0.05; // Reduced from 0.1
 
-      // Combined score
-      const baseScore =
-        vectorScore * (1 - keywordWeight - diversityWeight) +
-        keywordScore * keywordWeight;
+      // Combined score: Keep vector score intact and ADD bonuses/penalties
+      const baseScore = vectorScore + docNameBonus + keywordBonus + noMatchPenalty;
 
       return {
         ...result,
         rerankScore: baseScore * positionPenalty,
-        keywordScore,
+        docNameBonus,
+        keywordBonus,
+        noMatchPenalty,
         originalIndex: index,
       };
     });
@@ -407,7 +443,7 @@ class QdrantService {
     // Sort by rerank score
     scoredResults.sort((a, b) => b.rerankScore - a.rerankScore);
 
-    // Apply diversity filtering
+    // Apply diversity filtering (doesn't change scores, just filters)
     const diverseResults: typeof scoredResults = [];
     const documentCounts = new Map<string, number>();
     const articlesSeen = new Set<string>();
@@ -423,7 +459,7 @@ class QdrantService {
       const docCount = documentCounts.get(docId) || 0;
       if (docCount >= maxPerDocument) {
         // Apply diversity penalty but still consider if score is high enough
-        if (result.rerankScore < 0.7) continue;
+        if (result.rerankScore < 0.75) continue; // Increased threshold from 0.7
       }
 
       diverseResults.push(result);
@@ -434,10 +470,234 @@ class QdrantService {
     console.log(`[Qdrant] Reranked ${results.length} → ${diverseResults.length} diverse results`);
 
     // Return without the extra metadata
-    return diverseResults.map(({ rerankScore, keywordScore, originalIndex, ...rest }) => ({
+    return diverseResults.map(({ rerankScore, docNameBonus, keywordBonus, originalIndex, ...rest }) => ({
       ...rest,
-      score: rerankScore, // Replace with reranked score
+      score: rerankScore, // Use reranked score (but now it preserves more of original)
     }));
+  }
+
+  // ============================================================================
+  // COLLECTION MANAGEMENT METHODS
+  // ============================================================================
+
+  /**
+   * List all collections in Qdrant
+   */
+  async listCollections(): Promise<Array<{
+    name: string;
+    vectorsCount?: number;
+    pointsCount?: number;
+    status?: string;
+  }>> {
+    if (!this.client) throw new Error('Qdrant client not initialized');
+
+    try {
+      const response = await this.client.getCollections();
+      
+      // Get detailed info for each collection
+      const collectionsWithDetails = await Promise.all(
+        response.collections.map(async (col) => {
+          try {
+            const info = await this.client!.getCollection(col.name);
+            return {
+              name: col.name,
+              vectorsCount: info.vectors_count || 0,
+              pointsCount: info.points_count || 0,
+              status: info.status || 'unknown',
+            };
+          } catch (error) {
+            console.warn(`Failed to get info for collection ${col.name}:`, error);
+            return {
+              name: col.name,
+              vectorsCount: 0,
+              pointsCount: 0,
+              status: 'unknown',
+            };
+          }
+        })
+      );
+
+      return collectionsWithDetails;
+    } catch (error) {
+      console.error('[Qdrant] Failed to list collections:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get detailed information about a specific collection
+   */
+  async getCollectionInfo(collectionName: string): Promise<{
+    name: string;
+    vectorsCount: number;
+    pointsCount: number;
+    status: string;
+    config: any;
+  }> {
+    if (!this.client) throw new Error('Qdrant client not initialized');
+
+    try {
+      const info = await this.client.getCollection(collectionName);
+      
+      return {
+        name: collectionName,
+        vectorsCount: info.vectors_count || 0,
+        pointsCount: info.points_count || 0,
+        status: info.status || 'unknown',
+        config: info.config,
+      };
+    } catch (error) {
+      console.error(`[Qdrant] Failed to get collection info for ${collectionName}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a new collection
+   */
+  async createCollection(
+    collectionName: string,
+    options?: {
+      vectorSize?: number;
+      distance?: 'Cosine' | 'Euclid' | 'Dot';
+      description?: string;
+    }
+  ): Promise<void> {
+    if (!this.client) throw new Error('Qdrant client not initialized');
+
+    const { vectorSize = this.vectorDimension, distance = 'Cosine', description } = options || {};
+
+    try {
+      // Check if collection already exists
+      const collections = await this.client.getCollections();
+      const exists = collections.collections.some((c) => c.name === collectionName);
+
+      if (exists) {
+        throw new Error(`Collection "${collectionName}" already exists`);
+      }
+
+      // Create collection
+      await this.client.createCollection(collectionName, {
+        vectors: {
+          size: vectorSize,
+          distance,
+        },
+        optimizers_config: {
+          default_segment_number: 2,
+        },
+        replication_factor: 2,
+      });
+
+      // Create payload indexes for faster filtering
+      const indexFields = [
+        'documentId',
+        'documentNumber',
+        'chunkType',
+        'articleNumber',
+      ];
+
+      for (const field of indexFields) {
+        try {
+          await this.client.createPayloadIndex(collectionName, {
+            field_name: field,
+            field_schema: 'keyword',
+          });
+        } catch (error) {
+          console.warn(`Failed to create index for field ${field}:`, error);
+        }
+      }
+
+      console.log(`[Qdrant] Collection "${collectionName}" created successfully`);
+    } catch (error) {
+      console.error(`[Qdrant] Failed to create collection ${collectionName}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a collection
+   */
+  async deleteCollection(collectionName: string): Promise<void> {
+    if (!this.client) throw new Error('Qdrant client not initialized');
+
+    try {
+      // Prevent deletion of default collection
+      if (collectionName === this.collectionName) {
+        throw new Error('Cannot delete the default collection');
+      }
+
+      await this.client.deleteCollection(collectionName);
+      console.log(`[Qdrant] Collection "${collectionName}" deleted successfully`);
+    } catch (error) {
+      console.error(`[Qdrant] Failed to delete collection ${collectionName}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if a collection exists
+   */
+  async collectionExists(collectionName: string): Promise<boolean> {
+    if (!this.client) throw new Error('Qdrant client not initialized');
+
+    try {
+      const collections = await this.client.getCollections();
+      return collections.collections.some((c) => c.name === collectionName);
+    } catch (error) {
+      console.error('[Qdrant] Failed to check collection existence:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Search across multiple collections
+   */
+  async searchMultipleCollections(
+    queryVector: number[],
+    collectionNames: string[],
+    options: {
+      topK?: number;
+      minScore?: number;
+      documentIds?: string[];
+      chunkTypes?: string[];
+    } = {}
+  ): Promise<QdrantSearchResult[]> {
+    if (!this.client) throw new Error('Qdrant client not initialized');
+
+    try {
+      // Search in each collection in parallel
+      const searchPromises = collectionNames.map(async (collectionName) => {
+        try {
+          const results = await this.search(queryVector, {
+            ...options,
+            collectionName,
+          });
+          // Add collection name to metadata
+          return results.map(r => ({
+            ...r,
+            payload: {
+              ...r.payload,
+              _collectionName: collectionName,
+            },
+          }));
+        } catch (error) {
+          console.warn(`Failed to search in collection ${collectionName}:`, error);
+          return [];
+        }
+      });
+
+      const allResults = await Promise.all(searchPromises);
+      
+      // Merge and sort by score
+      const mergedResults = allResults.flat().sort((a, b) => b.score - a.score);
+      
+      // Return top K results
+      const topK = options.topK || 5;
+      return mergedResults.slice(0, topK);
+    } catch (error) {
+      console.error('[Qdrant] Multi-collection search failed:', error);
+      throw error;
+    }
   }
 }
 

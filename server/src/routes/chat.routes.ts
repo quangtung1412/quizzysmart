@@ -8,6 +8,7 @@ import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { geminiRAGService } from '../services/gemini-rag.service.js';
 import { qdrantService } from '../services/qdrant.service.js';
+import { queryAnalyzerService } from '../services/query-analyzer.service.js';
 import type { RAGQuery, RAGResponse } from '../types/rag.types.js';
 
 const router = Router();
@@ -131,19 +132,103 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
         retrievedChunks = allChunks;
         console.log(`[Chat Stream] Retrieved ${allChunks.length} chunks for full analysis`);
       } else {
-        sendEvent('status', { message: 'Đang tìm kiếm thông tin...' });
+        sendEvent('status', { message: 'Đang phân tích câu hỏi...' });
+
+        // NEW: Get all available collections
+        const availableCollections = await qdrantService.listCollections();
+        const collectionNames = availableCollections.map(c => c.name);
+
+        console.log(`[Chat Stream] Available collections:`, collectionNames);
+
+        // NEW: Analyze query to determine which collections to search
+        const queryAnalysis = await queryAnalyzerService.analyzeQuery(question, collectionNames);
+        console.log(`[Chat Stream] Query analysis:`, queryAnalysis);
+
+        sendEvent('status', { 
+          message: `Tìm kiếm trong: ${queryAnalysis.collections.join(', ')}...` 
+        });
 
         // Generate embedding for question
         const questionEmbedding = await geminiRAGService.generateEmbedding(question);
 
-        // Search similar chunks in Qdrant (increase to 20 for more diverse results)
-        let searchResults = await qdrantService.searchSimilar(questionEmbedding, 20);
+        // Extract keywords for debugging
+        const queryKeywords = question.toLowerCase()
+          .split(/\s+/)
+          .filter((w: string) => w.length > 2);
+        console.log(`[Chat Stream] Query keywords:`, queryKeywords);
+
+        // NEW: Search across multiple collections (if analysis determined multiple)
+        let searchResults;
+        if (queryAnalysis.collections.length > 1) {
+          console.log(`[Chat Stream] Searching in multiple collections:`, queryAnalysis.collections);
+          searchResults = await qdrantService.searchMultipleCollections(
+            questionEmbedding, 
+            queryAnalysis.collections,
+            { topK: 30, minScore: 0.5 }
+          );
+        } else {
+          console.log(`[Chat Stream] Searching in single collection:`, queryAnalysis.collections[0]);
+          searchResults = await qdrantService.search(
+            questionEmbedding,
+            { 
+              topK: 30, 
+              minScore: 0.5,
+              collectionName: queryAnalysis.collections[0]
+            }
+          );
+        }
+
+        // Detect deposit vs loan queries for smart post-filtering (keep existing logic)
+        const depositKeywords = ['tiền gửi', 'gửi tiền', 'tiết kiệm', 'tài khoản tiền gửi'];
+        const loanKeywords = ['cho vay', 'vay vốn', 'tín dụng', 'khoản vay', 'nợ'];
+        
+        const isDepositQuery = depositKeywords.some(kw => question.toLowerCase().includes(kw));
+        const isLoanQuery = loanKeywords.some(kw => question.toLowerCase().includes(kw));
+
+        // Apply smart post-filtering based on query intent
+        if (isDepositQuery && !isLoanQuery) {
+          console.log(`[Chat Stream] 🏦 DEPOSIT query detected - Filtering out loan documents`);
+          searchResults = searchResults.filter((result: any) => {
+            const docNameLower = result.payload.documentName.toLowerCase();
+            const hasLoanKeyword = ['cho vay', 'vay vốn', 'tín dụng'].some(kw => docNameLower.includes(kw));
+            return !hasLoanKeyword; // Exclude loan documents
+          });
+          console.log(`[Chat Stream]    After filtering: ${searchResults.length} results remain`);
+        } else if (isLoanQuery && !isDepositQuery) {
+          console.log(`[Chat Stream] 💰 LOAN query detected - Filtering out deposit documents`);
+          searchResults = searchResults.filter((result: any) => {
+            const docNameLower = result.payload.documentName.toLowerCase();
+            const hasDepositKeyword = ['tiền gửi', 'gửi tiền'].some(kw => docNameLower.includes(kw));
+            return !hasDepositKeyword; // Exclude deposit documents
+          });
+          console.log(`[Chat Stream]    After filtering: ${searchResults.length} results remain`);
+        }
+
+        // Log original search results
+        console.log(`\n[Chat Stream DEBUG] Original Qdrant Search Results (Top 5):`);
+        searchResults.slice(0, 5).forEach((result: any, idx: number) => {
+          console.log(`  ${idx + 1}. Score: ${result.score.toFixed(4)}`);
+          console.log(`     Document: ${result.payload.documentName}`);
+          console.log(`     Article: ${result.payload.articleNumber || 'N/A'}`);
+          console.log(`     Preview: ${result.payload.content.substring(0, 100)}...`);
+        });
 
         // Apply reranking for better diversity and relevance
         searchResults = qdrantService.rerankResults(searchResults, question, {
-          diversityWeight: 0.2,
-          keywordWeight: 0.2,
+          keywordWeight: 0.1, // Small bonus for keyword matches
           maxPerDocument: 5,
+        });
+
+        // Log reranked results
+        console.log(`\n[Chat Stream DEBUG] After Reranking (Top 5):`);
+        searchResults.slice(0, 5).forEach((result: any, idx: number) => {
+          const docNameMatch = queryKeywords.some((kw: string) => 
+            result.payload.documentName.toLowerCase().includes(kw)
+          );
+          console.log(`  ${idx + 1}. Score: ${result.score.toFixed(4)} ${docNameMatch ? '✓ [Doc Name Match]' : ''}`);
+          console.log(`     Document: ${result.payload.documentName}`);
+          console.log(`     Article: ${result.payload.articleNumber || 'N/A'}`);
+          console.log(`     Preview: ${result.payload.content.substring(0, 100)}...`);
         });
 
         // Take top 10 after reranking
@@ -334,14 +419,66 @@ router.post('/ask', requireAuth, async (req: Request, res: Response) => {
       // Step 1: Generate embedding for question
       const questionEmbedding = await geminiRAGService.generateEmbedding(question);
 
-      // Step 2: Search similar chunks in Qdrant (increase to 20 for more diverse results)
-      searchResults = await qdrantService.searchSimilar(questionEmbedding, 20);
+      // Extract keywords for debugging
+      const queryKeywords = question.toLowerCase()
+        .split(/\s+/)
+        .filter((w: string) => w.length > 2);
+      console.log(`[Chat] Query keywords:`, queryKeywords);
+
+      // Detect deposit vs loan queries for smart post-filtering
+      const depositKeywords = ['tiền gửi', 'gửi tiền', 'tiết kiệm', 'tài khoản tiền gửi'];
+      const loanKeywords = ['cho vay', 'vay vốn', 'tín dụng', 'khoản vay', 'nợ'];
+      
+      const isDepositQuery = depositKeywords.some(kw => question.toLowerCase().includes(kw));
+      const isLoanQuery = loanKeywords.some(kw => question.toLowerCase().includes(kw));
+
+      // Step 2: Search similar chunks in Qdrant (increased to 30 for post-filtering)
+      searchResults = await qdrantService.searchSimilar(questionEmbedding, 30, 0.5);
+
+      // Apply smart post-filtering based on query intent
+      if (isDepositQuery && !isLoanQuery) {
+        console.log(`[Chat] 🏦 DEPOSIT query detected - Filtering out loan documents`);
+        searchResults = searchResults.filter((result: any) => {
+          const docNameLower = result.payload.documentName.toLowerCase();
+          const hasLoanKeyword = ['cho vay', 'vay vốn', 'tín dụng'].some(kw => docNameLower.includes(kw));
+          return !hasLoanKeyword; // Exclude loan documents
+        });
+        console.log(`[Chat]    After filtering: ${searchResults.length} results remain`);
+      } else if (isLoanQuery && !isDepositQuery) {
+        console.log(`[Chat] 💰 LOAN query detected - Filtering out deposit documents`);
+        searchResults = searchResults.filter((result: any) => {
+          const docNameLower = result.payload.documentName.toLowerCase();
+          const hasDepositKeyword = ['tiền gửi', 'gửi tiền'].some(kw => docNameLower.includes(kw));
+          return !hasDepositKeyword; // Exclude deposit documents
+        });
+        console.log(`[Chat]    After filtering: ${searchResults.length} results remain`);
+      }
+
+      // Log original search results
+      console.log(`\n[Chat DEBUG] Original Qdrant Search Results (Top 5):`);
+      searchResults.slice(0, 5).forEach((result: any, idx: number) => {
+        console.log(`  ${idx + 1}. Score: ${result.score.toFixed(4)}`);
+        console.log(`     Document: ${result.payload.documentName}`);
+        console.log(`     Article: ${result.payload.articleNumber || 'N/A'}`);
+        console.log(`     Preview: ${result.payload.content}`);
+      });
 
       // Apply reranking for better diversity and relevance
       searchResults = qdrantService.rerankResults(searchResults, question, {
-        diversityWeight: 0.2,
-        keywordWeight: 0.2,
+        keywordWeight: 0.1, // Small bonus for keyword matches
         maxPerDocument: 5,
+      });
+
+      // Log reranked results
+      console.log(`\n[Chat DEBUG] After Reranking (Top 5):`);
+      searchResults.slice(0, 5).forEach((result: any, idx: number) => {
+        const docNameMatch = queryKeywords.some((kw: string) => 
+          result.payload.documentName.toLowerCase().includes(kw)
+        );
+        console.log(`  ${idx + 1}. Score: ${result.score.toFixed(4)} ${docNameMatch ? '✓ [Doc Name Match]' : ''}`);
+        console.log(`     Document: ${result.payload.documentName}`);
+        console.log(`     Article: ${result.payload.articleNumber || 'N/A'}`);
+        console.log(`     Preview: ${result.payload.content.substring(0, 100)}...`);
       });
 
       // Take top 10 after reranking

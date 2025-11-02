@@ -219,6 +219,17 @@ class PDFProcessorService {
     try {
       console.log(`[PDFProcessor] Starting re-embedding for document ${documentId}`);
 
+      // Get document to retrieve collection name
+      const document = await prisma.document.findUnique({
+        where: { id: documentId },
+      });
+
+      if (!document) {
+        throw new Error('Document not found');
+      }
+
+      const collectionName = document.qdrantCollectionName || 'vietnamese_documents';
+
       this.emitProgress(userId, {
         documentId,
         status: 'processing',
@@ -283,8 +294,8 @@ class PDFProcessorService {
         };
       });
 
-      // Upload to Qdrant
-      await qdrantService.upsertPoints(points);
+      // Upload to Qdrant with specified collection
+      await qdrantService.upsertPoints(points, collectionName);
 
       // Update chunk embedding status
       for (let i = 0; i < dbChunks.length; i++) {
@@ -614,6 +625,17 @@ class PDFProcessorService {
     userId: string
   ): Promise<void> {
     try {
+      // Get document to retrieve collection name
+      const document = await prisma.document.findUnique({
+        where: { id: documentId },
+      });
+
+      if (!document) {
+        throw new Error('Document not found');
+      }
+
+      const collectionName = document.qdrantCollectionName || 'vietnamese_documents';
+
       // Generate embeddings in batches
       const contents = chunks.map((c) => c.content);
       const embeddings = await geminiRAGService.generateEmbeddings(contents);
@@ -653,8 +675,8 @@ class PDFProcessorService {
         };
       });
 
-      // Upload to Qdrant
-      await qdrantService.upsertPoints(points);
+      // Upload to Qdrant with specified collection
+      await qdrantService.upsertPoints(points, collectionName);
 
       // Update chunk embedding status with Qdrant point IDs
       for (let i = 0; i < chunks.length; i++) {
@@ -670,7 +692,7 @@ class PDFProcessorService {
         });
       }
 
-      console.log(`[PDFProcessor] Successfully embedded and uploaded ${chunks.length} chunks`);
+      console.log(`[PDFProcessor] Successfully embedded and uploaded ${chunks.length} chunks to collection: ${collectionName}`);
     } catch (error) {
       console.error('[PDFProcessor] Embedding/upload failed:', error);
       throw error;
