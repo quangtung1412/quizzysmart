@@ -60,7 +60,7 @@ class GeminiRAGService {
   async uploadPDF(filePath: string, displayName: string): Promise<string> {
     try {
       console.log(`[Gemini] Uploading PDF to File API: ${displayName}`);
-      
+
       // Read file as buffer
       const fs = await import('fs');
       const fileBuffer = await fs.promises.readFile(filePath);
@@ -74,11 +74,11 @@ class GeminiRAGService {
       });
 
       console.log(`[Gemini] PDF uploaded successfully. URI: ${file.uri}`);
-      
+
       if (!file.uri) {
         throw new Error('File URI is undefined');
       }
-      
+
       return file.uri;
     } catch (error) {
       console.error('[Gemini] PDF upload failed:', error);
@@ -97,7 +97,7 @@ class GeminiRAGService {
       const fileName = fileUri.split('/').pop()!;
       let fileInfo = await this.ai.files.get({ name: fileName });
       console.log(`[Gemini] File state: ${fileInfo.state}`);
-      
+
       while (fileInfo.state === 'PROCESSING') {
         console.log('[Gemini] File is still processing, waiting 5 seconds...');
         await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -193,7 +193,7 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
 
       // Create content with file URI part
       const contents: any[] = [prompt];
-      
+
       if (fileInfo.uri && fileInfo.mimeType) {
         contents.push(createPartFromUri(fileInfo.uri, fileInfo.mimeType));
       }
@@ -203,7 +203,7 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
       for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
         try {
           console.log(`[Gemini] Extraction attempt ${attempt}/${this.maxRetries}`);
-          
+
           const response = await this.ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents,
@@ -226,7 +226,7 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
           };
         } catch (error) {
           lastError = error;
-          
+
           if (this.isRetryableError(error)) {
             if (attempt < this.maxRetries) {
               const delay = this.retryDelay * Math.pow(2, attempt - 1); // Exponential backoff
@@ -258,14 +258,14 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
    */
   async generateEmbedding(text: string): Promise<number[]> {
     let lastError: any;
-    
+
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
         const result = await this.ai.models.embedContent({
           model: this.embeddingModel,
           contents: text,
         });
-        
+
         if (!result.embeddings || result.embeddings.length === 0 || !result.embeddings[0].values) {
           throw new Error('Invalid embedding response');
         }
@@ -273,7 +273,7 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
         return result.embeddings[0].values;
       } catch (error) {
         lastError = error;
-        
+
         if (this.isRetryableError(error) && attempt < this.maxRetries) {
           const delay = this.retryDelay * Math.pow(2, attempt - 1);
           console.warn(`[Gemini] Embedding retry ${attempt}/${this.maxRetries}: ${error}`);
@@ -283,7 +283,7 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
         }
       }
     }
-    
+
     console.error('[Gemini] Embedding generation failed:', lastError);
     throw new Error(`Failed to generate embedding: ${lastError}`);
   }
@@ -333,10 +333,10 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
       // Build context from retrieved chunks
       const context = retrievedChunks
         .map((chunk, idx) => {
-          const source = chunk.documentNumber 
+          const source = chunk.documentNumber
             ? `${chunk.documentName} (${chunk.documentNumber})`
             : chunk.documentName;
-          
+
           let location = '';
           if (chunk.metadata.chapterNumber) {
             location += `Chương ${chunk.metadata.chapterNumber}`;
@@ -344,7 +344,7 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
           if (chunk.metadata.articleNumber) {
             location += location ? `, Điều ${chunk.metadata.articleNumber}` : `Điều ${chunk.metadata.articleNumber}`;
           }
-          
+
           return `[${idx + 1}] ${source}${location ? ` - ${location}` : ''}:\n${chunk.content}`;
         })
         .join('\n\n---\n\n');
@@ -355,13 +355,13 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
       if (!modelInfo) {
         throw new Error('No available Gemini models');
       }
-      
+
       // Generate answer with retry logic
       let lastError: any;
       for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
         try {
           console.log(`[Gemini] RAG answer attempt ${attempt}/${this.maxRetries}`);
-          
+
           const response = await this.ai.models.generateContent({
             model: modelInfo.name,
             contents: prompt,
@@ -402,7 +402,7 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
           };
         } catch (error) {
           lastError = error;
-          
+
           if (this.isRetryableError(error) && attempt < this.maxRetries) {
             const delay = this.retryDelay * Math.pow(2, attempt - 1);
             console.warn(`[Gemini] RAG answer retry ${attempt}/${this.maxRetries}: ${error}`);
@@ -434,10 +434,10 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
       // Build context from retrieved chunks
       const context = retrievedChunks
         .map((chunk, idx) => {
-          const source = chunk.documentNumber 
+          const source = chunk.documentNumber
             ? `${chunk.documentName} (${chunk.documentNumber})`
             : chunk.documentName;
-          
+
           let location = '';
           if (chunk.metadata.chapterNumber) {
             location += `Chương ${chunk.metadata.chapterNumber}`;
@@ -445,7 +445,7 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
           if (chunk.metadata.articleNumber) {
             location += location ? `, Điều ${chunk.metadata.articleNumber}` : `Điều ${chunk.metadata.articleNumber}`;
           }
-          
+
           return `[${idx + 1}] ${source}${location ? ` - ${location}` : ''}:\n${chunk.content}`;
         })
         .join('\n\n---\n\n');
@@ -458,9 +458,9 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
       if (!modelInfo) {
         throw new Error('No available Gemini models');
       }
-      
+
       console.log(`[Gemini] Streaming with model: ${modelInfo.name}`);
-      
+
       const streamPromise = this.ai.models.generateContentStream({
         model: modelInfo.name,
         contents: prompt,
@@ -505,7 +505,7 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
 Bạn là một trợ lý AI chuyên về nghiệp vụ ngân hàng. Nhiệm vụ của bạn là trả lời câu hỏi của người dùng dựa trên các văn bản quy định được cung cấp.
 
 NGUYÊN TẮC TRẢ LỜI:
-1. Trả lời CHÍNH XÁC dựa trên nội dung văn bản được cung cấp
+1. Trả lời CHÍNH XÁC dựa trên nội dung văn bản được cung cấp, tóm tắt và diễn giải nếu cần thiết
 2. Trích dẫn cụ thể điều, khoản liên quan TRONG CÂU bằng cách thêm ký hiệu [🔗1], [🔗2], [🔗3] ngay sau câu hoặc đoạn có liên quan
 3. Nếu câu hỏi yêu cầu đếm, tính tổng, tóm tắt: hãy phân tích TOÀN BỘ nội dung được cung cấp và đưa ra kết quả chính xác
 4. Khi liệt kê, hãy sắp xếp theo thứ tự logic (theo số điều, chương, hoặc thứ tự xuất hiện)
@@ -541,10 +541,10 @@ Hãy trả lời câu hỏi dựa trên ngữ cảnh trên, nhớ thêm trích d
       // Build context from retrieved chunks
       const context = retrievedChunks
         .map((chunk, idx) => {
-          const source = chunk.documentNumber 
+          const source = chunk.documentNumber
             ? `${chunk.documentName} (${chunk.documentNumber})`
             : chunk.documentName;
-          
+
           let location = '';
           if (chunk.metadata.chapterNumber) {
             location += `Chương ${chunk.metadata.chapterNumber}`;
@@ -552,7 +552,7 @@ Hãy trả lời câu hỏi dựa trên ngữ cảnh trên, nhớ thêm trích d
           if (chunk.metadata.articleNumber) {
             location += location ? `, Điều ${chunk.metadata.articleNumber}` : `Điều ${chunk.metadata.articleNumber}`;
           }
-          
+
           return `[${idx + 1}] ${source}${location ? ` - ${location}` : ''}:\n${chunk.content}`;
         })
         .join('\n\n---\n\n');
@@ -586,13 +586,13 @@ Hãy trả lời câu hỏi dựa trên ngữ cảnh trên, nhớ thêm trích d
       if (!modelInfo) {
         throw new Error('No available Gemini models');
       }
-      
+
       // Generate answer with retry logic
       let lastError: any;
       for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
         try {
           console.log(`[Gemini] RAG answer attempt ${attempt}/${this.maxRetries}`);
-          
+
           const response = await this.ai.models.generateContent({
             model: modelInfo.name,
             contents: prompt,
@@ -625,7 +625,7 @@ Hãy trả lời câu hỏi dựa trên ngữ cảnh trên, nhớ thêm trích d
           };
         } catch (error) {
           lastError = error;
-          
+
           if (this.isRetryableError(error) && attempt < this.maxRetries) {
             const delay = this.retryDelay * Math.pow(2, attempt - 1);
             console.warn(`[Gemini] RAG answer retry ${attempt}/${this.maxRetries}: ${error}`);
@@ -653,7 +653,7 @@ Hãy trả lời câu hỏi dựa trên ngữ cảnh trên, nhớ thêm trích d
     // Overview
     const { overview } = content;
     markdown += `# ${overview.documentName}\n\n`;
-    
+
     if (overview.documentNumber) {
       markdown += `**Số văn bản:** ${overview.documentNumber}\n\n`;
     }
@@ -694,7 +694,7 @@ Hãy trả lời câu hỏi dựa trên ngữ cảnh trên, nhớ thêm trích d
       // Document has chapters
       content.chapters.forEach((chapter) => {
         markdown += `## Chương ${chapter.number}: ${chapter.title}\n\n`;
-        
+
         chapter.articles.forEach((article) => {
           markdown += `### Điều ${article.number}`;
           if (article.title) markdown += `. ${article.title}`;
