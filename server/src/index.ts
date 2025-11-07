@@ -1866,8 +1866,11 @@ app.get('/api/admin/ai-search-history', async (req: Request, res: Response) => {
       page = 1,
       limit = 50,
       userId,
+      username,
       modelUsed,
       success,
+      minConfidence,
+      maxConfidence,
       startDate,
       endDate
     } = req.query;
@@ -1883,12 +1886,34 @@ app.get('/api/admin/ai-search-history', async (req: Request, res: Response) => {
       where.userId = parseInt(userId as string);
     }
 
+    // Filter by username or email
+    if (username) {
+      where.user = {
+        OR: [
+          { username: { contains: username as string, mode: 'insensitive' } },
+          { email: { contains: username as string, mode: 'insensitive' } },
+          { name: { contains: username as string, mode: 'insensitive' } }
+        ]
+      };
+    }
+
     if (modelUsed) {
       where.modelUsed = modelUsed as string;
     }
 
     if (success !== undefined) {
       where.success = success === 'true';
+    }
+
+    // Filter by confidence range
+    if (minConfidence || maxConfidence) {
+      where.confidence = {};
+      if (minConfidence) {
+        where.confidence.gte = parseFloat(minConfidence as string);
+      }
+      if (maxConfidence) {
+        where.confidence.lte = parseFloat(maxConfidence as string);
+      }
     }
 
     if (startDate || endDate) {
@@ -1967,6 +1992,11 @@ app.get('/api/admin/ai-search-history', async (req: Request, res: Response) => {
       ms.totalTokens += stat._sum.totalTokens || 0;
     });
 
+    // Calculate correct success rate from total data
+    const successCount = await (prisma as any).aiSearchHistory.count({ 
+      where: { ...where, success: true } 
+    });
+
     res.json({
       history,
       pagination: {
@@ -1978,7 +2008,7 @@ app.get('/api/admin/ai-search-history', async (req: Request, res: Response) => {
       stats: {
         byModel: modelStats,
         totalSearches: total,
-        successRate: total > 0 ? (history.filter((h: any) => h.success).length / total * 100).toFixed(2) : 0
+        successRate: total > 0 ? ((successCount / total) * 100).toFixed(2) : '0'
       }
     });
 

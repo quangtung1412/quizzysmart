@@ -57,10 +57,16 @@ export default function AiSearchHistory() {
     // Filters
     const [page, setPage] = useState(1);
     const [userId, setUserId] = useState('');
+    const [username, setUsername] = useState('');
     const [modelUsed, setModelUsed] = useState('');
     const [success, setSuccess] = useState<string>('');
+    const [minConfidence, setMinConfidence] = useState('');
+    const [maxConfidence, setMaxConfidence] = useState('');
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
+    
+    // State for expanded questions
+    const [expandedQuestions, setExpandedQuestions] = useState<Set<number>>(new Set());
 
     const fetchHistory = async () => {
         try {
@@ -73,8 +79,11 @@ export default function AiSearchHistory() {
             });
 
             if (userId) params.append('userId', userId);
+            if (username) params.append('username', username);
             if (modelUsed) params.append('modelUsed', modelUsed);
             if (success !== '') params.append('success', success);
+            if (minConfidence) params.append('minConfidence', minConfidence);
+            if (maxConfidence) params.append('maxConfidence', maxConfidence);
             if (startDate) params.append('startDate', startDate);
             if (endDate) params.append('endDate', endDate);
 
@@ -98,7 +107,7 @@ export default function AiSearchHistory() {
 
     useEffect(() => {
         fetchHistory();
-    }, [page, userId, modelUsed, success, startDate, endDate]);
+    }, [page, userId, username, modelUsed, success, minConfidence, maxConfidence, startDate, endDate]);
 
     const applyFilters = () => {
         setPage(1); // Reset to first page when filters change
@@ -107,11 +116,29 @@ export default function AiSearchHistory() {
 
     const clearFilters = () => {
         setUserId('');
+        setUsername('');
         setModelUsed('');
         setSuccess('');
+        setMinConfidence('');
+        setMaxConfidence('');
         setStartDate('');
         setEndDate('');
         setPage(1);
+    };
+
+    const toggleQuestionExpansion = (id: number) => {
+        const newExpanded = new Set(expandedQuestions);
+        if (newExpanded.has(id)) {
+            newExpanded.delete(id);
+        } else {
+            newExpanded.add(id);
+        }
+        setExpandedQuestions(newExpanded);
+    };
+
+    const truncateText = (text: string, maxLength: number = 100) => {
+        if (!text) return '';
+        return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
     };
 
     if (loading && !data) {
@@ -216,7 +243,7 @@ export default function AiSearchHistory() {
             {/* Filters */}
             <div className="bg-white rounded-lg shadow p-6">
                 <h3 className="text-lg font-semibold mb-4">Bộ Lọc</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">User ID</label>
                         <input
@@ -224,6 +251,17 @@ export default function AiSearchHistory() {
                             value={userId}
                             onChange={(e) => setUserId(e.target.value)}
                             placeholder="Nhập User ID"
+                            className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                        <input
+                            type="text"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            placeholder="Nhập username hoặc email"
                             className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                     </div>
@@ -258,6 +296,32 @@ export default function AiSearchHistory() {
                     </div>
 
                     <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Độ tin cậy tối thiểu (%)</label>
+                        <input
+                            type="number"
+                            value={minConfidence}
+                            onChange={(e) => setMinConfidence(e.target.value)}
+                            placeholder="0"
+                            min="0"
+                            max="100"
+                            className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Độ tin cậy tối đa (%)</label>
+                        <input
+                            type="number"
+                            value={maxConfidence}
+                            onChange={(e) => setMaxConfidence(e.target.value)}
+                            placeholder="100"
+                            min="0"
+                            max="100"
+                            className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                    </div>
+
+                    <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Từ ngày</label>
                         <input
                             type="date"
@@ -278,21 +342,21 @@ export default function AiSearchHistory() {
                             aria-label="Chọn ngày kết thúc"
                         />
                     </div>
+                </div>
 
-                    <div className="flex items-end gap-2">
-                        <button
-                            onClick={applyFilters}
-                            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                        >
-                            Áp dụng
-                        </button>
-                        <button
-                            onClick={clearFilters}
-                            className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-                        >
-                            Xóa bộ lọc
-                        </button>
-                    </div>
+                <div className="flex items-center gap-2 mt-4">
+                    <button
+                        onClick={applyFilters}
+                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                    >
+                        Áp dụng bộ lọc
+                    </button>
+                    <button
+                        onClick={clearFilters}
+                        className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                    >
+                        Xóa bộ lọc
+                    </button>
                 </div>
             </div>
 
@@ -325,8 +389,28 @@ export default function AiSearchHistory() {
                                         <div className="text-gray-900">{item.modelUsed}</div>
                                         <div className="text-xs text-gray-500">Priority: {item.modelPriority}</div>
                                     </td>
-                                    <td className="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">
-                                        {item.recognizedText || (item.success ? 'N/A' : item.errorMessage)}
+                                    <td className="px-4 py-3 text-sm">
+                                        {item.recognizedText ? (
+                                            <div className="space-y-1">
+                                                <div className={`text-gray-600 ${expandedQuestions.has(item.id) ? '' : 'truncate max-w-xs'}`}>
+                                                    {expandedQuestions.has(item.id) 
+                                                        ? item.recognizedText 
+                                                        : truncateText(item.recognizedText, 150)}
+                                                </div>
+                                                {item.recognizedText.length > 150 && (
+                                                    <button
+                                                        onClick={() => toggleQuestionExpansion(item.id)}
+                                                        className="text-blue-600 hover:text-blue-800 text-xs font-medium"
+                                                    >
+                                                        {expandedQuestions.has(item.id) ? 'Thu gọn' : 'Xem thêm'}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <span className="text-gray-400 italic">
+                                                {item.success ? 'N/A' : (item.errorMessage || 'Lỗi không xác định')}
+                                            </span>
+                                        )}
                                     </td>
                                     <td className="px-4 py-3 text-sm text-right">
                                         {item.success ? (
