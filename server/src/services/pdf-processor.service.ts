@@ -15,7 +15,7 @@ import type {
   QdrantPoint,
   ProcessingProgress,
 } from '../types/rag.types.js';
-import { geminiRAGService } from './gemini-rag.service.js';
+import { geminiRAGServiceImport } from './gemini-rag.service.js'; // Use IMPORT service for file processing
 import { qdrantService } from './qdrant.service.js';
 import type { Server as SocketServer } from 'socket.io';
 
@@ -69,8 +69,8 @@ class PDFProcessorService {
         currentStep: 'Đang upload PDF lên Gemini...',
       });
 
-      // Step 1: Upload PDF to Gemini
-      const fileUri = await geminiRAGService.uploadPDF(filePath, fileName);
+      // Step 1: Upload PDF to Gemini (using IMPORT key)
+      const fileUri = await geminiRAGServiceImport.uploadPDF(filePath, fileName);
 
       this.emitProgress(userId, {
         documentId,
@@ -79,12 +79,12 @@ class PDFProcessorService {
         currentStep: 'Đang trích xuất nội dung văn bản...',
       });
 
-      // Step 2: Extract structured content
-      const extraction = await geminiRAGService.extractDocumentContent(fileUri);
+      // Step 2: Extract structured content (using IMPORT key)
+      const extraction = await geminiRAGServiceImport.extractDocumentContent(fileUri);
       const { content } = extraction;
 
       // Step 3: Convert to Markdown
-      const markdownContent = geminiRAGService.convertToMarkdown(content);
+      const markdownContent = geminiRAGServiceImport.convertToMarkdown(content);
 
       this.emitProgress(userId, {
         documentId,
@@ -255,8 +255,8 @@ class PDFProcessorService {
         chunksCreated: dbChunks.length,
       });
 
-      // Generate embeddings
-      const embeddings = await geminiRAGService.generateEmbeddings(
+      // Generate embeddings (using IMPORT key for re-embedding)
+      const embeddings = await geminiRAGServiceImport.generateEmbeddings(
         dbChunks.map((c) => c.content)
       );
 
@@ -636,9 +636,9 @@ class PDFProcessorService {
 
       const collectionName = document.qdrantCollectionName || 'vietnamese_documents';
 
-      // Generate embeddings in batches
+      // Generate embeddings in batches (using IMPORT key for file processing)
       const contents = chunks.map((c) => c.content);
-      const embeddings = await geminiRAGService.generateEmbeddings(contents);
+      const embeddings = await geminiRAGServiceImport.generateEmbeddings(contents);
 
       this.emitProgress(userId, {
         documentId,

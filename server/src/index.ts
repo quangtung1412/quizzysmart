@@ -18,10 +18,15 @@ import chatRoutes from './routes/chat.routes.js';
 import collectionRoutes from './routes/collection.routes.js';
 import { pdfProcessorService } from './services/pdf-processor.service.js';
 import { qdrantService } from './services/qdrant.service.js';
+import { modelSettingsService } from './services/model-settings.service.js';
 
 const prisma = new PrismaClient();
 // Temporary any-cast for newly added models if type generation not up-to-date
 const prismaAny = prisma as any;
+
+// Initialize model settings service
+modelSettingsService.initialize(prisma);
+
 const app = express();
 const httpServer = createServer(app);
 
@@ -1886,13 +1891,13 @@ app.get('/api/admin/ai-search-history', async (req: Request, res: Response) => {
       where.userId = parseInt(userId as string);
     }
 
-    // Filter by username or email
+    // Filter by username or email (SQLite doesn't support mode: 'insensitive', so we remove it)
     if (username) {
       where.user = {
         OR: [
-          { username: { contains: username as string, mode: 'insensitive' } },
-          { email: { contains: username as string, mode: 'insensitive' } },
-          { name: { contains: username as string, mode: 'insensitive' } }
+          { username: { contains: username as string } },
+          { email: { contains: username as string } },
+          { name: { contains: username as string } }
         ]
       };
     }
@@ -2571,6 +2576,82 @@ app.put('/api/admin/system-settings', async (req: Request, res: Response) => {
   }
 });
 
+// ==================== Model Settings Endpoints ====================
+
+// Get model settings (Admin only)
+app.get('/api/admin/model-settings', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    // Get the first (and should be only) model settings record
+    let modelSettings = await (prisma as any).modelSettings.findFirst();
+
+    // If no settings exist yet, create default settings
+    if (!modelSettings) {
+      modelSettings = await (prisma as any).modelSettings.create({
+        data: {
+          defaultModel: 'gemini-2.5-flash',
+          cheaperModel: 'gemini-2.0-flash-lite',
+          embeddingModel: 'gemini-embedding-001'
+        }
+      });
+    }
+
+    res.json(modelSettings);
+  } catch (error: any) {
+    console.error('Error fetching model settings:', error);
+    res.status(500).json({ error: 'Failed to fetch model settings' });
+  }
+});
+
+// Update model settings (Admin only)
+app.put('/api/admin/model-settings', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+
+  try {
+    const {
+      defaultModel,
+      cheaperModel,
+      embeddingModel
+    } = req.body;
+
+    const updateData: any = {};
+    if (defaultModel !== undefined) updateData.defaultModel = defaultModel;
+    if (cheaperModel !== undefined) updateData.cheaperModel = cheaperModel;
+    if (embeddingModel !== undefined) updateData.embeddingModel = embeddingModel;
+    updateData.updatedBy = admin.email;
+
+    // Get existing settings or create new one
+    let modelSettings = await (prisma as any).modelSettings.findFirst();
+
+    if (modelSettings) {
+      modelSettings = await (prisma as any).modelSettings.update({
+        where: { id: modelSettings.id },
+        data: updateData
+      });
+    } else {
+      modelSettings = await (prisma as any).modelSettings.create({
+        data: {
+          defaultModel: defaultModel ?? 'gemini-2.5-flash',
+          cheaperModel: cheaperModel ?? 'gemini-2.0-flash-lite',
+          embeddingModel: embeddingModel ?? 'gemini-embedding-001',
+          updatedBy: admin.email
+        }
+      });
+    }
+
+    console.log('[ModelSettings] Updated by admin:', admin.email, updateData);
+
+    // Refresh the model settings cache
+    await modelSettingsService.refresh();
+
+    res.json(modelSettings);
+  } catch (error: any) {
+    console.error('Error updating model settings:', error);
+    res.status(500).json({ error: 'Failed to update model settings' });
+  }
+});
+
 // Public endpoint to get peak hours status (for client-side checks)
 app.get('/api/peak-hours-status', async (req: Request, res: Response) => {
   try {
@@ -3009,19 +3090,16 @@ app.post('/api/premium/search-by-image', async (req: Request, res: Response) => 
     const systemSettings = await (prisma as any).systemSettings.findFirst();
 
     if (systemSettings && !systemSettings.modelRotationEnabled) {
-      // Model rotation is disabled - using paid/upgraded model (no RPM/RPD limits)
-      // When admin disables rotation, it means they have upgraded the default model
-      // to a paid tier with much higher limits (e.g., 1000+ RPM), so no need to track quotas
-      const defaultModelName = systemSettings.defaultModel || 'gemini-2.5-flash';
-      console.log(`[AI Search] Model rotation DISABLED - Using paid/upgraded model: ${defaultModelName}`);
-      console.log(`[AI Search] Note: Assuming paid tier with high limits, RPM/RPD tracking disabled`);
+      // Model rotation is disabled - use default model from model settings
+      const defaultModelName = await modelSettingsService.getDefaultModel();
+      console.log(`[AI Search] Model rotation DISABLED - Using default model: ${defaultModelName}`);
       selectedModel = {
         name: defaultModelName,
         priority: 0,
-        rpm: 999,  // High dummy value - not tracked for paid tier
-        rpd: 999,  // High dummy value - not tracked for paid tier
+        rpm: 999,  // High dummy value - not tracked when rotation disabled
+        rpd: 999,  // High dummy value - not tracked when rotation disabled
         tpm: 999999,
-        category: 'Paid/Upgraded'
+        category: 'Default Model'
       };
     } else {
       // Model rotation is enabled - using free tier models with quota management

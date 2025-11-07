@@ -235,6 +235,18 @@ model SystemSettings {
   @@map("system_settings")
 }
 
+model ModelSettings {
+  id                String   @id @default(cuid())
+  defaultModel      String   @default("gemini-2.5-flash") // Default model for regular queries
+  cheaperModel      String   @default("gemini-2.0-flash-lite") // Cheaper/lighter model for simple queries
+  embeddingModel    String   @default("gemini-embedding-001") // Model for embeddings in RAG
+  // Metadata
+  updatedAt         DateTime @updatedAt
+  updatedBy         String?  // Admin user email who last updated
+  
+  @@map("model_settings")
+}
+
 // ============================================
 // RAG (Retrieval-Augmented Generation) Models
 // ============================================

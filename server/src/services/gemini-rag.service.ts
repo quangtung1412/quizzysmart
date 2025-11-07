@@ -16,20 +16,51 @@ import type {
 } from '../types/rag.types.js';
 import { geminiModelRotation } from '../gemini-model-rotation.js';
 import { qdrantService } from './qdrant.service.js';
+import { modelSettingsService } from './model-settings.service.js';
 
 class GeminiRAGService {
   private ai: GoogleGenAI;
-  private embeddingModel = 'text-embedding-004';
   private maxRetries = 3;
   private retryDelay = 2000; // Start with 2 seconds
 
-  constructor() {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
+  constructor(apiKey?: string) {
+    // Allow custom API key, default to GEMINI_API_KEY
+    const key = apiKey || process.env.GEMINI_API_KEY;
+    if (!key) {
       throw new Error('GEMINI_API_KEY not found in environment');
     }
 
-    this.ai = new GoogleGenAI({ apiKey });
+    this.ai = new GoogleGenAI({ apiKey: key });
+  }
+
+  /**
+   * Get appropriate model for answering (respects model rotation settings)
+   */
+  private async getAnswerModel(): Promise<{ name: string; priority: number }> {
+    // Try to get system settings to check if rotation is enabled
+    try {
+      const { PrismaClient } = await import('@prisma/client');
+      const prisma = new PrismaClient();
+      const systemSettings = await (prisma as any).systemSettings.findFirst();
+      await prisma.$disconnect();
+
+      if (systemSettings && !systemSettings.modelRotationEnabled) {
+        // Model rotation is disabled - use default model from model settings
+        const defaultModel = await modelSettingsService.getDefaultModel();
+        console.log(`[Gemini] Model rotation DISABLED - Using default model: ${defaultModel}`);
+        return { name: defaultModel, priority: 0 };
+      }
+    } catch (error) {
+      console.warn('[Gemini] Could not check system settings, using rotation:', error);
+    }
+
+    // Model rotation is enabled - use rotation
+    const modelInfo = await geminiModelRotation.getNextAvailableModel();
+    if (!modelInfo) {
+      throw new Error('No available Gemini models');
+    }
+    console.log(`[Gemini] Model rotation ENABLED - Using: ${modelInfo.name}`);
+    return modelInfo;
   }
 
   /**
@@ -259,11 +290,17 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
   async generateEmbedding(text: string): Promise<number[]> {
     let lastError: any;
 
+    // Get embedding model from settings
+    const embeddingModel = await modelSettingsService.getEmbeddingModel();
+
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
         const result = await this.ai.models.embedContent({
-          model: this.embeddingModel,
+          model: embeddingModel,
           contents: text,
+          config: {
+            outputDimensionality: 768  // Force 768 dimensions for compatibility
+          }
         });
 
         if (!result.embeddings || result.embeddings.length === 0 || !result.embeddings[0].values) {
@@ -351,10 +388,7 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
 
       const prompt = this.buildRAGPrompt(query.question, context);
 
-      const modelInfo = await geminiModelRotation.getNextAvailableModel();
-      if (!modelInfo) {
-        throw new Error('No available Gemini models');
-      }
+      const modelInfo = await this.getAnswerModel();
 
       // Generate answer with retry logic
       let lastError: any;
@@ -454,10 +488,7 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
 
       console.log(prompt);
 
-      const modelInfo = await geminiModelRotation.getNextAvailableModel();
-      if (!modelInfo) {
-        throw new Error('No available Gemini models');
-      }
+      const modelInfo = await this.getAnswerModel();
 
       console.log(`[Gemini] Streaming with model: ${modelInfo.name}`);
 
@@ -582,10 +613,7 @@ CÂU HỎI: ${query.question}
 Hãy trả lời câu hỏi dựa trên ngữ cảnh trên, nhớ thêm trích dẫn [🔗n] sau mỗi câu/đoạn có liên quan.
 `;
 
-      const modelInfo = await geminiModelRotation.getNextAvailableModel();
-      if (!modelInfo) {
-        throw new Error('No available Gemini models');
-      }
+      const modelInfo = await this.getAnswerModel();
 
       // Generate answer with retry logic
       let lastError: any;
@@ -763,5 +791,9 @@ Hãy trả lời câu hỏi dựa trên ngữ cảnh trên, nhớ thêm trích d
   }
 }
 
-// Export singleton instance
+// Export singleton instances
+// Default instance using GEMINI_API_KEY for chat queries
 export const geminiRAGService = new GeminiRAGService();
+
+// Import instance using GEMINI_API_KEY_IMPORT for file import/embedding
+export const geminiRAGServiceImport = new GeminiRAGService(process.env.GEMINI_API_KEY_IMPORT);

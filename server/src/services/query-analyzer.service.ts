@@ -6,6 +6,7 @@
  */
 
 import { GoogleGenAI } from '@google/genai';
+import { modelSettingsService } from './model-settings.service.js';
 
 interface QueryAnalysisResult {
   collections: string[];
@@ -15,7 +16,6 @@ interface QueryAnalysisResult {
 
 class QueryAnalyzerService {
   private ai: GoogleGenAI | null = null;
-  private cheapModel = 'gemini-2.0-flash-lite'; // Cheap and fast model
 
   constructor() {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -41,12 +41,14 @@ class QueryAnalyzerService {
     }
 
     try {
+      // Get cheaper model from settings
+      const cheapModel = await modelSettingsService.getCheaperModel();
       const prompt = this.buildAnalysisPrompt(query, availableCollections);
       
-      console.log('[QueryAnalyzer] Analyzing query:', query);
+      console.log('[QueryAnalyzer] Analyzing query with model:', cheapModel);
       
       const response = await this.ai.models.generateContent({
-        model: this.cheapModel,
+        model: cheapModel,
         contents: [prompt],
         config: {
           temperature: 0.3, // Lower temperature for more focused analysis

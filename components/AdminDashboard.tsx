@@ -11,9 +11,10 @@ import SubscriptionManagement from './admin/SubscriptionManagement';
 import SystemSettings from './admin/SystemSettings';
 import DocumentManagement from './admin/DocumentManagement';
 import CollectionManagement from './admin/CollectionManagement';
+import ModelManagement from './admin/ModelManagement';
 import { Question } from '../types';
 
-type AdminTab = 'overview' | 'users' | 'tests' | 'knowledge' | 'categories' | 'settings' | 'model-usage' | 'ai-history' | 'subscription-plans' | 'subscriptions' | 'documents' | 'collections';
+type AdminTab = 'overview' | 'users' | 'tests' | 'knowledge' | 'categories' | 'settings' | 'model-usage' | 'ai-history' | 'subscription-plans' | 'subscriptions' | 'documents' | 'collections' | 'model-settings';
 
 interface AdminDashboardProps {
   userEmail: string;
@@ -24,6 +25,15 @@ interface AdminDashboardProps {
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, knowledgeBases }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [openDropdowns, setOpenDropdowns] = useState<{ [key: string]: boolean }>({
+    'user-management': false,
+    'knowledge-management': false,
+    'system-settings': false
+  });
+
+  const toggleDropdown = (key: string) => {
+    setOpenDropdowns(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const handleSaveNewBase = async (name: string, questions: Question[]) => {
     try {
@@ -65,6 +75,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         return <SubscriptionManagement />;
       case 'settings':
         return <SystemSettings />;
+      case 'model-settings':
+        return <ModelManagement />;
       default:
         return <Overview />;
     }
@@ -80,6 +92,40 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         }`}
     >
       <span className="text-lg flex-shrink-0">{icon}</span>
+      <span className="truncate">{label}</span>
+    </button>
+  );
+
+  const DropdownButton: React.FC<{ dropdownKey: string; label: string; icon: string }> = ({ dropdownKey, label, icon }) => (
+    <button
+      onClick={() => toggleDropdown(dropdownKey)}
+      className="w-full text-left px-4 py-3 text-sm font-medium rounded-lg flex items-center justify-between text-slate-700 hover:bg-slate-100 transition-colors min-h-[44px]"
+    >
+      <div className="flex items-center space-x-3">
+        <span className="text-lg flex-shrink-0">{icon}</span>
+        <span className="truncate font-semibold">{label}</span>
+      </div>
+      <svg
+        className={`w-4 h-4 transition-transform ${openDropdowns[dropdownKey] ? 'rotate-180' : ''}`}
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+      </svg>
+    </button>
+  );
+
+  const SubTabButton: React.FC<{ tab: AdminTab; label: string; icon: string }> = ({ tab, label, icon }) => (
+    <button
+      onClick={() => {
+        setActiveTab(tab);
+        setSidebarOpen(false);
+      }}
+      className={`w-full text-left pl-10 pr-4 py-2.5 text-sm font-medium rounded-lg flex items-center space-x-3 transition-colors min-h-[40px] ${activeTab === tab ? 'bg-sky-100 text-sky-700' : 'text-slate-600 hover:bg-slate-50'
+        }`}
+    >
+      <span className="text-base flex-shrink-0">{icon}</span>
       <span className="truncate">{label}</span>
     </button>
   );
@@ -113,17 +159,45 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         </div>
         <nav className="p-4 space-y-2">
           <TabButton tab="overview" label="Tổng quan" icon="📊" />
-          <TabButton tab="users" label="Quản lý người dùng" icon="👥" />
-          <TabButton tab="tests" label="Quản lý bài thi" icon="📝" />
-          <TabButton tab="knowledge" label="Quản lý kiến thức" icon="📚" />
-          <TabButton tab="documents" label="Quản lý Văn bản (RAG)" icon="📄" />
-          <TabButton tab="collections" label="Quản lý Collections" icon="📦" />
-          <TabButton tab="subscription-plans" label="Quản lý gói" icon="💎" />
-          <TabButton tab="subscriptions" label="Quản lý Subscriptions" icon="🎫" />
-          <TabButton tab="model-usage" label="AI Model Stats" icon="🤖" />
-          <TabButton tab="ai-history" label="AI Search History" icon="🔍" />
-          <TabButton tab="categories" label="Quản lý chuyên mục" icon="📂" />
-          <TabButton tab="settings" label="Cài đặt hệ thống" icon="⚙️" />
+          
+          {/* Quản lý người dùng */}
+          <div className="space-y-1">
+            <DropdownButton dropdownKey="user-management" label="Quản lý người dùng" icon="👥" />
+            {openDropdowns['user-management'] && (
+              <div className="space-y-1 mt-1">
+                <SubTabButton tab="users" label="Người dùng" icon="👤" />
+                <SubTabButton tab="subscriptions" label="Subscriptions" icon="🎫" />
+              </div>
+            )}
+          </div>
+
+          {/* Quản lý kiến thức */}
+          <div className="space-y-1">
+            <DropdownButton dropdownKey="knowledge-management" label="Quản lý kiến thức" icon="�" />
+            {openDropdowns['knowledge-management'] && (
+              <div className="space-y-1 mt-1">
+                <SubTabButton tab="tests" label="Quản lý bài thi" icon="📝" />
+                <SubTabButton tab="knowledge" label="Kiến thức" icon="�" />
+                <SubTabButton tab="documents" label="Văn bản RAG" icon="📄" />
+                <SubTabButton tab="collections" label="Collections" icon="📦" />
+              </div>
+            )}
+          </div>
+
+          {/* Cài đặt hệ thống */}
+          <div className="space-y-1">
+            <DropdownButton dropdownKey="system-settings" label="Cài đặt hệ thống" icon="⚙️" />
+            {openDropdowns['system-settings'] && (
+              <div className="space-y-1 mt-1">
+                <SubTabButton tab="subscription-plans" label="Quản lý gói" icon="💎" />
+                <SubTabButton tab="model-settings" label="Quản lý Models" icon="🤖" />
+                <SubTabButton tab="model-usage" label="AI Model Stats" icon="📈" />
+                <SubTabButton tab="ai-history" label="AI Search History" icon="🔍" />
+                <SubTabButton tab="settings" label="Cài đặt chung" icon="�" />
+              </div>
+            )}
+          </div>
+
           <div className="border-t border-slate-200 pt-4 mt-4">
             <button
               onClick={onBack}

@@ -1049,7 +1049,8 @@ const AppContent: React.FC = () => {
       </Routes>
 
       {/* Chat Floating Button - Always visible when user is logged in */}
-      {user && <ChatFloatingButton />}
+       {/* Chat Floating Button - Always visible when user is logged in */}
+      {user && (user.role === 'admin') && <ChatFloatingButton />}
     </>
   );
 };
