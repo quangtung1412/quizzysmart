@@ -17,7 +17,7 @@ model User {
   picture     String?
   createdAt   DateTime  @default(now())
   role        String    @default("user") // 'admin' or 'user'
-  aiSearchQuota Int     @default(10) // Number of AI search queries remaining
+  aiSearchQuota Int     @default(10) // Number of AI search queries remaining (includes chat)
   quickSearchQuota Int  @default(50) // Number of quick search queries remaining (free trial)
   currentDeviceId String? // Currently logged in device ID
   currentSessionToken String? // Current session token for device validation
@@ -337,6 +337,11 @@ model ChatMessage {
   outputTokens    Int      @default(0)
   totalTokens     Int      @default(0)
   
+  // Search metadata
+  isDeepSearch    Boolean  @default(false) // Whether this was a deep search request
+  confidence      Float?   // AI confidence score (0-100)
+  cacheHit        Boolean  @default(false) // Whether answer came from cache
+  
   createdAt       DateTime @default(now())
   
   // Relations
@@ -346,5 +351,6 @@ model ChatMessage {
   @@index([userId])
   @@index([documentId])
   @@index([createdAt])
+  @@index([isDeepSearch])
   @@map("chat_messages")
 }

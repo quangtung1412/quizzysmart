@@ -1,11 +1,18 @@
 import React, { useState, lazy, Suspense } from 'react';
+import { useUserPermissions } from '../src/hooks/useUserPermissions';
 
 const ChatModal = lazy(() => import('./ChatModal'));
 
 const ChatFloatingButton: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
+  const { permissions, isLoading } = useUserPermissions();
 
-  console.log('[ChatFloatingButton] Component mounted');
+  console.log('[ChatFloatingButton] Component mounted, permissions:', permissions);
+
+  // // Don't show the button if user doesn't have chat access or while loading
+  // if (isLoading || !permissions.canAccessChat) {
+  //   return null;
+  // }
 
   return (
     <>
@@ -16,21 +23,21 @@ const ChatFloatingButton: React.FC = () => {
         aria-label="Mở trợ lý AI"
       >
         {/* Chat Icon */}
-        <svg 
-          xmlns="http://www.w3.org/2000/svg" 
-          className="h-6 w-6" 
-          fill="none" 
-          viewBox="0 0 24 24" 
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          className="h-6 w-6"
+          fill="none"
+          viewBox="0 0 24 24"
           stroke="currentColor"
         >
-          <path 
-            strokeLinecap="round" 
-            strokeLinejoin="round" 
-            strokeWidth={2} 
-            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" 
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
           />
         </svg>
-        
+
         {/* Pulse Effect */}
         <span className="absolute top-0 right-0 -mt-1 -mr-1 flex h-3 w-3">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>

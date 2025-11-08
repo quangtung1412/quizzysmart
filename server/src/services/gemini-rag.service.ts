@@ -367,8 +367,12 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
     try {
       console.log(`[Gemini] Generating RAG answer for query: "${query.question.substring(0, 50)}..."`);
 
-      // Build context from retrieved chunks
-      const context = retrievedChunks
+      // Apply intelligent filtering (Phase 2 optimization)
+      const maxChunks = query.topK || 12;
+      const filteredChunks = this.filterChunksByRelevance(retrievedChunks, maxChunks, 0.5);
+
+      // Build context from filtered chunks
+      const context = filteredChunks
         .map((chunk, idx) => {
           const source = chunk.documentNumber
             ? `${chunk.documentName} (${chunk.documentNumber})`
@@ -385,6 +389,8 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
           return `[${idx + 1}] ${source}${location ? ` - ${location}` : ''}:\n${chunk.content}`;
         })
         .join('\n\n---\n\n');
+
+      console.log(`[Gemini] Context built from ${filteredChunks.length} filtered chunks (was ${retrievedChunks.length})`);
 
       const prompt = this.buildRAGPrompt(query.question, context);
 
@@ -412,20 +418,20 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
           console.log(`[Gemini] RAG answer generated, tokens: ${totalTokens}`);
 
           // Calculate confidence based on retrieval scores
-          const avgScore = retrievedChunks.reduce((sum, c) => sum + c.score, 0) / retrievedChunks.length;
-          const maxScore = Math.max(...retrievedChunks.map(c => c.score));
-          const minScore = Math.min(...retrievedChunks.map(c => c.score));
+          const avgScore = filteredChunks.reduce((sum, c) => sum + c.score, 0) / filteredChunks.length;
+          const maxScore = Math.max(...filteredChunks.map(c => c.score));
+          const minScore = Math.min(...filteredChunks.map(c => c.score));
           const confidence = Math.round(avgScore * 100);
 
           console.log(`[Gemini] Confidence calculation:`);
           console.log(`  - Avg Score: ${avgScore.toFixed(4)} (${confidence}%)`);
           console.log(`  - Max Score: ${maxScore.toFixed(4)}`);
           console.log(`  - Min Score: ${minScore.toFixed(4)}`);
-          console.log(`  - Chunks used: ${retrievedChunks.length}`);
+          console.log(`  - Chunks used: ${filteredChunks.length}`);
 
           return {
             answer,
-            sources: retrievedChunks,
+            sources: filteredChunks, // Return filtered chunks
             model: modelInfo.name,
             confidence,
             tokenUsage: {
@@ -465,8 +471,12 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
     try {
       console.log(`[Gemini] Generating streaming RAG answer for query: "${query.question.substring(0, 50)}..."`);
 
-      // Build context from retrieved chunks
-      const context = retrievedChunks
+      // Apply intelligent filtering (Phase 2 optimization)
+      const maxChunks = query.topK || 12;
+      const filteredChunks = this.filterChunksByRelevance(retrievedChunks, maxChunks, 0.5);
+
+      // Build context from filtered chunks
+      const context = filteredChunks
         .map((chunk, idx) => {
           const source = chunk.documentNumber
             ? `${chunk.documentName} (${chunk.documentNumber})`
@@ -483,6 +493,8 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
           return `[${idx + 1}] ${source}${location ? ` - ${location}` : ''}:\n${chunk.content}`;
         })
         .join('\n\n---\n\n');
+
+      console.log(`[Gemini] Context built from ${filteredChunks.length} filtered chunks (was ${retrievedChunks.length})`);
 
       const prompt = this.buildRAGPrompt(query.question, context);
 
@@ -507,19 +519,19 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
       }
 
       // Calculate confidence based on retrieval scores
-      const avgScore = retrievedChunks.reduce((sum, c) => sum + c.score, 0) / retrievedChunks.length;
+      const avgScore = filteredChunks.reduce((sum, c) => sum + c.score, 0) / filteredChunks.length;
       const confidence = Math.round(avgScore * 100);
 
       console.log(`[Gemini] Streaming completed, total length: ${fullText.length}`);
 
-      // Final chunk with metadata
+      // Final chunk with metadata (use filtered chunks for sources)
       yield {
         chunk: '',
         done: true,
         metadata: {
           model: modelInfo.name,
           confidence,
-          sources: retrievedChunks,
+          sources: filteredChunks,
         }
       };
     } catch (error) {
@@ -529,32 +541,130 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
   }
 
   /**
-   * Build RAG prompt
+   * Filter chunks by relevance and remove duplicates (Phase 2 optimization)
+   */
+  private filterChunksByRelevance(
+    chunks: RetrievedChunk[],
+    maxChunks: number,
+    minScore: number = 0.6
+  ): RetrievedChunk[] {
+    console.log(`[Gemini] Filtering ${chunks.length} chunks, maxChunks: ${maxChunks}, minScore: ${minScore}`);
+
+    // Step 1: Filter by minimum score
+    let filtered = chunks.filter(chunk => chunk.score >= minScore);
+    console.log(`[Gemini] After score filter: ${filtered.length} chunks`);
+
+    // Step 2: Group by document and prioritize higher scores within same document
+    const byDocument = new Map<string, RetrievedChunk[]>();
+    filtered.forEach(chunk => {
+      const docKey = chunk.documentNumber || chunk.documentName;
+      if (!byDocument.has(docKey)) {
+        byDocument.set(docKey, []);
+      }
+      byDocument.get(docKey)!.push(chunk);
+    });
+
+    // Step 3: Sort chunks within each document by score and take top ones
+    const maxChunksPerDoc = Math.min(3, Math.ceil(maxChunks / byDocument.size));
+    const balanced: RetrievedChunk[] = [];
+
+    for (const [docName, docChunks] of byDocument) {
+      const sortedChunks = docChunks
+        .sort((a, b) => b.score - a.score)
+        .slice(0, maxChunksPerDoc);
+      balanced.push(...sortedChunks);
+      console.log(`[Gemini] Document "${docName}": ${sortedChunks.length}/${docChunks.length} chunks selected`);
+    }
+
+    // Step 4: Remove content duplicates using simple similarity
+    const deduplicated = this.removeDuplicateContent(balanced);
+
+    // Step 5: Final sort by score and limit to maxChunks
+    const final = deduplicated
+      .sort((a, b) => b.score - a.score)
+      .slice(0, maxChunks);
+
+    console.log(`[Gemini] Final selection: ${final.length} chunks from ${byDocument.size} documents`);
+    return final;
+  }
+
+  /**
+   * Remove chunks with similar content
+   */
+  private removeDuplicateContent(chunks: RetrievedChunk[]): RetrievedChunk[] {
+    const result: RetrievedChunk[] = [];
+
+    for (const chunk of chunks) {
+      let isDuplicate = false;
+
+      for (const existing of result) {
+        // Simple content similarity check
+        const similarity = this.calculateContentSimilarity(chunk.content, existing.content);
+        if (similarity > 0.8) { // 80% similar
+          isDuplicate = true;
+          // Keep the one with higher score
+          if (chunk.score > existing.score) {
+            const index = result.indexOf(existing);
+            result[index] = chunk;
+          }
+          break;
+        }
+      }
+
+      if (!isDuplicate) {
+        result.push(chunk);
+      }
+    }
+
+    console.log(`[Gemini] Deduplication: ${chunks.length} → ${result.length} chunks`);
+    return result;
+  }
+
+  /**
+   * Calculate simple content similarity between two texts
+   */
+  private calculateContentSimilarity(text1: string, text2: string): number {
+    // Normalize texts
+    const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim();
+    const norm1 = normalize(text1);
+    const norm2 = normalize(text2);
+
+    if (norm1 === norm2) return 1.0;
+
+    // Simple word-based similarity
+    const words1 = new Set(norm1.split(' '));
+    const words2 = new Set(norm2.split(' '));
+
+    const intersection = new Set([...words1].filter(w => words2.has(w)));
+    const union = new Set([...words1, ...words2]);
+
+    return intersection.size / union.size;
+  }
+
+  /**
+   * Build RAG prompt (optimized version)
    */
   private buildRAGPrompt(question: string, context: string): string {
     return `
-Bạn là một trợ lý AI chuyên về nghiệp vụ ngân hàng. Nhiệm vụ của bạn là trả lời câu hỏi của người dùng dựa trên các văn bản quy định được cung cấp.
+Bạn là trợ lý AI chuyên nghiệp vụ ngân hàng. Trả lời câu hỏi dựa trên các văn bản quy định được cung cấp.
 
-NGUYÊN TẮC TRẢ LỜI:
-1. Trả lời CHÍNH XÁC dựa trên nội dung văn bản được cung cấp, tóm tắt và diễn giải nếu cần thiết
-2. Trích dẫn cụ thể điều, khoản liên quan TRONG CÂU bằng cách thêm ký hiệu [🔗1], [🔗2], [🔗3] ngay sau câu hoặc đoạn có liên quan
-3. Nếu câu hỏi yêu cầu đếm, tính tổng, tóm tắt: hãy phân tích TOÀN BỘ nội dung được cung cấp và đưa ra kết quả chính xác
-4. Khi liệt kê, hãy sắp xếp theo thứ tự logic (theo số điều, chương, hoặc thứ tự xuất hiện)
-5. Trả lời bằng tiếng Việt, ngắn gọn, dễ hiểu, KHÔNG sử dụng markdown (*, #, **, _)
-6. Viết câu trả lời tự nhiên như văn xuôi thông thường
-7. Số [🔗n] tương ứng với nguồn thứ n trong danh sách ngữ cảnh bên dưới
-8. Nếu nhiều nguồn hỗ trợ cùng một ý, có thể dùng [🔗1][🔗2]
+NGUYÊN TẮC:
+1. Trả lời CHÍNH XÁC dựa trên nội dung được cung cấp
+2. Thêm [🔗1], [🔗2]... ngay sau câu có liên quan đến nguồn tương ứng
+3. Với câu hỏi đếm/tổng hợp: phân tích TOÀN BỘ nội dung và đưa kết quả chính xác
+4. Sắp xếp thông tin theo thứ tự logic (điều, chương, thứ tự xuất hiện)
+5. Trả lời bằng tiếng Việt, ngắn gọn, dễ hiểu, KHÔNG dùng markdown
+6. Số [🔗n] tương ứng nguồn thứ n bên dưới
 
-VÍ DỤ FORMAT:
-- Câu hỏi thông thường: "Theo quy định, người lao động có quyền nghỉ phép năm 12 ngày làm việc [🔗1]. Đối với những người làm việc trong điều kiện đặc biệt, thời gian nghỉ phép có thể tăng lên [🔗2][🔗3]."
-- Câu hỏi đếm/tổng hợp: "Văn bản có tổng cộng 15 điều khoản về vấn đề này, bao gồm: Điều 5 về quyền lợi người lao động [🔗1], Điều 7 về nghĩa vụ của người sử dụng lao động [🔗3], Điều 12 về chế độ bảo hiểm [🔗5]..."
+VÍ DỤ:
+"Người lao động có quyền nghỉ phép năm 12 ngày [🔗1]. Với điều kiện đặc biệt, thời gian có thể tăng [🔗2]."
 
-NGỮ CẢNH TỪ CÁC VĂN BẢN:
+NGỮ CẢNH:
 ${context}
 
 CÂU HỎI: ${question}
 
-Hãy trả lời câu hỏi dựa trên ngữ cảnh trên, nhớ thêm trích dẫn [🔗n] sau mỗi câu/đoạn có liên quan.
+Trả lời với trích dẫn [🔗n]:
 `;
   }
 

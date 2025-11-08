@@ -9,6 +9,7 @@ import { PrismaClient } from '@prisma/client';
 import { geminiRAGService } from '../services/gemini-rag.service.js';
 import { qdrantService } from '../services/qdrant.service.js';
 import { queryAnalyzerService } from '../services/query-analyzer.service.js';
+import { chatCacheService } from '../services/chat-cache.service.js';
 import type { RAGQuery, RAGResponse } from '../types/rag.types.js';
 
 const router = Router();
@@ -31,10 +32,35 @@ const requireAuth = async (req: Request, res: Response, next: any) => {
 };
 
 /**
+ * Middleware: Check if chat feature is available (currently admin only)
+ */
+const requireChatAccess = async (req: Request, res: Response, next: any) => {
+  try {
+    const userId = (req as any).user?.id;
+    const user = await (prisma as any).user.findUnique({
+      where: { id: userId },
+      select: { role: true }
+    });
+
+    // Currently only admin users have access to chat feature
+    if (user?.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Tính năng chat chỉ dành cho quản trị viên'
+      });
+    }
+
+    next();
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+/**
  * POST /api/chat/ask-stream
  * Ask a question using RAG with streaming response
  */
-router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
+router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, res: Response) => {
   try {
     const { question } = req.body;
     const userId = (req as any).user?.id;
@@ -47,6 +73,35 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
     }
 
     console.log(`[Chat Stream] User ${userId} asked: "${question.substring(0, 50)}..."`);
+
+    // Check user quota first (admin has unlimited, others use aiSearchQuota)
+    const user = await (prisma as any).user.findUnique({
+      where: { id: userId },
+      select: {
+        role: true,
+        aiSearchQuota: true,
+        subscriptions: {
+          where: { status: 'active' },
+          select: {
+            status: true,
+            plan: true
+          }
+        }
+      }
+    });
+
+    // Admin users have unlimited quota
+    const isAdmin = user?.role === 'admin';
+    const hasActiveSubscription = user?.subscriptions && user.subscriptions.length > 0;
+    const hasUnlimitedAccess = isAdmin || hasActiveSubscription;
+
+    if (!user || (!hasUnlimitedAccess && user.aiSearchQuota <= 0)) {
+      return res.status(402).json({
+        success: false,
+        error: 'Không đủ lượt tìm kiếm. Vui lòng nâng cấp tài khoản.',
+        requiresPremium: true
+      });
+    }
 
     // Set headers for SSE (Server-Sent Events)
     res.setHeader('Content-Type', 'text/event-stream');
@@ -61,7 +116,7 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
     };
 
     try {
-      // Check if question requires full document analysis
+      // Check cache first for non-complex queries
       const analysisKeywords = [
         'bao nhiêu', 'có bao nhiêu', 'số lượng', 'đếm',
         'tính tổng', 'tổng cộng', 'tổng số', 'cộng lại',
@@ -70,7 +125,58 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
       ];
 
       const questionLower = question.toLowerCase();
-      const needsFullDocument = analysisKeywords.some(keyword => questionLower.includes(keyword));
+      const isComplexQuery = analysisKeywords.some(keyword => questionLower.includes(keyword));
+
+      // Check cache for simple queries (complex queries need fresh analysis)
+      if (!isComplexQuery) {
+        const cachedResponse = await chatCacheService.getCachedResponse(question);
+        if (cachedResponse) {
+          sendEvent('status', { message: 'Tìm thấy câu trả lời đã lưu...' });
+
+          // Send cached answer as chunks
+          const chunks = cachedResponse.answer.split(' ');
+          const wordsPerChunk = 3;
+          for (let i = 0; i < chunks.length; i += wordsPerChunk) {
+            const chunkText = chunks.slice(i, i + wordsPerChunk).join(' ') + ' ';
+            sendEvent('chunk', { text: chunkText });
+            await new Promise(resolve => setTimeout(resolve, 50)); // Simulate streaming
+          }
+
+          // Save cache hit to database
+          const chatMessage = await prismaAny.chatMessage.create({
+            data: {
+              userId,
+              userMessage: question,
+              botResponse: cachedResponse.answer,
+              retrievedChunks: JSON.stringify(cachedResponse.sources),
+              modelUsed: cachedResponse.model + ' (cached)',
+              inputTokens: 0, // No tokens used for cached response
+              outputTokens: 0,
+              totalTokens: 0,
+              confidence: cachedResponse.confidence,
+              cacheHit: true,
+              isDeepSearch: false,
+            },
+          });
+
+          sendEvent('complete', {
+            messageId: chatMessage.id,
+            confidence: cachedResponse.confidence,
+            sources: cachedResponse.sources,
+            model: cachedResponse.model + ' (cached)',
+            fromCache: true
+          });
+
+          console.log(`[Chat Stream] Served from cache for user ${userId}`);
+          res.end();
+          return;
+        }
+      }
+
+      // Check if question requires full document analysis
+
+      // Check if question requires full document analysis (after cache check)
+      const needsFullDocument = isComplexQuery;
 
       // Extract document filter if exists (from # selection)
       const documentFilterMatch = question.match(/\[Tìm trong: ([^\]]+)\]/);
@@ -144,8 +250,8 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
         const queryAnalysis = await queryAnalyzerService.analyzeQuery(question, collectionNames);
         console.log(`[Chat Stream] Query analysis:`, queryAnalysis);
 
-        sendEvent('status', { 
-          message: `Tìm kiếm trong: ${queryAnalysis.collections.join(', ')}...` 
+        sendEvent('status', {
+          message: `Tìm kiếm trong: ${queryAnalysis.collections.join(', ')}...`
         });
 
         // Generate embedding for question
@@ -157,21 +263,27 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
           .filter((w: string) => w.length > 2);
         console.log(`[Chat Stream] Query keywords:`, queryKeywords);
 
+        // Determine optimal chunk count based on query complexity
+        const isComplexQuery = analysisKeywords.some(kw => questionLower.includes(kw));
+        const topK = isComplexQuery ? 20 : 12; // Reduced from 30
+
+        console.log(`[Chat Stream] Query complexity: ${isComplexQuery ? 'COMPLEX' : 'SIMPLE'}, topK: ${topK}`);
+
         // NEW: Search across multiple collections (if analysis determined multiple)
         let searchResults;
         if (queryAnalysis.collections.length > 1) {
           console.log(`[Chat Stream] Searching in multiple collections:`, queryAnalysis.collections);
           searchResults = await qdrantService.searchMultipleCollections(
-            questionEmbedding, 
+            questionEmbedding,
             queryAnalysis.collections,
-            { topK: 30, minScore: 0.5 }
+            { topK, minScore: 0.5 }
           );
         } else {
           console.log(`[Chat Stream] Searching in single collection:`, queryAnalysis.collections[0]);
           searchResults = await qdrantService.search(
             questionEmbedding,
-            { 
-              topK: 30, 
+            {
+              topK,
               minScore: 0.5,
               collectionName: queryAnalysis.collections[0]
             }
@@ -181,7 +293,7 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
         // Detect deposit vs loan queries for smart post-filtering (keep existing logic)
         const depositKeywords = ['tiền gửi', 'gửi tiền', 'tiết kiệm', 'tài khoản tiền gửi'];
         const loanKeywords = ['cho vay', 'vay vốn', 'tín dụng', 'khoản vay', 'nợ'];
-        
+
         const isDepositQuery = depositKeywords.some(kw => question.toLowerCase().includes(kw));
         const isLoanQuery = loanKeywords.some(kw => question.toLowerCase().includes(kw));
 
@@ -222,7 +334,7 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
         // Log reranked results
         console.log(`\n[Chat Stream DEBUG] After Reranking (Top 5):`);
         searchResults.slice(0, 5).forEach((result: any, idx: number) => {
-          const docNameMatch = queryKeywords.some((kw: string) => 
+          const docNameMatch = queryKeywords.some((kw: string) =>
             result.payload.documentName.toLowerCase().includes(kw)
           );
           console.log(`  ${idx + 1}. Score: ${result.score.toFixed(4)} ${docNameMatch ? '✓ [Doc Name Match]' : ''}`);
@@ -294,8 +406,36 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
           inputTokens: 0,
           outputTokens: 0,
           totalTokens: 0,
+          confidence: streamMetadata?.confidence || 0,
+          cacheHit: false,
+          isDeepSearch: false,
         },
       });
+
+      // Cache the response for future use (if high quality and not complex query)
+      if (!isComplexQuery && streamMetadata?.confidence >= 70) {
+        const ragResponse: RAGResponse = {
+          answer: fullAnswer,
+          sources: streamMetadata.sources,
+          model: streamMetadata.model,
+          confidence: streamMetadata.confidence,
+          tokenUsage: {
+            input: 0,
+            output: 0,
+            total: 0
+          }
+        };
+        await chatCacheService.setCachedResponse(question, ragResponse);
+      }
+
+      // Deduct quota if not admin and not subscription user
+      if (!hasUnlimitedAccess) {
+        await (prisma as any).user.update({
+          where: { id: userId },
+          data: { aiSearchQuota: { decrement: 1 } }
+        });
+        console.log(`[Chat Stream] Deducted 1 quota from user ${userId}, remaining: ${user.aiSearchQuota - 1}`);
+      }
 
       // Send completion event
       sendEvent('complete', {
@@ -303,6 +443,8 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
         confidence: streamMetadata?.confidence || 0,
         sources: streamMetadata?.sources || [],
         model: streamMetadata?.model || 'N/A',
+        quotaUsed: !hasUnlimitedAccess,
+        remainingQuota: hasUnlimitedAccess ? null : user.aiSearchQuota - 1
       });
 
       console.log(`[Chat Stream] Completed for user ${userId}`);
@@ -325,7 +467,7 @@ router.post('/ask-stream', requireAuth, async (req: Request, res: Response) => {
  * POST /api/chat/ask
  * Ask a question using RAG (Non-streaming version)
  */
-router.post('/ask', requireAuth, async (req: Request, res: Response) => {
+router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Response) => {
   try {
     const { question } = req.body;
     const userId = (req as any).user?.id;
@@ -339,6 +481,35 @@ router.post('/ask', requireAuth, async (req: Request, res: Response) => {
 
     console.log(`[Chat] User ${userId} asked: "${question.substring(0, 50)}..."`);
 
+    // Check user quota first (admin has unlimited, others use aiSearchQuota)
+    const user = await (prisma as any).user.findUnique({
+      where: { id: userId },
+      select: {
+        role: true,
+        aiSearchQuota: true,
+        subscriptions: {
+          where: { status: 'active' },
+          select: {
+            status: true,
+            plan: true
+          }
+        }
+      }
+    });
+
+    // Admin users have unlimited quota
+    const isAdmin = user?.role === 'admin';
+    const hasActiveSubscription = user?.subscriptions && user.subscriptions.length > 0;
+    const hasUnlimitedAccess = isAdmin || hasActiveSubscription;
+
+    if (!user || (!hasUnlimitedAccess && user.aiSearchQuota <= 0)) {
+      return res.status(402).json({
+        success: false,
+        error: 'Không đủ lượt tìm kiếm. Vui lòng nâng cấp tài khoản.',
+        requiresPremium: true
+      });
+    }
+
     // Check if question requires full document analysis
     const analysisKeywords = [
       'bao nhiêu', 'có bao nhiêu', 'số lượng', 'đếm',
@@ -349,6 +520,51 @@ router.post('/ask', requireAuth, async (req: Request, res: Response) => {
 
     const questionLower = question.toLowerCase();
     const needsFullDocument = analysisKeywords.some(keyword => questionLower.includes(keyword));
+
+    // Check cache first for non-complex queries
+    if (!needsFullDocument) {
+      const cachedResponse = await chatCacheService.getCachedResponse(question);
+      if (cachedResponse) {
+        // Save cache hit to database
+        const chatMessage = await prismaAny.chatMessage.create({
+          data: {
+            userId,
+            userMessage: question,
+            botResponse: cachedResponse.answer,
+            retrievedChunks: JSON.stringify(cachedResponse.sources),
+            modelUsed: cachedResponse.model + ' (cached)',
+            inputTokens: 0,
+            outputTokens: 0,
+            totalTokens: 0,
+            confidence: cachedResponse.confidence,
+            cacheHit: true,
+            isDeepSearch: false,
+          },
+        });
+
+        // Even for cache hits, deduct quota if not admin/subscription (consistent with camera search behavior)
+        if (!hasUnlimitedAccess) {
+          await (prisma as any).user.update({
+            where: { id: userId },
+            data: { aiSearchQuota: { decrement: 1 } }
+          });
+          console.log(`[Chat] Cache hit - Deducted 1 quota from user ${userId}, remaining: ${user.aiSearchQuota - 1}`);
+        }
+
+        return res.json({
+          success: true,
+          answer: cachedResponse.answer,
+          sources: cachedResponse.sources,
+          model: cachedResponse.model + ' (cached)',
+          confidence: cachedResponse.confidence,
+          tokenUsage: { input: 0, output: 0, total: 0 },
+          messageId: chatMessage.id,
+          fromCache: true,
+          quotaUsed: !hasUnlimitedAccess,
+          remainingQuota: hasUnlimitedAccess ? null : user.aiSearchQuota - 1
+        });
+      }
+    }
 
     // Extract document filter if exists (from # selection)
     const documentFilterMatch = question.match(/\[Tìm trong: ([^\]]+)\]/);
@@ -428,12 +644,16 @@ router.post('/ask', requireAuth, async (req: Request, res: Response) => {
       // Detect deposit vs loan queries for smart post-filtering
       const depositKeywords = ['tiền gửi', 'gửi tiền', 'tiết kiệm', 'tài khoản tiền gửi'];
       const loanKeywords = ['cho vay', 'vay vốn', 'tín dụng', 'khoản vay', 'nợ'];
-      
+
       const isDepositQuery = depositKeywords.some(kw => question.toLowerCase().includes(kw));
       const isLoanQuery = loanKeywords.some(kw => question.toLowerCase().includes(kw));
 
-      // Step 2: Search similar chunks in Qdrant (increased to 30 for post-filtering)
-      searchResults = await qdrantService.searchSimilar(questionEmbedding, 30, 0.5);
+      // Determine optimal chunk count based on query complexity
+      const isComplexQuery = analysisKeywords.some(kw => questionLower.includes(kw));
+      const topK = isComplexQuery ? 20 : 12; // Reduced from 30
+
+      // Step 2: Search similar chunks in Qdrant
+      searchResults = await qdrantService.searchSimilar(questionEmbedding, topK, 0.5);
 
       // Apply smart post-filtering based on query intent
       if (isDepositQuery && !isLoanQuery) {
@@ -472,7 +692,7 @@ router.post('/ask', requireAuth, async (req: Request, res: Response) => {
       // Log reranked results
       console.log(`\n[Chat DEBUG] After Reranking (Top 5):`);
       searchResults.slice(0, 5).forEach((result: any, idx: number) => {
-        const docNameMatch = queryKeywords.some((kw: string) => 
+        const docNameMatch = queryKeywords.some((kw: string) =>
           result.payload.documentName.toLowerCase().includes(kw)
         );
         console.log(`  ${idx + 1}. Score: ${result.score.toFixed(4)} ${docNameMatch ? '✓ [Doc Name Match]' : ''}`);
@@ -543,8 +763,25 @@ router.post('/ask', requireAuth, async (req: Request, res: Response) => {
         inputTokens: ragResponse.tokenUsage?.input || 0,
         outputTokens: ragResponse.tokenUsage?.output || 0,
         totalTokens: ragResponse.tokenUsage?.total || 0,
+        confidence: ragResponse.confidence || 0,
+        cacheHit: false,
+        isDeepSearch: false,
       },
     });
+
+    // Cache the response for future use (if high quality and not complex query)
+    if (!needsFullDocument && ragResponse.confidence >= 70) {
+      await chatCacheService.setCachedResponse(question, ragResponse);
+    }
+
+    // Deduct quota if not admin and not subscription user
+    if (!hasUnlimitedAccess) {
+      await (prisma as any).user.update({
+        where: { id: userId },
+        data: { aiSearchQuota: { decrement: 1 } }
+      });
+      console.log(`[Chat] Deducted 1 quota from user ${userId}, remaining: ${user.aiSearchQuota - 1}`);
+    }
 
     console.log(`[Chat] Answer generated, confidence: ${ragResponse.confidence}%`);
 
@@ -558,6 +795,8 @@ router.post('/ask', requireAuth, async (req: Request, res: Response) => {
         sources: JSON.parse(chatMessage.retrievedChunks || '[]'),
         confidence: ragResponse.confidence,
         createdAt: chatMessage.createdAt.toISOString(),
+        quotaUsed: !hasUnlimitedAccess,
+        remainingQuota: hasUnlimitedAccess ? null : user.aiSearchQuota - 1
       },
     });
   } catch (error) {
@@ -711,6 +950,231 @@ router.get('/documents', requireAuth, async (req: Request, res: Response) => {
     console.error('[Chat] Get documents error:', error);
     res.status(500).json({
       error: 'Lỗi khi lấy danh sách tài liệu',
+    });
+  }
+});
+
+/**
+ * POST /api/chat/deep-search
+ * Deep search for more comprehensive answers when user is not satisfied
+ */
+router.post('/deep-search', requireAuth, requireChatAccess, async (req: Request, res: Response) => {
+  try {
+    const { originalQuestion, messageId } = req.body;
+    const userId = (req as any).user?.id;
+
+    if (!originalQuestion || typeof originalQuestion !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Original question is required',
+      });
+    }
+
+    if (!messageId || typeof messageId !== 'number') {
+      return res.status(400).json({
+        success: false,
+        error: 'Message ID is required',
+      });
+    }
+
+    console.log(`[Deep Search] User ${userId} requesting deep search for: "${originalQuestion.substring(0, 50)}..."`);
+
+    // Check if user has quota (admin has unlimited)
+    const user = await (prisma as any).user.findUnique({
+      where: { id: userId },
+      select: {
+        role: true,
+        aiSearchQuota: true,
+        subscriptions: {
+          where: { status: 'active' },
+          select: {
+            status: true,
+            plan: true
+          }
+        }
+      }
+    });
+
+    // Admin users have unlimited quota
+    const isAdmin = user?.role === 'admin';
+    const hasActiveSubscription = user?.subscriptions && user.subscriptions.length > 0;
+    const hasUnlimitedAccess = isAdmin || hasActiveSubscription;
+
+    if (!user || (!hasUnlimitedAccess && user.aiSearchQuota <= 0)) {
+      return res.status(402).json({
+        success: false,
+        error: 'Không đủ lượt tìm kiếm để sử dụng tìm hiểu sâu hơn. Vui lòng nâng cấp tài khoản.',
+        requiresPremium: true
+      });
+    }
+
+    // Deduct quota if not admin and not subscription user
+    if (!hasUnlimitedAccess) {
+      await (prisma as any).user.update({
+        where: { id: userId },
+        data: { aiSearchQuota: { decrement: 1 } }
+      });
+      console.log(`[Deep Search] Deducted 1 quota from user ${userId}, remaining: ${user.aiSearchQuota - 1}`);
+    }    // Enhanced search parameters for deep search
+    const questionEmbedding = await geminiRAGService.generateEmbedding(originalQuestion);
+
+    // Use higher topK and lower minScore for more comprehensive search
+    const searchResults = await qdrantService.searchSimilar(questionEmbedding, 25, 0.3);
+
+    console.log(`[Deep Search] Found ${searchResults.length} chunks with expanded criteria`);
+
+    if (searchResults.length === 0) {
+      return res.json({
+        success: true,
+        answer: 'Xin lỗi, ngay cả với tìm kiếm mở rộng tôi vẫn không tìm thấy thông tin liên quan đến câu hỏi của bạn.',
+        sources: [],
+        model: 'N/A',
+        confidence: 0,
+        tokenUsage: { input: 0, output: 0, total: 0 },
+        isDeepSearch: true
+      });
+    }
+
+    // Prepare retrieved chunks
+    const retrievedChunks = searchResults.map((result) => ({
+      chunkId: result.id,
+      content: result.payload.content,
+      documentId: result.payload.documentId,
+      documentName: result.payload.documentName,
+      documentNumber: result.payload.documentNumber,
+      score: result.score,
+      metadata: {
+        documentId: result.payload.documentId,
+        documentNumber: result.payload.documentNumber,
+        documentName: result.payload.documentName,
+        documentType: result.payload.documentType,
+        chapterNumber: result.payload.chapterNumber,
+        chapterTitle: result.payload.chapterTitle,
+        articleNumber: result.payload.articleNumber,
+        articleTitle: result.payload.articleTitle,
+        sectionNumber: result.payload.sectionNumber,
+        chunkType: result.payload.chunkType,
+        chunkIndex: result.payload.chunkIndex,
+      },
+    }));
+
+    // Generate comprehensive answer
+    const query: RAGQuery = {
+      question: originalQuestion,
+      topK: 25, // Use more chunks for deep search
+    };
+
+    const ragResponse: RAGResponse = await geminiRAGService.generateRAGAnswer(
+      query,
+      retrievedChunks
+    );
+
+    // Save as new chat message with deep search flag
+    const chatMessage = await prismaAny.chatMessage.create({
+      data: {
+        userId,
+        userMessage: `[Deep Search] ${originalQuestion}`,
+        botResponse: ragResponse.answer,
+        retrievedChunks: JSON.stringify(ragResponse.sources || []),
+        modelUsed: `${ragResponse.model} (deep search)`,
+        inputTokens: ragResponse.tokenUsage?.input || 0,
+        outputTokens: ragResponse.tokenUsage?.output || 0,
+        totalTokens: ragResponse.tokenUsage?.total || 0,
+        confidence: ragResponse.confidence || 0,
+        cacheHit: false,
+        isDeepSearch: true,
+      },
+    });
+
+    console.log(`[Deep Search] Generated comprehensive answer, confidence: ${ragResponse.confidence}%`);
+
+    res.json({
+      success: true,
+      message: {
+        id: chatMessage.id,
+        userId: chatMessage.userId,
+        question: originalQuestion,
+        answer: ragResponse.answer,
+        sources: ragResponse.sources,
+        confidence: ragResponse.confidence,
+        createdAt: chatMessage.createdAt.toISOString(),
+        isDeepSearch: true,
+        quotaUsed: !hasUnlimitedAccess,
+        remainingQuota: hasUnlimitedAccess ? null : user.aiSearchQuota - 1
+      },
+    });
+  } catch (error) {
+    console.error('[Deep Search] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Lỗi khi thực hiện tìm kiếm sâu',
+    });
+  }
+});
+
+/**
+ * GET /api/chat/cache/stats
+ * Get cache statistics (Admin only)
+ */
+router.get('/cache/stats', requireAuth, async (req: Request, res: Response) => {
+  try {
+    // Check admin permission (basic check)
+    const user = await (prisma as any).user.findUnique({
+      where: { id: (req as any).user?.id },
+      select: { email: true }
+    });
+
+    // Simple admin check - you can improve this
+    if (!user?.email.includes('admin')) {
+      return res.status(403).json({
+        success: false,
+        error: 'Admin access required'
+      });
+    }
+
+    const stats = chatCacheService.getStats();
+    res.json({
+      success: true,
+      stats
+    });
+  } catch (error) {
+    console.error('[Cache Stats] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get cache stats'
+    });
+  }
+});
+
+/**
+ * POST /api/chat/cache/clear
+ * Clear cache (Admin only)
+ */
+router.post('/cache/clear', requireAuth, async (req: Request, res: Response) => {
+  try {
+    // Check admin permission
+    const user = await (prisma as any).user.findUnique({
+      where: { id: (req as any).user?.id },
+      select: { email: true }
+    });
+
+    if (!user?.email.includes('admin')) {
+      return res.status(403).json({
+        success: false,
+        error: 'Admin access required'
+      });
+    }
+
+    chatCacheService.clearCache();
+    res.json({
+      success: true,
+      message: 'Cache cleared successfully'
+    });
+  } catch (error) {
+    console.error('[Cache Clear] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to clear cache'
     });
   }
 });
