@@ -54,7 +54,8 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
     try {
       setIsLoadingHistory(true);
       const response = await api.chatHistory(50);
-      setMessages(response.messages || []);
+      // Reverse the messages array to show oldest first (top to bottom)
+      setMessages((response.messages || []).reverse());
     } catch (error) {
       console.error('Lỗi tải lịch sử chat:', error);
     } finally {

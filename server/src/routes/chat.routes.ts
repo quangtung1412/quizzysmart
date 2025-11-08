@@ -248,11 +248,19 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
 
         // NEW: Analyze query to determine which collections to search
         const queryAnalysis = await queryAnalyzerService.analyzeQuery(question, collectionNames);
-        console.log(`[Chat Stream] Query analysis:`, queryAnalysis);
-
-        sendEvent('status', {
-          message: `Tìm kiếm trong: ${queryAnalysis.collections.join(', ')}...`
+        console.log(`[Chat Stream] Query analysis:`, {
+          collections: queryAnalysis.collections,
+          confidence: queryAnalysis.confidence.toFixed(2),
+          reasoning: queryAnalysis.reasoning,
+          searchingAll: queryAnalysis.collections.length === collectionNames.length
         });
+
+        // Display user-friendly message
+        const searchMessage = queryAnalysis.collections.length === collectionNames.length
+          ? `Tìm kiếm trong tất cả nguồn (độ tin cậy: ${(queryAnalysis.confidence * 100).toFixed(0)}%)`
+          : `Tìm kiếm trong: ${queryAnalysis.collections.join(', ')} (độ tin cậy: ${(queryAnalysis.confidence * 100).toFixed(0)}%)`;
+
+        sendEvent('status', { message: searchMessage });
 
         // Generate embedding for question
         const questionEmbedding = await geminiRAGService.generateEmbedding(question);

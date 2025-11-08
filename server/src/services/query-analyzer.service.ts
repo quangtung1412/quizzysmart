@@ -95,6 +95,7 @@ GỢI Ý PHÂN LOẠI:
 - Thẻ, thẻ tín dụng, thẻ ghi nợ → "the" hoặc collection có liên quan
 - Nếu câu hỏi chung chung hoặc không rõ ràng → tìm trong TẤT CẢ collections
 - Nếu câu hỏi đề cập nhiều chủ đề → chọn NHIỀU collections phù hợp
+- Nếu KHÔNG CHẮC CHẮN câu hỏi thuộc nghiệp vụ nào → trả về TẤT CẢ collections với confidence thấp (<0.5)
 
 TRẢ LỜI THEO FORMAT JSON (chỉ trả về JSON, không thêm text khác):
 {
@@ -106,8 +107,9 @@ TRẢ LỜI THEO FORMAT JSON (chỉ trả về JSON, không thêm text khác):
 CHÚ Ý:
 - "collections" phải là mảng các tên collection có trong danh sách trên
 - "confidence" là số từ 0.0 đến 1.0
-- Nếu không chắc chắn, hãy chọn nhiều collections (confidence thấp hơn)
-- Nếu chắc chắn, chỉ chọn 1-2 collections chính xác nhất (confidence cao)`;
+- Nếu KHÔNG CHẮC CHẮN (confidence < 0.5), hãy chọn TẤT CẢ collections để đảm bảo không bỏ sót thông tin
+- Chỉ khi CHẮC CHẮN (confidence >= 0.7), mới giới hạn vào 1-2 collections cụ thể
+- Ưu tiên tìm rộng hơn tìm hẹp để tránh miss thông tin quan trọng`;
   }
 
   /**
@@ -130,6 +132,18 @@ CHÚ Ý:
       const validCollections = (parsed.collections || [])
         .filter((c: string) => availableCollections.includes(c));
 
+      const confidence = Math.min(Math.max(parsed.confidence || 0.5, 0), 1);
+      
+      // If confidence is low (< 0.5), search all collections to avoid missing info
+      if (confidence < 0.5) {
+        console.log(`[QueryAnalyzer] Low confidence (${confidence.toFixed(2)}), expanding to all collections`);
+        return {
+          collections: availableCollections,
+          reasoning: `${parsed.reasoning || 'Phân tích tự động'} - Mở rộng tìm kiếm do độ tin cậy thấp`,
+          confidence: confidence,
+        };
+      }
+
       // If no valid collections, use all collections as fallback
       if (validCollections.length === 0) {
         console.warn('[QueryAnalyzer] No valid collections found, using all');
@@ -143,7 +157,7 @@ CHÚ Ý:
       return {
         collections: validCollections,
         reasoning: parsed.reasoning || 'Phân tích tự động',
-        confidence: Math.min(Math.max(parsed.confidence || 0.5, 0), 1),
+        confidence: confidence,
       };
     } catch (error) {
       console.error('[QueryAnalyzer] Failed to parse response:', error);
@@ -192,19 +206,27 @@ CHÚ Ý:
       }
     }
 
-    // If no matches, return all collections
-    if (matchedCollections.length === 0) {
+    // Calculate confidence based on matches
+    const confidence = matchedCollections.length > 0 
+      ? Math.min(0.5 + (maxMatches * 0.1), 0.9)
+      : 0.3;
+
+    // If no matches OR low confidence, return all collections
+    if (matchedCollections.length === 0 || confidence < 0.5) {
+      console.log(`[QueryAnalyzer] Quick analysis: low confidence (${confidence.toFixed(2)}), searching all collections`);
       return {
         collections: availableCollections,
-        reasoning: 'Không tìm thấy từ khóa cụ thể, tìm trong tất cả collections',
-        confidence: 0.3,
+        reasoning: matchedCollections.length === 0 
+          ? 'Không tìm thấy từ khóa cụ thể, tìm trong tất cả collections'
+          : `Tìm thấy từ khóa liên quan nhưng độ tin cậy thấp (${confidence.toFixed(2)}), mở rộng tìm kiếm`,
+        confidence: confidence,
       };
     }
 
     return {
       collections: matchedCollections,
       reasoning: `Tìm thấy từ khóa liên quan đến: ${matchedCollections.join(', ')}`,
-      confidence: Math.min(0.5 + (maxMatches * 0.1), 0.9),
+      confidence: confidence,
     };
   }
 }

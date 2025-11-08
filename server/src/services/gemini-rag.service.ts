@@ -5,6 +5,7 @@
  */
 
 import { GoogleGenAI, createPartFromUri } from '@google/genai';
+import { jsonrepair } from 'jsonrepair';
 import type {
   DocumentContent,
   DocumentMetadata,
@@ -150,6 +151,12 @@ YÊU CẦU QUAN TRỌNG:
 3. Trả về JSON với cấu trúc chuẩn như bên dưới
 4. Nội dung phải được format theo Markdown để dễ đọc
 5. Các số điều, khoản phải chính xác
+6. JSON PHẢI HOÀN TOÀN HỢP LỆ:
+   - KHÔNG có trailing commas (dấu phẩy thừa trước }, ])
+   - Tất cả strings phải được escape đúng (\n cho newline, \" cho quotes)
+   - KHÔNG có control characters
+   - Mỗi phần tử trong array phải có dấu phẩy ngăn cách (trừ phần tử cuối)
+   - Tất cả {} và [] phải đóng mở đúng cặp
 
 Cấu trúc JSON yêu cầu:
 {
@@ -218,8 +225,9 @@ QUAN TRỌNG:
 - Mỗi điều phải có đầy đủ các khoản (nếu có)
 - Format nội dung theo Markdown: dùng **bold**, *italic*, bullet points khi cần
 - Giữ nguyên số thứ tự điều, khoản, điểm
+- QUAN TRỌNG NHẤT: Đảm bảo JSON output hoàn toàn hợp lệ, không có trailing commas, escape đúng các special characters trong strings
 
-Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trên.
+Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc trên, không thêm text giải thích.
 `;
 
       // Create content with file URI part
@@ -249,7 +257,81 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
             throw new Error('Failed to extract JSON from Gemini response');
           }
 
-          const documentContent: DocumentContent = JSON.parse(jsonMatch[0]);
+          let documentContent: DocumentContent;
+          try {
+            // Try to parse JSON directly
+            documentContent = JSON.parse(jsonMatch[0]);
+          } catch (parseError: any) {
+            console.warn(`[Gemini] Initial JSON parse failed: ${parseError.message}`);
+            console.log(`[Gemini] Attempting to clean and fix JSON...`);
+            
+            // Advanced JSON cleaning and fixing
+            let cleanedJson = jsonMatch[0];
+            
+            // Step 1: Remove trailing commas (most common issue)
+            cleanedJson = cleanedJson.replace(/,(\s*[}\]])/g, '$1');
+            
+            // Step 2: Fix line breaks in strings (replace actual newlines with \n)
+            cleanedJson = cleanedJson.replace(/"([^"]*)"(\s*:\s*"[^"]*\n[^"]*")/g, (match, key, value) => {
+              return `"${key}"${value.replace(/\n/g, '\\n')}`;
+            });
+            
+            // Step 3: Remove control characters except newline, tab, carriage return
+            cleanedJson = cleanedJson.replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F-\u009F]/g, '');
+            
+            // Step 4: Fix unescaped quotes within strings (complex regex)
+            // This tries to find quotes that are not properly escaped
+            try {
+              const lines = cleanedJson.split('\n');
+              const fixedLines = lines.map(line => {
+                // If line contains a string value, ensure quotes inside are escaped
+                if (line.includes('": "') || line.includes('":"')) {
+                  // Match pattern: "key": "value with potential unescaped quotes"
+                  return line.replace(/:\s*"([^"]*)"([^",\]}]*)"([^"]*)"(\s*[,\]}])/g, (match, p1, p2, p3, p4) => {
+                    // If middle part doesn't start with comma/bracket, it's likely an unescaped quote
+                    if (p2.trim() && !p2.trim().startsWith(',') && !p2.trim().startsWith('}') && !p2.trim().startsWith(']')) {
+                      return `: "${p1}\\"${p2}\\"${p3}"${p4}`;
+                    }
+                    return match;
+                  });
+                }
+                return line;
+              });
+              cleanedJson = fixedLines.join('\n');
+            } catch (e) {
+              console.warn('[Gemini] Could not apply advanced quote fixing');
+            }
+            
+            try {
+              documentContent = JSON.parse(cleanedJson);
+              console.log(`[Gemini] JSON successfully cleaned and parsed`);
+            } catch (secondError: any) {
+              console.error(`[Gemini] Failed to parse JSON after manual cleaning: ${secondError.message}`);
+              
+              // Last resort: Use jsonrepair library
+              try {
+                console.log('[Gemini] Attempting to repair JSON using jsonrepair library...');
+                const repairedJson = jsonrepair(cleanedJson);
+                documentContent = JSON.parse(repairedJson);
+                console.log('[Gemini] ✅ JSON successfully repaired and parsed using jsonrepair!');
+              } catch (repairError: any) {
+                console.error(`[Gemini] ❌ jsonrepair also failed: ${repairError.message}`);
+                
+                // Extract position from error message for debugging
+                const posMatch = secondError.message.match(/position (\d+)/);
+                if (posMatch) {
+                  const errorPos = parseInt(posMatch[1]);
+                  const start = Math.max(0, errorPos - 200);
+                  const end = Math.min(cleanedJson.length, errorPos + 200);
+                  console.error(`[Gemini] JSON excerpt near error position ${errorPos}:`);
+                  console.error(cleanedJson.substring(start, end));
+                  console.error(' '.repeat(Math.min(200, errorPos - start)) + '^--- ERROR HERE');
+                }
+                
+                throw new Error(`Failed to parse JSON from Gemini response: ${secondError.message}`);
+              }
+            }
+          }
 
           return {
             content: documentContent,
@@ -327,30 +409,106 @@ Hãy phân tích văn bản PDF và trả về JSON theo đúng cấu trúc trê
 
   /**
    * Generate embeddings for multiple texts (batch)
+   * Optimized to send multiple texts in a single API call to reduce costs
    */
   async generateEmbeddings(texts: string[]): Promise<number[][]> {
     try {
-      console.log(`[Gemini] Generating embeddings for ${texts.length} texts`);
+      const startTime = Date.now();
+      console.log(`[Gemini] 🚀 Generating embeddings for ${texts.length} texts using batch mode`);
 
-      const embeddings: number[][] = [];
+      if (texts.length === 0) {
+        return [];
+      }
 
-      // Process in batches of 10 to avoid rate limits
-      const batchSize = 10;
+      // Get embedding model from settings
+      const embeddingModel = await modelSettingsService.getEmbeddingModel();
+
+      const allEmbeddings: number[][] = [];
+
+      // Process in batches to avoid hitting API limits
+      // Gemini API supports multiple contents in one request
+      const batchSize = 100; // Increased from 10 since we're now using single API call per batch
+      const totalBatches = Math.ceil(texts.length / batchSize);
+      
+      console.log(`[Gemini] 💰 Cost Optimization: Using ${totalBatches} API call(s) instead of ${texts.length} calls (${Math.round((1 - totalBatches / texts.length) * 100)}% reduction)`);
+      
       for (let i = 0; i < texts.length; i += batchSize) {
         const batch = texts.slice(i, i + batchSize);
-        const batchResults = await Promise.all(
-          batch.map((text) => this.generateEmbedding(text))
-        );
-        embeddings.push(...batchResults);
+        const batchNum = Math.floor(i / batchSize) + 1;
+        console.log(`[Gemini] Processing batch ${batchNum}/${totalBatches} (${batch.length} texts)`);
 
-        // Small delay between batches
+        let lastError: any;
+        let batchEmbeddings: number[][] | null = null;
+
+        // Retry logic for the entire batch
+        for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+          try {
+            // Send all texts in the batch as an array to embedContent
+            const result = await this.ai.models.embedContent({
+              model: embeddingModel,
+              contents: batch, // Send array of texts
+              config: {
+                outputDimensionality: 768  // Force 768 dimensions for compatibility
+              }
+            });
+
+            if (!result.embeddings || result.embeddings.length !== batch.length) {
+              throw new Error(`Invalid embedding response: expected ${batch.length} embeddings, got ${result.embeddings?.length || 0}`);
+            }
+
+            // Extract all embedding vectors
+            batchEmbeddings = result.embeddings.map((emb: any) => {
+              if (!emb.values) {
+                throw new Error('Embedding response missing values');
+              }
+              return emb.values;
+            });
+
+            console.log(`[Gemini] ✅ Batch ${batchNum}/${totalBatches}: Successfully generated ${batchEmbeddings.length} embeddings`);
+            break; // Success, exit retry loop
+          } catch (error) {
+            lastError = error;
+
+            if (this.isRetryableError(error) && attempt < this.maxRetries) {
+              const delay = this.retryDelay * Math.pow(2, attempt - 1);
+              console.warn(`[Gemini] Batch ${batchNum} retry ${attempt}/${this.maxRetries}: ${error}`);
+              console.log(`[Gemini] Waiting ${delay}ms before retry...`);
+              await this.sleep(delay);
+              continue;
+            } else {
+              console.error(`[Gemini] Batch ${batchNum} failed after ${attempt} attempts`);
+              break;
+            }
+          }
+        }
+
+        if (!batchEmbeddings) {
+          console.error(`[Gemini] ⚠️ Batch ${batchNum} failed, falling back to individual requests`);
+          // Fallback: Process texts individually if batch fails
+          const fallbackResults: number[][] = [];
+          for (const text of batch) {
+            try {
+              const embedding = await this.generateEmbedding(text);
+              fallbackResults.push(embedding);
+            } catch (error) {
+              console.error(`[Gemini] Failed to generate embedding for individual text: ${error}`);
+              throw error;
+            }
+          }
+          batchEmbeddings = fallbackResults;
+        }
+
+        allEmbeddings.push(...batchEmbeddings);
+
+        // Small delay between batches to respect rate limits
         if (i + batchSize < texts.length) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
       }
 
-      console.log(`[Gemini] Generated ${embeddings.length} embeddings`);
-      return embeddings;
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      console.log(`[Gemini] ✅ Completed: ${allEmbeddings.length} embeddings generated in ${duration}s (avg: ${(parseFloat(duration) / allEmbeddings.length * 1000).toFixed(0)}ms per embedding)`);
+      return allEmbeddings;
     } catch (error) {
       console.error('[Gemini] Batch embedding generation failed:', error);
       throw error;
