@@ -1998,8 +1998,8 @@ app.get('/api/admin/ai-search-history', async (req: Request, res: Response) => {
     });
 
     // Calculate correct success rate from total data
-    const successCount = await (prisma as any).aiSearchHistory.count({ 
-      where: { ...where, success: true } 
+    const successCount = await (prisma as any).aiSearchHistory.count({
+      where: { ...where, success: true }
     });
 
     res.json({
@@ -3208,7 +3208,7 @@ Ví dụ:
       }
     });
 
-    // Simple text matching - AI already extracted accurately
+    // Enhanced matching logic - compare both question and answer options
     let bestMatch: any = null;
     let bestScore = 0;
 
@@ -3223,42 +3223,81 @@ Ví dụ:
     };
 
     const recognizedNormalized = normalizeText(recognizedText);
+    const extractedOptionsNormalized = {
+      A: extractedData.optionA ? normalizeText(extractedData.optionA) : '',
+      B: extractedData.optionB ? normalizeText(extractedData.optionB) : '',
+      C: extractedData.optionC ? normalizeText(extractedData.optionC) : '',
+      D: extractedData.optionD ? normalizeText(extractedData.optionD) : ''
+    };
+
+    // Get list of extracted options (non-empty ones)
+    const extractedOptionsList = Object.values(extractedOptionsNormalized).filter(opt => opt.length > 0);
 
     // Store all matches with scores
-    const allMatches: Array<{ question: any; score: number }> = [];
+    const allMatches: Array<{ question: any; score: number; matchType: string }> = [];
 
     for (const question of questions) {
       const questionNormalized = normalizeText(question.text);
+      const questionOptions = JSON.parse(question.options);
+      const questionOptionsNormalized = questionOptions.map((opt: string) => normalizeText(opt));
 
-      // Strategy 1: Exact match (100%)
+      let matchScore = 0;
+      let matchType = '';
+
+      // Strategy 1: Question exact match (80% weight)
+      let questionMatchScore = 0;
       if (questionNormalized === recognizedNormalized) {
-        allMatches.push({ question, score: 1.0 });
-        continue;
+        questionMatchScore = 1.0;
+      } else if (questionNormalized.includes(recognizedNormalized) || recognizedNormalized.includes(questionNormalized)) {
+        questionMatchScore = 0.9;
+      } else {
+        // Word-based matching for question
+        const recognizedWords = recognizedNormalized.split(' ').filter(w => w.length > 2);
+        const questionWords = questionNormalized.split(' ').filter(w => w.length > 2);
+
+        if (recognizedWords.length > 0 && questionWords.length > 0) {
+          const matchingWords = recognizedWords.filter(word => questionWords.includes(word));
+          questionMatchScore = matchingWords.length / Math.max(recognizedWords.length, questionWords.length);
+        }
       }
 
-      // Strategy 2: Contains match (90%)
-      if (questionNormalized.includes(recognizedNormalized)) {
-        allMatches.push({ question, score: 0.9 });
-        continue;
+      // Strategy 2: Answer options matching (20% weight + bonus for multiple matches)
+      let optionsMatchScore = 0;
+      let matchedOptionsCount = 0;
+
+      if (extractedOptionsList.length > 0) {
+        for (const extractedOption of extractedOptionsList) {
+          for (const dbOption of questionOptionsNormalized) {
+            if (extractedOption === dbOption) {
+              matchedOptionsCount++;
+              optionsMatchScore = Math.max(optionsMatchScore, 1.0);
+              break;
+            } else if (extractedOption.includes(dbOption) || dbOption.includes(extractedOption)) {
+              matchedOptionsCount++;
+              optionsMatchScore = Math.max(optionsMatchScore, 0.8);
+              break;
+            }
+          }
+        }
+
+        // Bonus for matching multiple options (indicates correct question even if options are scrambled)
+        if (matchedOptionsCount >= 2) {
+          optionsMatchScore += 0.2; // Bonus for multiple option matches
+          matchType = 'question+options';
+        } else if (matchedOptionsCount >= 1) {
+          matchType = 'question+option';
+        }
       }
 
-      if (recognizedNormalized.includes(questionNormalized)) {
-        allMatches.push({ question, score: 0.85 });
-        continue;
-      }
+      // Combined score: 80% question + 20% options
+      if (questionMatchScore > 0.4 || optionsMatchScore > 0.6) { // Minimum threshold
+        matchScore = (questionMatchScore * 0.8) + (optionsMatchScore * 0.2);
 
-      // Strategy 3: Simple word matching
-      const recognizedWords = recognizedNormalized.split(' ').filter(w => w.length > 2);
-      const questionWords = questionNormalized.split(' ').filter(w => w.length > 2);
+        if (matchType === '') {
+          matchType = questionMatchScore > 0.8 ? 'question-exact' : 'question-partial';
+        }
 
-      if (recognizedWords.length === 0 || questionWords.length === 0) continue;
-
-      // Count matching words
-      const matchingWords = recognizedWords.filter(word => questionWords.includes(word));
-      const matchRatio = matchingWords.length / Math.max(recognizedWords.length, questionWords.length);
-
-      if (matchRatio > 0.5) { // At least 50% words match
-        allMatches.push({ question, score: matchRatio * 0.8 }); // Max 80% for word matching
+        allMatches.push({ question, score: matchScore, matchType });
       }
     }
 
@@ -3280,6 +3319,7 @@ Ví dụ:
     console.log('Matches found:', allMatches.length);
     console.log('Top 3 matches:', allMatches.slice(0, 3).map(m => ({
       score: Math.round(m.score * 100) + '%',
+      matchType: m.matchType,
       questionPreview: m.question.text.substring(0, 80) + '...'
     })));
     console.log('========================');
@@ -3293,10 +3333,11 @@ Ví dụ:
       source: match.question.source || '',
       category: match.question.category || '',
       knowledgeBaseName: match.question.base.name,
-      confidence: Math.round(match.score * 100)
+      confidence: Math.round(match.score * 100),
+      matchType: match.matchType
     }));
 
-    const result_data: any = {
+    let result_data: any = {
       recognizedText: recognizedText,
       extractedOptions: extractedData.optionA ? {
         A: extractedData.optionA,
@@ -3315,9 +3356,152 @@ Ví dụ:
       } : null,
       confidence: Math.round(bestScore * 100),
       alternativeMatches: alternativeMatches.length > 0 ? alternativeMatches : undefined,
-      modelUsed: selectedModel.name, // Include model used
-      modelPriority: selectedModel.priority
+      modelUsed: selectedModel.name,
+      modelPriority: selectedModel.priority,
+      searchType: 'database'
     };
+
+    // Smart Search Strategy: If no good match found in database (confidence < 70%), try RAG search
+    if (!bestMatch || bestScore < 0.7) {
+      console.log('=== RAG SEARCH INITIATED ===');
+      console.log('Best DB match confidence:', Math.round(bestScore * 100) + '%');
+      console.log('Switching to RAG search for better accuracy...');
+
+      try {
+        // Import RAG services (dynamic import to avoid circular dependencies)
+        const { geminiRAGService } = await import('./services/gemini-rag.service.js');
+        const { qdrantService } = await import('./services/qdrant.service.js');
+
+        // Generate embedding for the recognized question
+        const questionEmbedding = await geminiRAGService.generateEmbedding(recognizedText);
+
+        // Get all available collections for comprehensive search
+        const availableCollections = await qdrantService.listCollections();
+        const collectionNames = availableCollections.map(c => c.name);
+
+        console.log(`[RAG Search] Available collections:`, collectionNames);
+
+        // For image search, we do comprehensive search across all collections
+        // since we don't have enough context to determine specific domain
+        let ragSearchResults: any[] = [];
+        if (collectionNames.length > 1) {
+          console.log(`[RAG Search] Searching across multiple collections`);
+          ragSearchResults = await qdrantService.searchMultipleCollections(
+            questionEmbedding,
+            collectionNames,
+            { topK: 10, minScore: 0.4 }
+          );
+        } else if (collectionNames.length === 1) {
+          console.log(`[RAG Search] Searching in single collection:`, collectionNames[0]);
+          ragSearchResults = await qdrantService.search(
+            questionEmbedding,
+            {
+              topK: 10,
+              minScore: 0.4,
+              collectionName: collectionNames[0]
+            }
+          );
+        } else {
+          console.log(`[RAG Search] No collections available`);
+          ragSearchResults = [];
+        }
+
+        console.log(`[RAG Search] Found ${ragSearchResults.length} RAG chunks`);
+
+        if (ragSearchResults.length > 0) {
+          // Apply reranking for better relevance
+          ragSearchResults = qdrantService.rerankResults(ragSearchResults, recognizedText, {
+            keywordWeight: 0.1,
+            maxPerDocument: 3,
+          });
+
+          // Take top 8 after reranking for focused answer
+          ragSearchResults = ragSearchResults.slice(0, 8);
+
+          // Prepare retrieved chunks for RAG
+          const retrievedChunks = ragSearchResults.map((result) => ({
+            chunkId: result.id,
+            content: result.payload.content,
+            documentId: result.payload.documentId,
+            documentName: result.payload.documentName,
+            documentNumber: result.payload.documentNumber,
+            score: result.score,
+            metadata: {
+              documentId: result.payload.documentId,
+              documentNumber: result.payload.documentNumber,
+              documentName: result.payload.documentName,
+              documentType: result.payload.documentType,
+              chapterNumber: result.payload.chapterNumber,
+              chapterTitle: result.payload.chapterTitle,
+              articleNumber: result.payload.articleNumber,
+              articleTitle: result.payload.articleTitle,
+              sectionNumber: result.payload.sectionNumber,
+              chunkType: result.payload.chunkType,
+              chunkIndex: result.payload.chunkIndex,
+            },
+          }));
+
+          // Generate RAG answer with optimized prompt for image-extracted questions
+          const ragQuery = {
+            question: `Dựa trên câu hỏi: "${recognizedText}"
+                      ${extractedData.optionA ? `\nCác đáp án: A) ${extractedData.optionA}, B) ${extractedData.optionB}, C) ${extractedData.optionC}, D) ${extractedData.optionD}` : ''}
+                      
+                      Hãy phân tích và trả về CHÍNH XÁC theo định dạng JSON:
+                      {
+                        "correctAnswer": "A/B/C/D (chọn đáp án đúng)",
+                        "explanation": "Lý do ngắn gọn",
+                        "source": "Số điều, số văn bản hoặc quy định cụ thể",
+                        "confidence": "số từ 1-100"
+                      }
+                      
+                      Chỉ trả về JSON, không giải thích dài dòng. Nếu không có đáp án A/B/C/D thì trả về câu trả lời ngắn gọn trong trường "correctAnswer".`,
+            topK: ragSearchResults.length
+          };
+
+          const ragResponse = await geminiRAGService.generateRAGAnswer(ragQuery, retrievedChunks);
+
+          // Add RAG result to response using structured format from service
+          result_data.ragResult = {
+            answer: ragResponse.answer,
+            confidence: ragResponse.confidence,
+            sources: ragResponse.sources,
+            model: ragResponse.model,
+            chunksUsed: ragSearchResults.length,
+            structured: ragResponse.structured || false
+          };
+
+          // When RAG search is successful and has high confidence, treat as primary result
+          const isHighConfidence = ragResponse.confidence >= 80;
+          if (isHighConfidence) {
+            result_data.searchType = 'rag-primary';
+            console.log(`[RAG Search] ✅ High confidence result (${ragResponse.confidence}%), using as primary answer`);
+          } else {
+            result_data.searchType = 'rag-fallback';
+            console.log(`[RAG Search] ⚠️ Lower confidence result (${ragResponse.confidence}%), using as fallback answer`);
+          }
+
+          result_data.matchedQuestion = null; // Hide database match to show RAG results
+          result_data.confidence = ragResponse.confidence; // Use RAG confidence
+
+          console.log(`[RAG Search] Search successful, confidence: ${ragResponse.confidence}%`);
+          console.log(`[RAG Search] Sources used:`, ragResponse.sources?.slice(0, 3).map(s => s.documentName));
+          if (isHighConfidence) {
+            console.log('[RAG Search] High confidence result - showing RAG results as primary answer');
+          } else {
+            console.log('[RAG Search] Database results hidden, showing RAG results as fallback');
+          }
+        } else {
+          console.log('[RAG Search] No RAG chunks found');
+          result_data.ragResult = null;
+        }
+      } catch (ragError) {
+        console.error('[RAG Search] Search failed:', ragError);
+        result_data.ragResult = null;
+        result_data.ragError = 'RAG search không khả dụng';
+      }
+
+      console.log('=== RAG SEARCH COMPLETED ===');
+    }
 
     // Deduct quota for non-admin users (after successful search)
     if (dbUser.role !== 'admin') {
@@ -3334,6 +3518,40 @@ Ví dụ:
 
     // Save AI search history to database
     try {
+      // Enhanced matched question data to include RAG info if available
+      const enhancedMatchedQuestion = bestMatch ? {
+        id: bestMatch.id,
+        question: bestMatch.text,
+        options: JSON.parse(bestMatch.options),
+        correctAnswerIndex: bestMatch.correctAnswerIdx,
+        source: bestMatch.source || '',
+        category: bestMatch.category || '',
+        knowledgeBaseName: bestMatch.base.name,
+        // Include RAG search info in the matched question data
+        ragSearchInfo: result_data.ragResult ? {
+          answer: result_data.ragResult.answer,
+          confidence: result_data.ragResult.confidence,
+          sourcesCount: result_data.ragResult.sources?.length || 0,
+          searchType: result_data.searchType
+        } : null
+      } : (result_data.ragResult ? {
+        // If no DB match but RAG found something, create a synthetic entry
+        id: 'rag-only',
+        question: recognizedText,
+        options: [],
+        correctAnswerIndex: -1,
+        source: 'RAG Search',
+        category: 'AI Generated',
+        knowledgeBaseName: 'RAG Database',
+        ragSearchInfo: {
+          answer: result_data.ragResult.answer,
+          confidence: result_data.ragResult.confidence,
+          sourcesCount: result_data.ragResult.sources?.length || 0,
+          searchType: result_data.searchType,
+          isPrimary: result_data.searchType === 'rag-primary'
+        }
+      } : null);
+
       await (prisma as any).aiSearchHistory.create({
         data: {
           userId: user.id,
@@ -3349,15 +3567,7 @@ Ví dụ:
             D: extractedData.optionD
           }) : null,
           matchedQuestionId: bestMatch?.id || null,
-          matchedQuestion: bestMatch ? JSON.stringify({
-            id: bestMatch.id,
-            question: bestMatch.text,
-            options: JSON.parse(bestMatch.options),
-            correctAnswerIndex: bestMatch.correctAnswerIdx,
-            source: bestMatch.source || '',
-            category: bestMatch.category || '',
-            knowledgeBaseName: bestMatch.base.name
-          }) : null,
+          matchedQuestion: enhancedMatchedQuestion ? JSON.stringify(enhancedMatchedQuestion) : null,
           confidence: Math.round(bestScore * 100),
           // Model & Token info
           modelUsed: selectedModel.name,
@@ -3370,7 +3580,7 @@ Ví dụ:
           success: true
         }
       });
-      console.log('[AI Search History] Saved search history for user:', user.id);
+      console.log('[AI Search History] Saved search history for user:', user.id, result_data.searchType);
     } catch (historyError) {
       console.error('[AI Search History] Failed to save history:', historyError);
       // Don't fail the request if history save fails
@@ -3413,6 +3623,509 @@ Ví dụ:
     }
 
     res.status(500).json({ error: errorMessage });
+  }
+});
+
+// Premium API - Image Search with RAG Streaming for better UX
+app.post('/api/premium/search-by-image-stream', async (req: Request, res: Response) => {
+  let startTime = 0;
+  let user: any = null;
+  let knowledgeBaseIds: any[] = [];
+  let selectedModel: any = null;
+
+  try {
+    user = req.user as any;
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Check AI search quota
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { aiSearchQuota: true, role: true }
+    });
+
+    if (!dbUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Admin has unlimited quota
+    if (dbUser.role !== 'admin' && dbUser.aiSearchQuota <= 0) {
+      return res.status(403).json({
+        error: 'Bạn đã hết lượt tìm kiếm AI. Vui lòng nạp thêm để tiếp tục sử dụng.',
+        quota: 0
+      });
+    }
+
+    const { image, knowledgeBaseIds: kbIds } = req.body;
+    knowledgeBaseIds = kbIds;
+
+    if (!image || !knowledgeBaseIds || !Array.isArray(knowledgeBaseIds)) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Set headers for SSE (Server-Sent Events)
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+
+    // Helper to send SSE message
+    const sendEvent = (event: string, data: any) => {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    try {
+      // Check if GEMINI_API_KEY is configured
+      if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'your_gemini_api_key_here') {
+        sendEvent('error', { message: 'GEMINI_API_KEY chưa được cấu hình' });
+        res.end();
+        return;
+      }
+
+      sendEvent('status', { message: 'Đang phân tích hình ảnh...' });
+
+      // Import Gemini AI (new SDK)
+      const { GoogleGenAI } = await import('@google/genai');
+      const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+      // Check system settings for model rotation
+      const systemSettings = await (prisma as any).systemSettings.findFirst();
+
+      if (systemSettings && !systemSettings.modelRotationEnabled) {
+        const defaultModelName = await modelSettingsService.getDefaultModel();
+        selectedModel = {
+          name: defaultModelName,
+          priority: 0,
+          rpm: 999,
+          rpd: 999,
+          tpm: 999999,
+          category: 'Default Model'
+        };
+      } else {
+        selectedModel = geminiModelRotation.getNextAvailableModel();
+        if (!selectedModel) {
+          sendEvent('error', { message: 'Tất cả các model AI đã đạt giới hạn. Vui lòng thử lại sau.' });
+          res.end();
+          return;
+        }
+      }
+
+      // Convert base64 to proper format for Gemini
+      const imagePart = {
+        inlineData: {
+          data: image,
+          mimeType: 'image/jpeg',
+        },
+      };
+
+      // Prompt for Gemini to extract question text
+      const prompt = `Hãy trích xuất văn bản từ ảnh này và trả về CHÍNH XÁC theo định dạng JSON sau:
+
+{
+  "question": "Nội dung câu hỏi (không bao gồm A, B, C, D)",
+  "optionA": "Nội dung đáp án A (nếu có)",
+  "optionB": "Nội dung đáp án B (nếu có)",
+  "optionC": "Nội dung đáp án C (nếu có)",
+  "optionD": "Nội dung đáp án D (nếu có)"
+}
+
+QUY TẮC:
+- Chỉ trả về JSON, KHÔNG thêm markdown code block hay giải thích
+- "question" chỉ chứa NỘI DUNG CÂU HỎI, bỏ qua phần đáp án A/B/C/D
+- Giữ nguyên dấu câu, chính tả
+- Nếu không có đáp án nào, để giá trị rỗng ""
+- Không thêm văn bản không có trong ảnh`;
+
+      startTime = Date.now();
+      const result = await genAI.models.generateContent({
+        model: selectedModel.name,
+        contents: [prompt, imagePart],
+      });
+      const responseTime = Date.now() - startTime;
+
+      let responseText = (result.text || '').trim();
+
+      if (!systemSettings || systemSettings.modelRotationEnabled) {
+        geminiModelRotation.recordRequest(selectedModel.name);
+      }
+
+      // Get token usage from response
+      const usageMetadata = (result as any).usageMetadata || {};
+      const inputTokens = usageMetadata.promptTokenCount || 0;
+      const outputTokens = usageMetadata.candidatesTokenCount || 0;
+      const totalTokens = usageMetadata.totalTokenCount || (inputTokens + outputTokens);
+
+      // Remove markdown code blocks if present
+      responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+      let extractedData: any;
+      try {
+        extractedData = JSON.parse(responseText);
+      } catch (parseError) {
+        extractedData = {
+          question: responseText,
+          optionA: '',
+          optionB: '',
+          optionC: '',
+          optionD: ''
+        };
+      }
+
+      const recognizedText = extractedData.question || responseText;
+
+      sendEvent('progress', {
+        step: 'extracted',
+        data: {
+          recognizedText,
+          extractedOptions: extractedData.optionA ? {
+            A: extractedData.optionA,
+            B: extractedData.optionB,
+            C: extractedData.optionC,
+            D: extractedData.optionD
+          } : undefined
+        }
+      });
+
+      sendEvent('status', { message: 'Đang tìm kiếm trong cơ sở dữ liệu...' });
+
+      // Search for matching question in selected knowledge bases (same logic as before)
+      const questions = await prisma.question.findMany({
+        where: {
+          baseId: {
+            in: knowledgeBaseIds
+          }
+        },
+        include: {
+          base: {
+            select: {
+              name: true
+            }
+          }
+        }
+      });
+
+      // Enhanced matching logic (same as before)
+      const normalizeText = (text: string) => {
+        return text.toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          .replace(/đ/g, 'd')
+          .replace(/[^a-z0-9\s]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      };
+
+      const recognizedNormalized = normalizeText(recognizedText);
+      const extractedOptionsNormalized = {
+        A: extractedData.optionA ? normalizeText(extractedData.optionA) : '',
+        B: extractedData.optionB ? normalizeText(extractedData.optionB) : '',
+        C: extractedData.optionC ? normalizeText(extractedData.optionC) : '',
+        D: extractedData.optionD ? normalizeText(extractedData.optionD) : ''
+      };
+
+      const extractedOptionsList = Object.values(extractedOptionsNormalized).filter(opt => opt.length > 0);
+      const allMatches: Array<{ question: any; score: number; matchType: string }> = [];
+
+      // Same matching logic as non-streaming version
+      for (const question of questions) {
+        const questionNormalized = normalizeText(question.text);
+        const questionOptions = JSON.parse(question.options);
+        const questionOptionsNormalized = questionOptions.map((opt: string) => normalizeText(opt));
+
+        let matchScore = 0;
+        let matchType = '';
+        let questionMatchScore = 0;
+
+        if (questionNormalized === recognizedNormalized) {
+          questionMatchScore = 1.0;
+        } else if (questionNormalized.includes(recognizedNormalized) || recognizedNormalized.includes(questionNormalized)) {
+          questionMatchScore = 0.9;
+        } else {
+          const recognizedWords = recognizedNormalized.split(' ').filter(w => w.length > 2);
+          const questionWords = questionNormalized.split(' ').filter(w => w.length > 2);
+
+          if (recognizedWords.length > 0 && questionWords.length > 0) {
+            const matchingWords = recognizedWords.filter(word => questionWords.includes(word));
+            questionMatchScore = matchingWords.length / Math.max(recognizedWords.length, questionWords.length);
+          }
+        }
+
+        let optionsMatchScore = 0;
+        let matchedOptionsCount = 0;
+
+        if (extractedOptionsList.length > 0) {
+          for (const extractedOption of extractedOptionsList) {
+            for (const dbOption of questionOptionsNormalized) {
+              if (extractedOption === dbOption) {
+                matchedOptionsCount++;
+                optionsMatchScore = Math.max(optionsMatchScore, 1.0);
+                break;
+              } else if (extractedOption.includes(dbOption) || dbOption.includes(extractedOption)) {
+                matchedOptionsCount++;
+                optionsMatchScore = Math.max(optionsMatchScore, 0.8);
+                break;
+              }
+            }
+          }
+
+          if (matchedOptionsCount >= 2) {
+            optionsMatchScore += 0.2;
+            matchType = 'question+options';
+          } else if (matchedOptionsCount >= 1) {
+            matchType = 'question+option';
+          }
+        }
+
+        if (questionMatchScore > 0.4 || optionsMatchScore > 0.6) {
+          matchScore = (questionMatchScore * 0.8) + (optionsMatchScore * 0.2);
+
+          if (matchType === '') {
+            matchType = questionMatchScore > 0.8 ? 'question-exact' : 'question-partial';
+          }
+
+          allMatches.push({ question, score: matchScore, matchType });
+        }
+      }
+
+      allMatches.sort((a, b) => b.score - a.score);
+      const bestMatch = allMatches.length > 0 ? allMatches[0].question : null;
+      const bestScore = allMatches.length > 0 ? allMatches[0].score : 0;
+
+      let result_data: any = {
+        recognizedText: recognizedText,
+        extractedOptions: extractedData.optionA ? {
+          A: extractedData.optionA,
+          B: extractedData.optionB,
+          C: extractedData.optionC,
+          D: extractedData.optionD
+        } : undefined,
+        matchedQuestion: bestMatch ? {
+          id: bestMatch.id,
+          question: bestMatch.text,
+          options: JSON.parse(bestMatch.options),
+          correctAnswerIndex: bestMatch.correctAnswerIdx,
+          source: bestMatch.source || '',
+          category: bestMatch.category || '',
+          knowledgeBaseName: bestMatch.base.name
+        } : null,
+        confidence: Math.round(bestScore * 100),
+        modelUsed: selectedModel.name,
+        modelPriority: selectedModel.priority,
+        searchType: 'database'
+      };
+
+      // If database match found with good confidence, use it directly
+      if (bestMatch && bestScore >= 0.7) {
+        sendEvent('progress', {
+          step: 'database_match_found',
+          data: result_data
+        });
+      } else {
+        // For low confidence matches, we'll use RAG instead - don't show DB results
+        if (bestMatch && bestScore < 0.7) {
+          console.log(`[Streaming] DB match found but confidence too low (${Math.round(bestScore * 100)}%), switching to RAG-only mode`);
+          result_data.matchedQuestion = null; // Hide low-confidence database match
+          result_data.confidence = 0; // Reset confidence for RAG
+          result_data.searchType = 'rag-only';
+        }
+
+        // Stream RAG search process
+        sendEvent('status', { message: 'Đang tìm kiếm trong tài liệu RAG...' });
+
+        try {
+          const { geminiRAGService } = await import('./services/gemini-rag.service.js');
+          const { qdrantService } = await import('./services/qdrant.service.js');
+
+          const questionEmbedding = await geminiRAGService.generateEmbedding(recognizedText);
+
+          sendEvent('status', { message: 'Đang phân tích các tài liệu liên quan...' });
+
+          const availableCollections = await qdrantService.listCollections();
+          const collectionNames = availableCollections.map(c => c.name);
+
+          let ragSearchResults: any[] = [];
+          if (collectionNames.length > 1) {
+            ragSearchResults = await qdrantService.searchMultipleCollections(
+              questionEmbedding,
+              collectionNames,
+              { topK: 10, minScore: 0.4 }
+            );
+          } else if (collectionNames.length === 1) {
+            ragSearchResults = await qdrantService.search(
+              questionEmbedding,
+              {
+                topK: 10,
+                minScore: 0.4,
+                collectionName: collectionNames[0]
+              }
+            );
+          }
+
+          if (ragSearchResults.length > 0) {
+            sendEvent('status', { message: 'Đang tạo câu trả lời từ AI...' });
+
+            ragSearchResults = qdrantService.rerankResults(ragSearchResults, recognizedText, {
+              keywordWeight: 0.1,
+              maxPerDocument: 3,
+            });
+
+            ragSearchResults = ragSearchResults.slice(0, 8);
+
+            const retrievedChunks = ragSearchResults.map((result) => ({
+              chunkId: result.id,
+              content: result.payload.content,
+              documentId: result.payload.documentId,
+              documentName: result.payload.documentName,
+              documentNumber: result.payload.documentNumber,
+              score: result.score,
+              metadata: {
+                documentId: result.payload.documentId,
+                documentNumber: result.payload.documentNumber,
+                documentName: result.payload.documentName,
+                documentType: result.payload.documentType,
+                chapterNumber: result.payload.chapterNumber,
+                chapterTitle: result.payload.chapterTitle,
+                articleNumber: result.payload.articleNumber,
+                articleTitle: result.payload.articleTitle,
+                sectionNumber: result.payload.sectionNumber,
+                chunkType: result.payload.chunkType,
+                chunkIndex: result.payload.chunkIndex,
+              },
+            }));
+
+            const ragQuery = {
+              question: `Dựa trên câu hỏi: "${recognizedText}"
+                        ${extractedData.optionA ? `\nCác đáp án: A) ${extractedData.optionA}, B) ${extractedData.optionB}, C) ${extractedData.optionC}, D) ${extractedData.optionD}` : ''}`,
+              topK: ragSearchResults.length
+            };
+
+            const ragResponse = await geminiRAGService.generateRAGAnswer(ragQuery, retrievedChunks);
+
+            result_data.ragResult = {
+              answer: ragResponse.answer,
+              confidence: ragResponse.confidence,
+              sources: ragResponse.sources,
+              model: ragResponse.model,
+              chunksUsed: ragSearchResults.length,
+              structured: ragResponse.structured || false
+            };
+
+            // When RAG search is used, hide database results and only show RAG results
+            result_data.searchType = 'rag-only';
+            result_data.matchedQuestion = null; // Hide database match to show only RAG results
+            result_data.confidence = ragResponse.confidence; // Use RAG confidence
+
+            sendEvent('progress', {
+              step: 'rag_search_completed',
+              data: result_data
+            });
+          } else {
+            result_data.ragResult = null;
+            sendEvent('progress', {
+              step: 'no_results_found',
+              data: result_data
+            });
+          }
+        } catch (ragError) {
+          console.error('[RAG Stream] Search failed:', ragError);
+          result_data.ragResult = null;
+          result_data.ragError = 'RAG search không khả dụng';
+
+          sendEvent('progress', {
+            step: 'rag_search_failed',
+            data: result_data
+          });
+        }
+      }
+
+      // Deduct quota for non-admin users
+      if (dbUser.role !== 'admin') {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { aiSearchQuota: { decrement: 1 } }
+        });
+        result_data.remainingQuota = dbUser.aiSearchQuota - 1;
+      } else {
+        result_data.remainingQuota = -1;
+      }
+
+      // Save history (same enhanced format as non-streaming version)
+      try {
+        const enhancedMatchedQuestion = bestMatch ? {
+          id: bestMatch.id,
+          question: bestMatch.text,
+          options: JSON.parse(bestMatch.options),
+          correctAnswerIndex: bestMatch.correctAnswerIdx,
+          source: bestMatch.source || '',
+          category: bestMatch.category || '',
+          knowledgeBaseName: bestMatch.base.name,
+          ragSearchInfo: result_data.ragResult ? {
+            answer: result_data.ragResult.answer,
+            confidence: result_data.ragResult.confidence,
+            sourcesCount: result_data.ragResult.sources?.length || 0,
+            searchType: result_data.searchType,
+            isPrimary: result_data.searchType === 'rag-primary'
+          } : null
+        } : (result_data.ragResult ? {
+          id: 'rag-only',
+          question: recognizedText,
+          options: [],
+          correctAnswerIndex: -1,
+          source: 'RAG Search',
+          category: 'AI Generated',
+          knowledgeBaseName: 'RAG Database',
+          ragSearchInfo: {
+            answer: result_data.ragResult.answer,
+            confidence: result_data.ragResult.confidence,
+            sourcesCount: result_data.ragResult.sources?.length || 0,
+            searchType: result_data.searchType,
+            isPrimary: result_data.searchType === 'rag-primary'
+          }
+        } : null);
+
+        await (prisma as any).aiSearchHistory.create({
+          data: {
+            userId: user.id,
+            knowledgeBaseIds: JSON.stringify(knowledgeBaseIds),
+            recognizedText: recognizedText,
+            extractedOptions: extractedData.optionA ? JSON.stringify({
+              A: extractedData.optionA,
+              B: extractedData.optionB,
+              C: extractedData.optionC,
+              D: extractedData.optionD
+            }) : null,
+            matchedQuestionId: bestMatch?.id || null,
+            matchedQuestion: enhancedMatchedQuestion ? JSON.stringify(enhancedMatchedQuestion) : null,
+            confidence: Math.round(bestScore * 100),
+            modelUsed: selectedModel.name,
+            modelPriority: selectedModel.priority,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            totalTokens: totalTokens,
+            responseTime: responseTime,
+            success: true
+          }
+        });
+      } catch (historyError) {
+        console.error('[AI Search History Stream] Failed to save history:', historyError);
+      }
+
+      // Send final result
+      sendEvent('complete', result_data);
+      res.end();
+
+    } catch (error: any) {
+      console.error('[Image Search Stream] Error:', error);
+      sendEvent('error', {
+        message: error.message || 'Lỗi khi xử lý hình ảnh'
+      });
+      res.end();
+    }
+
+  } catch (error: any) {
+    console.error('[Image Search Stream] Request error:', error);
+    res.status(500).json({
+      error: 'Lỗi khi xử lý yêu cầu'
+    });
   }
 });
 

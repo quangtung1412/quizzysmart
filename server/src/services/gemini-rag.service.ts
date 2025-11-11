@@ -264,21 +264,21 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
           } catch (parseError: any) {
             console.warn(`[Gemini] Initial JSON parse failed: ${parseError.message}`);
             console.log(`[Gemini] Attempting to clean and fix JSON...`);
-            
+
             // Advanced JSON cleaning and fixing
             let cleanedJson = jsonMatch[0];
-            
+
             // Step 1: Remove trailing commas (most common issue)
             cleanedJson = cleanedJson.replace(/,(\s*[}\]])/g, '$1');
-            
+
             // Step 2: Fix line breaks in strings (replace actual newlines with \n)
             cleanedJson = cleanedJson.replace(/"([^"]*)"(\s*:\s*"[^"]*\n[^"]*")/g, (match, key, value) => {
               return `"${key}"${value.replace(/\n/g, '\\n')}`;
             });
-            
+
             // Step 3: Remove control characters except newline, tab, carriage return
             cleanedJson = cleanedJson.replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F-\u009F]/g, '');
-            
+
             // Step 4: Fix unescaped quotes within strings (complex regex)
             // This tries to find quotes that are not properly escaped
             try {
@@ -301,13 +301,13 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
             } catch (e) {
               console.warn('[Gemini] Could not apply advanced quote fixing');
             }
-            
+
             try {
               documentContent = JSON.parse(cleanedJson);
               console.log(`[Gemini] JSON successfully cleaned and parsed`);
             } catch (secondError: any) {
               console.error(`[Gemini] Failed to parse JSON after manual cleaning: ${secondError.message}`);
-              
+
               // Last resort: Use jsonrepair library
               try {
                 console.log('[Gemini] Attempting to repair JSON using jsonrepair library...');
@@ -316,7 +316,7 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
                 console.log('[Gemini] ✅ JSON successfully repaired and parsed using jsonrepair!');
               } catch (repairError: any) {
                 console.error(`[Gemini] ❌ jsonrepair also failed: ${repairError.message}`);
-                
+
                 // Extract position from error message for debugging
                 const posMatch = secondError.message.match(/position (\d+)/);
                 if (posMatch) {
@@ -327,7 +327,7 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
                   console.error(cleanedJson.substring(start, end));
                   console.error(' '.repeat(Math.min(200, errorPos - start)) + '^--- ERROR HERE');
                 }
-                
+
                 throw new Error(`Failed to parse JSON from Gemini response: ${secondError.message}`);
               }
             }
@@ -429,9 +429,9 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
       // Gemini API supports multiple contents in one request
       const batchSize = 100; // Increased from 10 since we're now using single API call per batch
       const totalBatches = Math.ceil(texts.length / batchSize);
-      
+
       console.log(`[Gemini] 💰 Cost Optimization: Using ${totalBatches} API call(s) instead of ${texts.length} calls (${Math.round((1 - totalBatches / texts.length) * 100)}% reduction)`);
-      
+
       for (let i = 0; i < texts.length; i += batchSize) {
         const batch = texts.slice(i, i + batchSize);
         const batchNum = Math.floor(i / batchSize) + 1;
@@ -575,6 +575,18 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
 
           console.log(`[Gemini] RAG answer generated, tokens: ${totalTokens}`);
 
+          // Parse structured quiz answer if available
+          let structuredAnswer: any = null;
+          try {
+            const jsonMatch = answer.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              structuredAnswer = JSON.parse(jsonMatch[0]);
+              console.log('[Gemini] Parsed structured quiz answer:', structuredAnswer);
+            }
+          } catch (parseError) {
+            console.warn('[Gemini] Could not parse structured answer, using raw text');
+          }
+
           // Calculate confidence based on retrieval scores
           const avgScore = filteredChunks.reduce((sum, c) => sum + c.score, 0) / filteredChunks.length;
           const maxScore = Math.max(...filteredChunks.map(c => c.score));
@@ -588,15 +600,16 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
           console.log(`  - Chunks used: ${filteredChunks.length}`);
 
           return {
-            answer,
+            answer: structuredAnswer || answer,
             sources: filteredChunks, // Return filtered chunks
             model: modelInfo.name,
-            confidence,
+            confidence: structuredAnswer?.confidence || confidence,
             tokenUsage: {
               input: inputTokens,
               output: outputTokens,
               total: totalTokens,
             },
+            structured: !!structuredAnswer
           };
         } catch (error) {
           lastError = error;
@@ -682,14 +695,28 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
 
       console.log(`[Gemini] Streaming completed, total length: ${fullText.length}`);
 
+      // Parse structured quiz answer if available
+      let structuredAnswer: any = null;
+      try {
+        const jsonMatch = fullText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          structuredAnswer = JSON.parse(jsonMatch[0]);
+          console.log('[Gemini] Parsed structured quiz answer (streaming):', structuredAnswer);
+        }
+      } catch (parseError) {
+        console.warn('[Gemini] Could not parse structured answer in streaming, using raw text');
+      }
+
       // Final chunk with metadata (use filtered chunks for sources)
       yield {
         chunk: '',
         done: true,
         metadata: {
           model: modelInfo.name,
-          confidence,
+          confidence: structuredAnswer?.confidence || confidence,
           sources: filteredChunks,
+          answer: structuredAnswer || fullText,
+          structured: !!structuredAnswer
         }
       };
     } catch (error) {
@@ -803,27 +830,146 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
    * Build RAG prompt (optimized version)
    */
   private buildRAGPrompt(question: string, context: string): string {
-    return `
-Bạn là trợ lý AI chuyên nghiệp vụ ngân hàng. Trả lời câu hỏi dựa trên các văn bản quy định được cung cấp.
+    // Check if it's a multiple choice question
+    const isMultipleChoiceQuestion = this.isMultipleChoiceQuestion(question);
+
+    if (isMultipleChoiceQuestion) {
+      // Multiple choice question - return specific answer format
+      const hasExtractedOptions = question.includes('Các đáp án:');
+
+      if (hasExtractedOptions) {
+        // Image-based question with extracted options
+        return `
+Bạn là trợ lý AI chuyên nghiệp vụ ngân hàng. Dựa trên các văn bản quy định được cung cấp, hãy phân tích và chọn đáp án đúng.
 
 NGUYÊN TẮC:
-1. Trả lời CHÍNH XÁC dựa trên nội dung được cung cấp
-2. Thêm [🔗1], [🔗2]... ngay sau câu có liên quan đến nguồn tương ứng
-3. Với câu hỏi đếm/tổng hợp: phân tích TOÀN BỘ nội dung và đưa kết quả chính xác
-4. Sắp xếp thông tin theo thứ tự logic (điều, chương, thứ tự xuất hiện)
-5. Trả lời bằng tiếng Việt, ngắn gọn, dễ hiểu, KHÔNG dùng markdown
-6. Số [🔗n] tương ứng nguồn thứ n bên dưới
+1. Phân tích câu hỏi và các đáp án được cung cấp từ hình ảnh
+2. Dựa trên tài liệu để xác định đáp án CHÍNH XÁC nhất
+3. Trả về chỉ chữ cái đáp án đúng (A, B, C, hoặc D)
+4. Đưa ra nguồn văn bản cụ thể (điều, khoản)
+5. Trả về dưới dạng JSON với format:
 
-VÍ DỤ:
-"Người lao động có quyền nghỉ phép năm 12 ngày [🔗1]. Với điều kiện đặc biệt, thời gian có thể tăng [🔗2]."
+{
+  "correctAnswer": "A|B|C|D",
+  "explanation": "Giải thích ngắn gọn (1-2 câu)",
+  "source": "Điều X, Khoản Y - Tên văn bản", 
+  "confidence": 85
+}
+
+NGỮ CẢNH:
+${context}
+
+CÂU HỎI VÀ CÁC ĐÁP ÁN: ${question}
+
+Trả về JSON theo format trên:
+`;
+      } else {
+        // Generate multiple choice options
+        return `
+Bạn là trợ lý AI chuyên nghiệp vụ ngân hàng. Dựa trên các văn bản quy định được cung cấp, hãy tạo câu trả lời dạng trắc nghiệm cho câu hỏi.
+
+NGUYÊN TẮC:
+1. Phân tích câu hỏi và tìm đáp án CHÍNH XÁC từ tài liệu
+2. Tạo 4 đáp án A, B, C, D (trong đó có 1 đáp án đúng và 3 đáp án sai hợp lý)
+3. Đưa ra giải thích ngắn gọn với nguồn văn bản (điều, khoản cụ thể)
+4. Trả về dưới dạng JSON với format:
+
+{
+  "correctAnswer": "A|B|C|D",
+  "options": {
+    "A": "Đáp án A",
+    "B": "Đáp án B", 
+    "C": "Đáp án C",
+    "D": "Đáp án D"
+  },
+  "explanation": "Giải thích ngắn gọn (1-2 câu)",
+  "source": "Điều X, Khoản Y - Tên văn bản",
+  "confidence": 85
+}
 
 NGỮ CẢNH:
 ${context}
 
 CÂU HỎI: ${question}
 
-Trả lời với trích dẫn [🔗n]:
+Trả về JSON theo format trên:
 `;
+      }
+    } else {
+      // Regular question - return natural text response
+      return `
+Bạn là một trợ lý AI chuyên về pháp luật Việt Nam. Nhiệm vụ của bạn là trả lời câu hỏi của người dùng dựa trên các văn bản pháp luật được cung cấp.
+
+NGUYÊN TẮC TRẢ LỜI:
+1. Trả lời CHÍNH XÁC dựa trên nội dung văn bản được cung cấp
+2. Trích dẫn cụ thể điều, khoản liên quan TRONG CÂU bằng cách thêm ký hiệu [🔗1], [🔗2], [🔗3] ngay sau câu hoặc đoạn có liên quan
+3. Nếu câu hỏi yêu cầu đếm, tính tổng, tóm tắt: hãy phân tích TOÀN BỘ nội dung được cung cấp và đưa ra kết quả chính xác
+4. Khi liệt kê, hãy sắp xếp theo thứ tự logic (theo số điều, chương, hoặc thứ tự xuất hiện)
+5. Trả lời bằng tiếng Việt, ngắn gọn, dễ hiểu, KHÔNG sử dụng markdown (*, #, **, _)
+6. Viết câu trả lời tự nhiên như văn xuôi thông thường
+7. Số [🔗n] tương ứng với nguồn thứ n trong danh sách ngữ cảnh bên dưới
+8. Nếu nhiều nguồn hỗ trợ cùng một ý, có thể dùng [🔗1][🔗2]
+
+VÍ DỤ FORMAT:
+- Câu hỏi thông thường: "Theo quy định, người lao động có quyền nghỉ phép năm 12 ngày làm việc [🔗1]. Đối với những người làm việc trong điều kiện đặc biệt, thời gian nghỉ phép có thể tăng lên [🔗2][🔗3]."
+- Câu hỏi đếm/tổng hợp: "Văn bản có tổng cộng 15 điều khoản về vấn đề này, bao gồm: Điều 5 về quyền lợi người lao động [🔗1], Điều 7 về nghĩa vụ của người sử dụng lao động [🔗3], Điều 12 về chế độ bảo hiểm [🔗5]..."
+
+NGỮ CẢNH TỪ CÁC VĂN BẢN:
+${context}
+
+CÂU HỎI: ${question}
+
+Hãy trả lời câu hỏi dựa trên ngữ cảnh trên, nhớ thêm trích dẫn [🔗n] sau mỗi câu/đoạn có liên quan.
+`;
+    }
+  }
+
+  /**
+   * Check if question is a multiple choice question
+   */
+  private isMultipleChoiceQuestion(question: string): boolean {
+    // Check for explicit multiple choice indicators
+    const multipleChoiceIndicators = [
+      'Các đáp án:',
+      'A)', 'B)', 'C)', 'D)',
+      'A.', 'B.', 'C.', 'D.',
+      'a)', 'b)', 'c)', 'd)',
+      'a.', 'b.', 'c.', 'd.',
+      'chọn đáp án',
+      'đáp án nào',
+      'đáp án đúng',
+      'lựa chọn nào',
+      'phương án nào',
+      'trường hợp nào',
+      'câu nào đúng',
+      'ý kiến nào',
+      'tình huống nào'
+    ];
+
+    const lowerQuestion = question.toLowerCase();
+
+    // Check if question contains explicit multiple choice patterns
+    for (const indicator of multipleChoiceIndicators) {
+      if (lowerQuestion.includes(indicator.toLowerCase())) {
+        return true;
+      }
+    }
+
+    // Check for option patterns like "A) option text B) option text"
+    const optionPatterns = [
+      /[A-D]\)[^\n]*[A-D]\)/i,  // A) text B) pattern
+      /[A-D]\.[^\n]*[A-D]\./i,  // A. text B. pattern
+      /[a-d]\)[^\n]*[a-d]\)/i,  // a) text b) pattern
+      /[a-d]\.[^\n]*[a-d]\./i   // a. text b. pattern
+    ];
+
+    for (const pattern of optionPatterns) {
+      if (pattern.test(question)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**

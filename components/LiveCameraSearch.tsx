@@ -11,8 +11,37 @@ interface LiveCameraSearchProps {
 
 interface SearchResult {
     recognizedText: string;
+    extractedOptions?: {
+        A: string;
+        B: string;
+        C: string;
+        D: string;
+    };
     matchedQuestion: Question | null;
     confidence: number;
+    searchType: 'database' | 'rag-only' | 'database+rag';
+    ragResult?: {
+        answer: string | {
+            correctAnswer: string;
+            options: {
+                A: string;
+                B: string;
+                C: string;
+                D: string;
+            };
+            explanation: string;
+            source: string;
+            confidence: number;
+        };
+        confidence: number;
+        sources: Array<{
+            documentName: string;
+            content: string;
+            score: number;
+        }>;
+        model: string;
+        structured?: boolean;
+    };
     modelUsed?: string;
     modelPriority?: number;
 }
@@ -23,7 +52,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
     const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [showSettings, setShowSettings] = useState(true);
+    const [showSettings, setShowSettings] = useState(false); // Start with camera directly
     const [lastCaptureTime, setLastCaptureTime] = useState<number>(0);
     const [capturedImage, setCapturedImage] = useState<string | null>(null);
     const [remainingQuota, setRemainingQuota] = useState<number>(user?.aiSearchQuota || 0);
@@ -32,12 +61,32 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
 
+    // Function to get confidence color based on percentage
+    const getConfidenceColor = (confidence: number) => {
+        if (confidence >= 80) return { bg: 'bg-green-50', border: 'border-green-300', text: 'text-green-700', badge: 'text-green-600' };
+        if (confidence >= 60) return { bg: 'bg-yellow-50', border: 'border-yellow-300', text: 'text-yellow-700', badge: 'text-yellow-600' };
+        if (confidence >= 40) return { bg: 'bg-orange-50', border: 'border-orange-300', text: 'text-orange-700', badge: 'text-orange-600' };
+        return { bg: 'bg-red-50', border: 'border-red-300', text: 'text-red-700', badge: 'text-red-600' };
+    };
+
     // Update quota when user prop changes
     useEffect(() => {
         if (user?.aiSearchQuota !== undefined) {
             setRemainingQuota(user.aiSearchQuota);
         }
     }, [user?.aiSearchQuota]);
+
+    // Auto-start camera and set all knowledge bases when component mounts
+    useEffect(() => {
+        // Set all knowledge bases as selected by default
+        const allKnowledgeBaseIds = knowledgeBases.map(kb => kb.id);
+        setSelectedKnowledgeBases(allKnowledgeBaseIds);
+
+        // Auto-start camera
+        if (user) {
+            startCamera();
+        }
+    }, [knowledgeBases, user]);
 
     // Start camera stream
     const startCamera = async () => {
@@ -90,10 +139,10 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
         if (now - lastCaptureTime < 2000) return;
         setLastCaptureTime(now);
 
-        if (selectedKnowledgeBases.length === 0) {
-            setError('Vui lòng chọn ít nhất một cơ sở kiến thức');
-            return;
-        }
+        // Use all knowledge bases if none are specifically selected
+        const knowledgeBasesToSearch = selectedKnowledgeBases.length === 0
+            ? knowledgeBases.map(kb => kb.id)
+            : selectedKnowledgeBases;
 
         // Check quota for non-admin users
         if (user?.role !== 'admin' && remainingQuota <= 0) {
@@ -129,8 +178,8 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                 // Stop camera while searching
                 stopCamera();
 
-                // Send to API using the centralized api.ts
-                const result: any = await api.searchByImage(base64Image, selectedKnowledgeBases);
+                // Send to API using the centralized api.ts with all questions from DB
+                const result: any = await api.searchByImage(base64Image, knowledgeBasesToSearch);
                 setSearchResult(result);
 
                 // Update remaining quota if provided
@@ -344,6 +393,11 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                             <h4 className="font-bold text-green-900 text-sm sm:text-base">Tìm thấy câu hỏi!</h4>
                                             <p className="text-green-700 text-xs mt-1">
                                                 Độ chính xác: <span className="font-bold">{Math.round(searchResult.confidence)}%</span>
+                                                {searchResult.searchType === 'database+rag' && (
+                                                    <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                                        + RAG hỗ trợ
+                                                    </span>
+                                                )}
                                             </p>
                                         </div>
                                     </div>
@@ -384,6 +438,105 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                         </div>
                                     )}
                                 </div>
+                            ) : searchResult.ragResult ? (
+                                (() => {
+                                    const confidence = Math.round(searchResult.ragResult.confidence);
+                                    const colorScheme = getConfidenceColor(confidence);
+                                    const structuredAnswer = typeof searchResult.ragResult.answer === 'object' ? searchResult.ragResult.answer : null;
+                                    const correctAnswerLetter = structuredAnswer?.correctAnswer;
+
+                                    return (
+                                        <div className={`${colorScheme.bg} border-2 ${colorScheme.border} rounded-xl p-4 sm:p-6`}>
+                                            <div className="flex items-start gap-3 mb-4">
+                                                <span className="text-2xl flex-shrink-0">🤖</span>
+                                                <div className="flex-1">
+                                                    <h4 className={`font-bold ${colorScheme.text} text-sm sm:text-base`}>AI Assistant</h4>
+                                                    <p className={`${colorScheme.text} text-xs mt-1`}>
+                                                        Độ tin cậy: <span className={`font-bold ${colorScheme.badge}`}>{confidence}%</span>
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            {/* Display question from extracted text */}
+                                            <div className="bg-white rounded-lg p-3 sm:p-4 mb-3 border-l-4 border-blue-500">
+                                                <h5 className="font-semibold text-gray-900 mb-2">❓ Câu hỏi:</h5>
+                                                <div className="text-gray-800 text-xs sm:text-sm leading-relaxed">
+                                                    {searchResult.recognizedText}
+                                                </div>
+                                            </div>
+
+                                            {/* Show extracted options from image with AI's correct answer selection */}
+                                            {searchResult.extractedOptions ? (
+                                                <div className="bg-white rounded-lg p-3 sm:p-4 mb-3">
+                                                    <h5 className="font-semibold text-gray-900 mb-3">📝 Đáp án:</h5>
+                                                    <div className="space-y-2">
+                                                        {Object.entries(searchResult.extractedOptions).map(([key, value]) => (
+                                                            <div
+                                                                key={key}
+                                                                className={`p-2 rounded-lg border text-xs sm:text-sm ${key === correctAnswerLetter
+                                                                    ? 'bg-green-100 border-green-500 text-green-800 font-semibold'
+                                                                    : 'bg-gray-50 border-gray-300 text-gray-700'
+                                                                    }`}
+                                                            >
+                                                                <span className="font-bold">{key}.</span> {value}
+                                                                {key === correctAnswerLetter && (
+                                                                    <span className="ml-2 text-green-600 font-bold">✓</span>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                /* Fallback: if no extracted options, show AI response directly */
+                                                <div className="bg-white rounded-lg p-3 sm:p-4 mb-3">
+                                                    <h5 className="font-semibold text-gray-900 mb-2">💡 Câu trả lời AI:</h5>
+                                                    <div className="text-gray-800 text-xs sm:text-sm leading-relaxed">
+                                                        {typeof searchResult.ragResult.answer === 'string' ?
+                                                            searchResult.ragResult.answer :
+                                                            structuredAnswer?.correctAnswer || 'Không xác định được đáp án'}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Source information */}
+                                            {structuredAnswer?.source && (
+                                                <div className="bg-white rounded-lg p-2 mt-3">
+                                                    <p className="text-xs text-gray-600">
+                                                        <span className="font-medium">📋 Nguồn:</span> {structuredAnswer.source}
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            {/* Content summary from sources */}
+                                            {searchResult.ragResult.sources && searchResult.ragResult.sources.length > 0 && (
+                                                <div className="bg-white rounded-lg p-3 mt-3">
+                                                    <h6 className="font-medium text-gray-900 mb-2">📄 Tóm tắt nội dung liên quan:</h6>
+                                                    <div className="text-xs text-gray-700 leading-relaxed">
+                                                        {structuredAnswer?.explanation ? (
+                                                            // Use explanation from structured answer if available
+                                                            structuredAnswer.explanation
+                                                        ) : (
+                                                            // Generate a short summary from sources
+                                                            (() => {
+                                                                const mainSource = searchResult.ragResult.sources[0];
+                                                                if (!mainSource) return "Không có thông tin chi tiết.";
+
+                                                                // Extract key content (limit to ~200 characters for 2-3 sentences)
+                                                                const content = mainSource.content;
+                                                                const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 10);
+                                                                const summary = sentences.slice(0, 2).join('. ').trim();
+
+                                                                return summary.length > 200
+                                                                    ? summary.substring(0, 200) + '...'
+                                                                    : summary + (summary.endsWith('.') ? '' : '.');
+                                                            })()
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()
                             ) : (
                                 <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-4 sm:p-6">
                                     <div className="flex items-start gap-3">
@@ -391,7 +544,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                         <div className="flex-1">
                                             <h4 className="font-bold text-yellow-900 mb-2 text-sm sm:text-base">Không tìm thấy kết quả</h4>
                                             <p className="text-yellow-800 text-xs sm:text-sm mb-3">
-                                                Không tìm thấy câu hỏi tương tự trong {selectedKnowledgeBases.length} nguồn kiến thức đã chọn.
+                                                Không tìm thấy câu hỏi tương tự trong cơ sở dữ liệu và cũng không tìm thấy thông tin liên quan trong tài liệu RAG.
                                             </p>
                                             <div className="bg-yellow-100/50 rounded-lg p-3">
                                                 <p className="text-yellow-800 font-semibold text-xs sm:text-sm mb-2">💡 Gợi ý:</p>
@@ -399,6 +552,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                                     <li>Chụp ảnh rõ hơn, đủ ánh sáng</li>
                                                     <li>Đảm bảo câu hỏi nằm trong khung hình</li>
                                                     <li>Kiểm tra câu hỏi có trong dữ liệu chưa</li>
+                                                    <li>Thử chọn thêm nguồn kiến thức khác</li>
                                                 </ul>
                                             </div>
                                         </div>

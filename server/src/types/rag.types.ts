@@ -74,7 +74,7 @@ export interface Appendix {
 // Chunk Strategy
 // ============================================
 
-export type ChunkType = 
+export type ChunkType =
   | 'overview'    // Document metadata and overview
   | 'basis'       // Legal basis section
   | 'chapter'     // Full chapter (if short)
@@ -87,14 +87,14 @@ export interface ChunkMetadata {
   documentNumber?: string;
   documentName: string;
   documentType?: string;
-  
+
   // Hierarchical position
   chapterNumber?: string;
   chapterTitle?: string;
   articleNumber?: string;
   articleTitle?: string;
   sectionNumber?: string;
-  
+
   // Chunk info
   chunkType: ChunkType;
   chunkIndex: number;
@@ -137,14 +137,14 @@ export interface QdrantPoint {
     documentType?: string;
     chunkType: ChunkType;
     chunkIndex: number;
-    
+
     // Hierarchical info
     chapterNumber?: string;
     chapterTitle?: string;
     articleNumber?: string;
     articleTitle?: string;
     sectionNumber?: string;
-    
+
     // Content
     content: string;             // Full markdown content
     contentPreview: string;      // First 200 chars for display
@@ -169,7 +169,7 @@ export interface RAGQuery {
 }
 
 export interface RAGResponse {
-  answer: string;                // Generated answer
+  answer: string | any;           // Generated answer (can be string or structured object)
   sources: RetrievedChunk[];     // Source chunks used
   model: string;                 // Model used for generation
   confidence: number;            // Overall confidence score
@@ -178,6 +178,7 @@ export interface RAGResponse {
     output: number;
     total: number;
   };
+  structured?: boolean;          // Whether answer is structured (quiz format)
 }
 
 export interface RetrievedChunk {
@@ -244,7 +245,7 @@ export interface DocumentDetailResponse {
   fileSize: number;
   uploadedAt: string;
   uploadedBy: string;
-  
+
   // Metadata
   documentNumber?: string;
   documentName: string;
@@ -253,14 +254,14 @@ export interface DocumentDetailResponse {
   signerName?: string;
   signerTitle?: string;
   signedDate?: string;
-  
+
   // Content
   markdownContent: string;
-  
+
   // Processing
   processingStatus: ProcessingStatus;
   errorMessage?: string;
-  
+
   // Chunks
   chunks: {
     id: string;
