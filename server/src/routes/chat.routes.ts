@@ -9,6 +9,7 @@ import { PrismaClient } from '@prisma/client';
 import { geminiRAGService } from '../services/gemini-rag.service.js';
 import { qdrantService } from '../services/qdrant.service.js';
 import { queryAnalyzerService } from '../services/query-analyzer.service.js';
+import { queryPreprocessorService } from '../services/query-preprocessor.service.js';
 import { chatCacheService } from '../services/chat-cache.service.js';
 import type { RAGQuery, RAGResponse } from '../types/rag.types.js';
 
@@ -262,8 +263,31 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
 
         sendEvent('status', { message: searchMessage });
 
-        // Generate embedding for question
-        const questionEmbedding = await geminiRAGService.generateEmbedding(question);
+        // NEW: Preprocess query to improve semantic search accuracy
+        console.log(`[Chat Stream] Preprocessing query for better semantic matching...`);
+        const preprocessResult = await queryPreprocessorService.preprocessQuery(question);
+        console.log(`[Chat Stream] Query preprocessing:`, {
+          originalQuery: preprocessResult.originalQuery,
+          variantCount: preprocessResult.simplifiedQueries.length,
+          confidence: preprocessResult.confidence.toFixed(2),
+          reasoning: preprocessResult.reasoning
+        });
+
+        // Display preprocessing info to user
+        if (preprocessResult.simplifiedQueries.length > 1) {
+          sendEvent('status', { 
+            message: `Đã tối ưu hóa câu hỏi thành ${preprocessResult.simplifiedQueries.length} biến thể tìm kiếm`
+          });
+        }
+
+        // Generate embeddings for all query variants
+        console.log(`[Chat Stream] Generating embeddings for ${preprocessResult.simplifiedQueries.length} query variants...`);
+        const allEmbeddings = await Promise.all(
+          preprocessResult.simplifiedQueries.map(q => geminiRAGService.generateEmbedding(q))
+        );
+        
+        // Use the first (most important) embedding as primary
+        const questionEmbedding = allEmbeddings[0];
 
         // Extract keywords for debugging
         const queryKeywords = question.toLowerCase()
@@ -277,25 +301,77 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
 
         console.log(`[Chat Stream] Query complexity: ${isComplexQuery ? 'COMPLEX' : 'SIMPLE'}, topK: ${topK}`);
 
-        // NEW: Search across multiple collections (if analysis determined multiple)
+        // NEW: For complex queries or low preprocessing confidence, search with multiple query variants
+        const shouldUseMultipleVariants = isComplexQuery || preprocessResult.confidence < 0.7;
+        
         let searchResults;
-        if (queryAnalysis.collections.length > 1) {
-          console.log(`[Chat Stream] Searching in multiple collections:`, queryAnalysis.collections);
-          searchResults = await qdrantService.searchMultipleCollections(
-            questionEmbedding,
-            queryAnalysis.collections,
-            { topK, minScore: 0.5 }
-          );
-        } else {
-          console.log(`[Chat Stream] Searching in single collection:`, queryAnalysis.collections[0]);
-          searchResults = await qdrantService.search(
-            questionEmbedding,
-            {
-              topK,
-              minScore: 0.5,
-              collectionName: queryAnalysis.collections[0]
+        if (shouldUseMultipleVariants && preprocessResult.simplifiedQueries.length > 1) {
+          console.log(`[Chat Stream] Using multi-variant search for better coverage`);
+          
+          // Search with each variant and merge results
+          const perVariantTopK = Math.ceil(topK / preprocessResult.simplifiedQueries.length);
+          const allResults: any[] = [];
+          
+          for (let i = 0; i < Math.min(preprocessResult.simplifiedQueries.length, 3); i++) {
+            const variantEmbedding = allEmbeddings[i];
+            const variantQuery = preprocessResult.simplifiedQueries[i];
+            
+            console.log(`[Chat Stream]   Searching with variant ${i + 1}: "${variantQuery}"`);
+            
+            let variantResults;
+            if (queryAnalysis.collections.length > 1) {
+              variantResults = await qdrantService.searchMultipleCollections(
+                variantEmbedding,
+                queryAnalysis.collections,
+                { topK: perVariantTopK, minScore: 0.5 }
+              );
+            } else {
+              variantResults = await qdrantService.search(
+                variantEmbedding,
+                {
+                  topK: perVariantTopK,
+                  minScore: 0.5,
+                  collectionName: queryAnalysis.collections[0]
+                }
+              );
             }
-          );
+            
+            allResults.push(...variantResults);
+          }
+          
+          // Deduplicate and sort by score
+          const seenIds = new Set<string>();
+          searchResults = allResults
+            .filter(r => {
+              if (seenIds.has(r.id)) return false;
+              seenIds.add(r.id);
+              return true;
+            })
+            .sort((a, b) => b.score - a.score)
+            .slice(0, topK);
+          
+          console.log(`[Chat Stream] Multi-variant search: ${allResults.length} → ${searchResults.length} unique results`);
+        } else {
+          // Standard single-query search
+          // NEW: Search across multiple collections (if analysis determined multiple)
+          if (queryAnalysis.collections.length > 1) {
+            console.log(`[Chat Stream] Searching in multiple collections:`, queryAnalysis.collections);
+            searchResults = await qdrantService.searchMultipleCollections(
+              questionEmbedding,
+              queryAnalysis.collections,
+              { topK, minScore: 0.5 }
+            );
+          } else {
+            console.log(`[Chat Stream] Searching in single collection:`, queryAnalysis.collections[0]);
+            searchResults = await qdrantService.search(
+              questionEmbedding,
+              {
+                topK,
+                minScore: 0.5,
+                collectionName: queryAnalysis.collections[0]
+              }
+            );
+          }
         }
 
         // Detect deposit vs loan queries for smart post-filtering (keep existing logic)
@@ -640,8 +716,22 @@ router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Re
       retrievedChunks = allChunks;
       console.log(`[Chat] Retrieved ${allChunks.length} chunks for full document analysis`);
     } else {
-      // Step 1: Generate embedding for question
-      const questionEmbedding = await geminiRAGService.generateEmbedding(question);
+      // NEW: Preprocess query before generating embedding
+      console.log(`[Chat] Preprocessing query for better semantic matching...`);
+      const preprocessResult = await queryPreprocessorService.preprocessQuery(question);
+      console.log(`[Chat] Query preprocessing:`, {
+        originalQuery: preprocessResult.originalQuery,
+        variantCount: preprocessResult.simplifiedQueries.length,
+        confidence: preprocessResult.confidence.toFixed(2),
+        reasoning: preprocessResult.reasoning
+      });
+
+      // Step 1: Generate embeddings for query variants
+      console.log(`[Chat] Generating embeddings for ${preprocessResult.simplifiedQueries.length} query variants...`);
+      const allEmbeddings = await Promise.all(
+        preprocessResult.simplifiedQueries.map(q => geminiRAGService.generateEmbedding(q))
+      );
+      const questionEmbedding = allEmbeddings[0];
 
       // Extract keywords for debugging
       const queryKeywords = question.toLowerCase()
@@ -660,8 +750,42 @@ router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Re
       const isComplexQuery = analysisKeywords.some(kw => questionLower.includes(kw));
       const topK = isComplexQuery ? 20 : 12; // Reduced from 30
 
-      // Step 2: Search similar chunks in Qdrant
-      searchResults = await qdrantService.searchSimilar(questionEmbedding, topK, 0.5);
+      // NEW: For complex queries or low preprocessing confidence, use multi-variant search
+      const shouldUseMultipleVariants = isComplexQuery || preprocessResult.confidence < 0.7;
+      
+      if (shouldUseMultipleVariants && preprocessResult.simplifiedQueries.length > 1) {
+        console.log(`[Chat] Using multi-variant search for better coverage`);
+        
+        // Search with each variant and merge results
+        const perVariantTopK = Math.ceil(topK / preprocessResult.simplifiedQueries.length);
+        const allResults: any[] = [];
+        
+        for (let i = 0; i < Math.min(preprocessResult.simplifiedQueries.length, 3); i++) {
+          const variantEmbedding = allEmbeddings[i];
+          const variantQuery = preprocessResult.simplifiedQueries[i];
+          
+          console.log(`[Chat]   Searching with variant ${i + 1}: "${variantQuery}"`);
+          
+          const variantResults = await qdrantService.searchSimilar(variantEmbedding, perVariantTopK, 0.5);
+          allResults.push(...variantResults);
+        }
+        
+        // Deduplicate and sort by score
+        const seenIds = new Set<string>();
+        searchResults = allResults
+          .filter(r => {
+            if (seenIds.has(r.id)) return false;
+            seenIds.add(r.id);
+            return true;
+          })
+          .sort((a, b) => b.score - a.score)
+          .slice(0, topK);
+        
+        console.log(`[Chat] Multi-variant search: ${allResults.length} → ${searchResults.length} unique results`);
+      } else {
+        // Step 2: Standard search with primary embedding
+        searchResults = await qdrantService.searchSimilar(questionEmbedding, topK, 0.5);
+      }
 
       // Apply smart post-filtering based on query intent
       if (isDepositQuery && !isLoanQuery) {
