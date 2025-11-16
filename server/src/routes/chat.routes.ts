@@ -275,7 +275,7 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
 
         // Display preprocessing info to user
         if (preprocessResult.simplifiedQueries.length > 1) {
-          sendEvent('status', { 
+          sendEvent('status', {
             message: `Đã tối ưu hóa câu hỏi thành ${preprocessResult.simplifiedQueries.length} biến thể tìm kiếm`
           });
         }
@@ -285,7 +285,7 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
         const allEmbeddings = await Promise.all(
           preprocessResult.simplifiedQueries.map(q => geminiRAGService.generateEmbedding(q))
         );
-        
+
         // Use the first (most important) embedding as primary
         const questionEmbedding = allEmbeddings[0];
 
@@ -303,21 +303,21 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
 
         // NEW: For complex queries or low preprocessing confidence, search with multiple query variants
         const shouldUseMultipleVariants = isComplexQuery || preprocessResult.confidence < 0.7;
-        
+
         let searchResults;
         if (shouldUseMultipleVariants && preprocessResult.simplifiedQueries.length > 1) {
           console.log(`[Chat Stream] Using multi-variant search for better coverage`);
-          
+
           // Search with each variant and merge results
           const perVariantTopK = Math.ceil(topK / preprocessResult.simplifiedQueries.length);
           const allResults: any[] = [];
-          
+
           for (let i = 0; i < Math.min(preprocessResult.simplifiedQueries.length, 3); i++) {
             const variantEmbedding = allEmbeddings[i];
             const variantQuery = preprocessResult.simplifiedQueries[i];
-            
+
             console.log(`[Chat Stream]   Searching with variant ${i + 1}: "${variantQuery}"`);
-            
+
             let variantResults;
             if (queryAnalysis.collections.length > 1) {
               variantResults = await qdrantService.searchMultipleCollections(
@@ -335,10 +335,10 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
                 }
               );
             }
-            
+
             allResults.push(...variantResults);
           }
-          
+
           // Deduplicate and sort by score
           const seenIds = new Set<string>();
           searchResults = allResults
@@ -349,7 +349,7 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
             })
             .sort((a, b) => b.score - a.score)
             .slice(0, topK);
-          
+
           console.log(`[Chat Stream] Multi-variant search: ${allResults.length} → ${searchResults.length} unique results`);
         } else {
           // Standard single-query search
@@ -752,24 +752,24 @@ router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Re
 
       // NEW: For complex queries or low preprocessing confidence, use multi-variant search
       const shouldUseMultipleVariants = isComplexQuery || preprocessResult.confidence < 0.7;
-      
+
       if (shouldUseMultipleVariants && preprocessResult.simplifiedQueries.length > 1) {
         console.log(`[Chat] Using multi-variant search for better coverage`);
-        
+
         // Search with each variant and merge results
         const perVariantTopK = Math.ceil(topK / preprocessResult.simplifiedQueries.length);
         const allResults: any[] = [];
-        
+
         for (let i = 0; i < Math.min(preprocessResult.simplifiedQueries.length, 3); i++) {
           const variantEmbedding = allEmbeddings[i];
           const variantQuery = preprocessResult.simplifiedQueries[i];
-          
+
           console.log(`[Chat]   Searching with variant ${i + 1}: "${variantQuery}"`);
-          
+
           const variantResults = await qdrantService.searchSimilar(variantEmbedding, perVariantTopK, 0.5);
           allResults.push(...variantResults);
         }
-        
+
         // Deduplicate and sort by score
         const seenIds = new Set<string>();
         searchResults = allResults
@@ -780,7 +780,7 @@ router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Re
           })
           .sort((a, b) => b.score - a.score)
           .slice(0, topK);
-        
+
         console.log(`[Chat] Multi-variant search: ${allResults.length} → ${searchResults.length} unique results`);
       } else {
         // Step 2: Standard search with primary embedding

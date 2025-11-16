@@ -9,87 +9,87 @@ import { GoogleGenAI } from '@google/genai';
 import { modelSettingsService } from './model-settings.service.js';
 
 interface QueryPreprocessingResult {
-  originalQuery: string;
-  simplifiedQueries: string[];
-  reasoning: string;
-  confidence: number;
+    originalQuery: string;
+    simplifiedQueries: string[];
+    reasoning: string;
+    confidence: number;
 }
 
 class QueryPreprocessorService {
-  private ai: GoogleGenAI | null = null;
-  private cache: Map<string, QueryPreprocessingResult> = new Map();
-  private maxCacheSize = 100;
+    private ai: GoogleGenAI | null = null;
+    private cache: Map<string, QueryPreprocessingResult> = new Map();
+    private maxCacheSize = 100;
 
-  constructor() {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (apiKey) {
-      this.ai = new GoogleGenAI({ apiKey });
-    }
-  }
-
-  /**
-   * Preprocess query before embedding generation
-   * Returns multiple simplified/rephrased versions suitable for legal document search
-   */
-  async preprocessQuery(query: string): Promise<QueryPreprocessingResult> {
-    // Check cache first
-    const cacheKey = query.toLowerCase().trim();
-    if (this.cache.has(cacheKey)) {
-      console.log('[QueryPreprocessor] Cache hit for query');
-      return this.cache.get(cacheKey)!;
+    constructor() {
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (apiKey) {
+            this.ai = new GoogleGenAI({ apiKey });
+        }
     }
 
-    if (!this.ai) {
-      console.warn('[QueryPreprocessor] AI not configured, using original query');
-      return {
-        originalQuery: query,
-        simplifiedQueries: [query],
-        reasoning: 'AI preprocessing not available',
-        confidence: 0.5,
-      };
+    /**
+     * Preprocess query before embedding generation
+     * Returns multiple simplified/rephrased versions suitable for legal document search
+     */
+    async preprocessQuery(query: string): Promise<QueryPreprocessingResult> {
+        // Check cache first
+        const cacheKey = query.toLowerCase().trim();
+        if (this.cache.has(cacheKey)) {
+            console.log('[QueryPreprocessor] Cache hit for query');
+            return this.cache.get(cacheKey)!;
+        }
+
+        if (!this.ai) {
+            console.warn('[QueryPreprocessor] AI not configured, using original query');
+            return {
+                originalQuery: query,
+                simplifiedQueries: [query],
+                reasoning: 'AI preprocessing not available',
+                confidence: 0.5,
+            };
+        }
+
+        try {
+            const cheapModel = await modelSettingsService.getCheaperModel();
+            const prompt = this.buildPreprocessingPrompt(query);
+
+            console.log('[QueryPreprocessor] Preprocessing query with model:', cheapModel);
+
+            const response = await this.ai.models.generateContent({
+                model: cheapModel,
+                contents: [prompt],
+                config: {
+                    temperature: 0.4, // Moderate creativity for rephrasing
+                    maxOutputTokens: 800,
+                },
+            });
+
+            const text = response.text || '';
+            console.log('[QueryPreprocessor] Raw AI response:', text.substring(0, 200) + '...');
+
+            const result = this.parsePreprocessingResponse(text, query);
+
+            // Cache the result
+            this.cacheResult(cacheKey, result);
+
+            console.log('[QueryPreprocessor] Generated', result.simplifiedQueries.length, 'query variants');
+            result.simplifiedQueries.forEach((q, i) => {
+                console.log(`  ${i + 1}. "${q}"`);
+            });
+
+            return result;
+        } catch (error) {
+            console.error('[QueryPreprocessor] Preprocessing failed:', error);
+            // Fallback to basic simplification
+            return this.basicPreprocessing(query);
+        }
     }
 
-    try {
-      const cheapModel = await modelSettingsService.getCheaperModel();
-      const prompt = this.buildPreprocessingPrompt(query);
-
-      console.log('[QueryPreprocessor] Preprocessing query with model:', cheapModel);
-
-      const response = await this.ai.models.generateContent({
-        model: cheapModel,
-        contents: [prompt],
-        config: {
-          temperature: 0.4, // Moderate creativity for rephrasing
-          maxOutputTokens: 800,
-        },
-      });
-
-      const text = response.text || '';
-      console.log('[QueryPreprocessor] Raw AI response:', text.substring(0, 200) + '...');
-
-      const result = this.parsePreprocessingResponse(text, query);
-      
-      // Cache the result
-      this.cacheResult(cacheKey, result);
-      
-      console.log('[QueryPreprocessor] Generated', result.simplifiedQueries.length, 'query variants');
-      result.simplifiedQueries.forEach((q, i) => {
-        console.log(`  ${i + 1}. "${q}"`);
-      });
-
-      return result;
-    } catch (error) {
-      console.error('[QueryPreprocessor] Preprocessing failed:', error);
-      // Fallback to basic simplification
-      return this.basicPreprocessing(query);
-    }
-  }
-
-  /**
-   * Build preprocessing prompt for AI
-   */
-  private buildPreprocessingPrompt(query: string): string {
-    return `Bạn là chuyên gia phân tích và đơn giản hóa câu hỏi để tìm kiếm trong văn bản pháp luật Việt Nam.
+    /**
+     * Build preprocessing prompt for AI
+     */
+    private buildPreprocessingPrompt(query: string): string {
+        return `Bạn là chuyên gia phân tích và đơn giản hóa câu hỏi để tìm kiếm trong văn bản pháp luật Việt Nam.
 
 CÂU HỎI GỐC:
 "${query}"
@@ -158,132 +158,132 @@ CHÚ Ý:
 - "confidence" từ 0.0-1.0, phản ánh độ chắc chắn của việc chuyển đổi
 - Ưu tiên các thuật ngữ thường xuất hiện trong quy định, quy chế
 - MỖI câu nên tập trung vào MỘT khía cạnh cụ thể`;
-  }
-
-  /**
-   * Parse AI response
-   */
-  private parsePreprocessingResponse(
-    response: string,
-    originalQuery: string
-  ): QueryPreprocessingResult {
-    try {
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON found in response');
-      }
-
-      const parsed = JSON.parse(jsonMatch[0]);
-      
-      // Validate queries
-      let simplifiedQueries = (parsed.simplifiedQueries || [])
-        .filter((q: any) => typeof q === 'string' && q.trim().length > 0)
-        .map((q: string) => q.trim());
-
-      // Ensure we have at least the original query
-      if (simplifiedQueries.length === 0) {
-        simplifiedQueries = [originalQuery];
-      }
-
-      // Limit to max 4 queries
-      if (simplifiedQueries.length > 4) {
-        simplifiedQueries = simplifiedQueries.slice(0, 4);
-      }
-
-      // Always include original query as first option
-      if (!simplifiedQueries.includes(originalQuery)) {
-        simplifiedQueries.unshift(originalQuery);
-      }
-
-      const confidence = Math.min(Math.max(parsed.confidence || 0.7, 0), 1);
-
-      return {
-        originalQuery,
-        simplifiedQueries,
-        reasoning: parsed.reasoning || 'Phân tích tự động',
-        confidence,
-      };
-    } catch (error) {
-      console.error('[QueryPreprocessor] Failed to parse response:', error);
-      return this.basicPreprocessing(originalQuery);
-    }
-  }
-
-  /**
-   * Basic preprocessing without AI (fallback)
-   */
-  private basicPreprocessing(query: string): QueryPreprocessingResult {
-    const cleaned = query
-      .toLowerCase()
-      .replace(/[?!.]/g, '')
-      .replace(/xin hỏi|cho (em|tôi|mình) (biết|hỏi)|vui lòng|giúp (em|tôi|mình)|ạ|à/gi, '')
-      .trim();
-
-    // Simple keyword expansion
-    const simplifiedQueries = [query]; // Keep original
-
-    // Add a cleaned version
-    if (cleaned !== query) {
-      simplifiedQueries.push(cleaned);
     }
 
-    // Basic term substitution
-    const expansions: Record<string, string[]> = {
-      'vay tiền': ['vay vốn', 'cho vay', 'tín dụng'],
-      'gửi tiền': ['tiền gửi', 'gửi tiết kiệm'],
-      'lãi suất': ['mức lãi', 'lãi'],
-      'điều kiện': ['quy định', 'yêu cầu'],
-      'được phép': ['có quyền', 'được quy định'],
-    };
+    /**
+     * Parse AI response
+     */
+    private parsePreprocessingResponse(
+        response: string,
+        originalQuery: string
+    ): QueryPreprocessingResult {
+        try {
+            const jsonMatch = response.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) {
+                throw new Error('No JSON found in response');
+            }
 
-    for (const [key, alternatives] of Object.entries(expansions)) {
-      if (cleaned.includes(key)) {
-        // Add one alternative expansion
-        const expanded = cleaned.replace(key, alternatives[0]);
-        if (!simplifiedQueries.includes(expanded)) {
-          simplifiedQueries.push(expanded);
+            const parsed = JSON.parse(jsonMatch[0]);
+
+            // Validate queries
+            let simplifiedQueries = (parsed.simplifiedQueries || [])
+                .filter((q: any) => typeof q === 'string' && q.trim().length > 0)
+                .map((q: string) => q.trim());
+
+            // Ensure we have at least the original query
+            if (simplifiedQueries.length === 0) {
+                simplifiedQueries = [originalQuery];
+            }
+
+            // Limit to max 4 queries
+            if (simplifiedQueries.length > 4) {
+                simplifiedQueries = simplifiedQueries.slice(0, 4);
+            }
+
+            // Always include original query as first option
+            if (!simplifiedQueries.includes(originalQuery)) {
+                simplifiedQueries.unshift(originalQuery);
+            }
+
+            const confidence = Math.min(Math.max(parsed.confidence || 0.7, 0), 1);
+
+            return {
+                originalQuery,
+                simplifiedQueries,
+                reasoning: parsed.reasoning || 'Phân tích tự động',
+                confidence,
+            };
+        } catch (error) {
+            console.error('[QueryPreprocessor] Failed to parse response:', error);
+            return this.basicPreprocessing(originalQuery);
         }
-        break; // Only one expansion to keep it simple
-      }
     }
 
-    return {
-      originalQuery: query,
-      simplifiedQueries: simplifiedQueries.slice(0, 3),
-      reasoning: 'Sử dụng xử lý cơ bản (không có AI)',
-      confidence: 0.5,
-    };
-  }
+    /**
+     * Basic preprocessing without AI (fallback)
+     */
+    private basicPreprocessing(query: string): QueryPreprocessingResult {
+        const cleaned = query
+            .toLowerCase()
+            .replace(/[?!.]/g, '')
+            .replace(/xin hỏi|cho (em|tôi|mình) (biết|hỏi)|vui lòng|giúp (em|tôi|mình)|ạ|à/gi, '')
+            .trim();
 
-  /**
-   * Cache management
-   */
-  private cacheResult(key: string, result: QueryPreprocessingResult): void {
-    if (this.cache.size >= this.maxCacheSize) {
-      // Remove oldest entry (first key)
-      const firstKey = this.cache.keys().next().value;
-      this.cache.delete(firstKey);
+        // Simple keyword expansion
+        const simplifiedQueries = [query]; // Keep original
+
+        // Add a cleaned version
+        if (cleaned !== query) {
+            simplifiedQueries.push(cleaned);
+        }
+
+        // Basic term substitution
+        const expansions: Record<string, string[]> = {
+            'vay tiền': ['vay vốn', 'cho vay', 'tín dụng'],
+            'gửi tiền': ['tiền gửi', 'gửi tiết kiệm'],
+            'lãi suất': ['mức lãi', 'lãi'],
+            'điều kiện': ['quy định', 'yêu cầu'],
+            'được phép': ['có quyền', 'được quy định'],
+        };
+
+        for (const [key, alternatives] of Object.entries(expansions)) {
+            if (cleaned.includes(key)) {
+                // Add one alternative expansion
+                const expanded = cleaned.replace(key, alternatives[0]);
+                if (!simplifiedQueries.includes(expanded)) {
+                    simplifiedQueries.push(expanded);
+                }
+                break; // Only one expansion to keep it simple
+            }
+        }
+
+        return {
+            originalQuery: query,
+            simplifiedQueries: simplifiedQueries.slice(0, 3),
+            reasoning: 'Sử dụng xử lý cơ bản (không có AI)',
+            confidence: 0.5,
+        };
     }
-    this.cache.set(key, result);
-  }
 
-  /**
-   * Clear cache
-   */
-  public clearCache(): void {
-    this.cache.clear();
-    console.log('[QueryPreprocessor] Cache cleared');
-  }
+    /**
+     * Cache management
+     */
+    private cacheResult(key: string, result: QueryPreprocessingResult): void {
+        if (this.cache.size >= this.maxCacheSize) {
+            // Remove oldest entry (first key)
+            const firstKey = this.cache.keys().next().value;
+            this.cache.delete(firstKey);
+        }
+        this.cache.set(key, result);
+    }
 
-  /**
-   * Get cache statistics
-   */
-  public getStats() {
-    return {
-      cacheSize: this.cache.size,
-      maxCacheSize: this.maxCacheSize,
-    };
-  }
+    /**
+     * Clear cache
+     */
+    public clearCache(): void {
+        this.cache.clear();
+        console.log('[QueryPreprocessor] Cache cleared');
+    }
+
+    /**
+     * Get cache statistics
+     */
+    public getStats() {
+        return {
+            cacheSize: this.cache.size,
+            maxCacheSize: this.maxCacheSize,
+        };
+    }
 }
 
 // Export singleton instance
