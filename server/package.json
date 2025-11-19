@@ -15,6 +15,7 @@
     "add-quota": "npx tsx scripts/add-quota.ts",
     "test:qdrant": "npx tsx test-qdrant-search.ts",
     "test:tiengui": "npx tsx test-search-tiengui.ts",
+    "test:filesearch": "npx tsx test-file-search.ts",
     "setup": "prisma generate && prisma migrate deploy"
   },
   "dependencies": {

@@ -228,6 +228,9 @@ model SystemSettings {
   peakHoursStart        String?  // Start time in HH:MM format (24-hour)
   peakHoursEnd          String?  // End time in HH:MM format (24-hour)
   peakHoursDays         String   @default("[]") // JSON array of days (0=Sunday, 6=Saturday)
+  // RAG Method Settings
+  ragMethod             String   @default("qdrant") // 'qdrant' or 'google-file-search'
+  fileSearchStoreName   String?  // Name of Google File Search store to use (if ragMethod is 'google-file-search')
   // Metadata
   updatedAt             DateTime @updatedAt
   updatedBy             String?  // Admin user ID who last updated
@@ -272,9 +275,16 @@ model Document {
   rawContent        String   // Full JSON extracted content
   markdownContent   String   // Markdown formatted full content
   
-  // Vector database references
+  // Vector database references (for Qdrant method)
   qdrantCollectionName String @default("vietnamese_documents")
   qdrantPointIds    String   @default("[]") // JSON array of point IDs in Qdrant
+  
+  // Google File Search references (for google-file-search method)
+  fileSearchStoreName String? // Name of File Search store
+  fileSearchDocumentName String? // Document name in File Search store
+  
+  // RAG method used for this document
+  ragMethod         String   @default("qdrant") // 'qdrant' or 'google-file-search'
   
   // Processing status
   processingStatus  String   @default("processing") // processing, completed, failed
@@ -289,6 +299,7 @@ model Document {
   @@index([uploadedBy])
   @@index([processingStatus])
   @@index([uploadedAt])
+  @@index([ragMethod])
   @@map("documents")
 }
 

@@ -12,9 +12,11 @@ import SystemSettings from './admin/SystemSettings';
 import DocumentManagement from './admin/DocumentManagement';
 import CollectionManagement from './admin/CollectionManagement';
 import ModelManagement from './admin/ModelManagement';
+import RAGConfiguration from './admin/RAGConfiguration';
+import FileSearchDocumentManagement from './admin/FileSearchDocumentManagement';
 import { Question } from '../types';
 
-type AdminTab = 'overview' | 'users' | 'tests' | 'knowledge' | 'categories' | 'settings' | 'model-usage' | 'ai-history' | 'subscription-plans' | 'subscriptions' | 'documents' | 'collections' | 'model-settings';
+type AdminTab = 'overview' | 'users' | 'tests' | 'knowledge' | 'categories' | 'settings' | 'model-usage' | 'ai-history' | 'subscription-plans' | 'subscriptions' | 'documents' | 'collections' | 'model-settings' | 'rag-config' | 'file-search-docs';
 
 interface AdminDashboardProps {
   userEmail: string;
@@ -65,6 +67,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         return <DocumentManagement />;
       case 'collections':
         return <CollectionManagement />;
+      case 'file-search-docs':
+        return <FileSearchDocumentManagement />;
       case 'model-usage':
         return <ModelUsageStats onBack={() => setActiveTab('overview')} />;
       case 'ai-history':
@@ -77,6 +81,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         return <SystemSettings />;
       case 'model-settings':
         return <ModelManagement />;
+      case 'rag-config':
+        return <RAGConfiguration />;
       default:
         return <Overview />;
     }
@@ -159,7 +165,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         </div>
         <nav className="p-4 space-y-2">
           <TabButton tab="overview" label="Tổng quan" icon="📊" />
-          
+
           {/* Quản lý người dùng */}
           <div className="space-y-1">
             <DropdownButton dropdownKey="user-management" label="Quản lý người dùng" icon="👥" />
@@ -173,12 +179,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
 
           {/* Quản lý kiến thức */}
           <div className="space-y-1">
-            <DropdownButton dropdownKey="knowledge-management" label="Quản lý kiến thức" icon="�" />
+            <DropdownButton dropdownKey="knowledge-management" label="Quản lý kiến thức" icon="📚" />
             {openDropdowns['knowledge-management'] && (
               <div className="space-y-1 mt-1">
                 <SubTabButton tab="tests" label="Quản lý bài thi" icon="📝" />
-                <SubTabButton tab="knowledge" label="Kiến thức" icon="�" />
-                <SubTabButton tab="documents" label="Văn bản RAG" icon="📄" />
+                <SubTabButton tab="knowledge" label="Kiến thức" icon="💡" />
+                <SubTabButton tab="documents" label="Văn bản RAG (Qdrant)" icon="📄" />
+                <SubTabButton tab="file-search-docs" label="Văn bản File Search" icon="🔍" />
                 <SubTabButton tab="collections" label="Collections" icon="📦" />
               </div>
             )}
@@ -191,9 +198,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
               <div className="space-y-1 mt-1">
                 <SubTabButton tab="subscription-plans" label="Quản lý gói" icon="💎" />
                 <SubTabButton tab="model-settings" label="Quản lý Models" icon="🤖" />
+                <SubTabButton tab="rag-config" label="Cấu hình RAG" icon="🔧" />
                 <SubTabButton tab="model-usage" label="AI Model Stats" icon="📈" />
                 <SubTabButton tab="ai-history" label="AI Search History" icon="🔍" />
-                <SubTabButton tab="settings" label="Cài đặt chung" icon="�" />
+                <SubTabButton tab="settings" label="Cài đặt chung" icon="⚙️" />
               </div>
             )}
           </div>

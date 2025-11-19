@@ -10,6 +10,7 @@ import { geminiRAGService } from '../services/gemini-rag.service.js';
 import { qdrantService } from '../services/qdrant.service.js';
 import { queryAnalyzerService } from '../services/query-analyzer.service.js';
 import { chatCacheService } from '../services/chat-cache.service.js';
+import { ragRouterService } from '../services/rag-router.service.js';
 import type { RAGQuery, RAGResponse } from '../types/rag.types.js';
 
 const router = Router();
@@ -116,6 +117,77 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
     };
 
     try {
+      // Check RAG configuration first
+      const ragConfig = await ragRouterService.getRAGConfig();
+      const useFileSearch = ragConfig.method === 'google-file-search';
+
+      if (useFileSearch) {
+        console.log(`[Chat Stream] Using Google File Search (store: ${ragConfig.fileSearchStoreName})`);
+        sendEvent('status', { message: 'Đang tìm kiếm với Google File Search...' });
+
+        // Use RAG Router for File Search
+        const query: RAGQuery = {
+          question,
+          topK: 10,
+        };
+
+        let fullAnswer = '';
+        let streamMetadata: any = null;
+
+        for await (const chunk of ragRouterService.processQueryStream(query)) {
+          if (chunk.done) {
+            streamMetadata = chunk.metadata;
+          } else {
+            fullAnswer += chunk.chunk;
+            sendEvent('chunk', { text: chunk.chunk });
+          }
+        }
+
+        // Save to database
+        const chatMessage = await prismaAny.chatMessage.create({
+          data: {
+            userId,
+            userMessage: question,
+            botResponse: fullAnswer || streamMetadata?.answer || '',
+            retrievedChunks: JSON.stringify(streamMetadata?.sources || []),
+            modelUsed: streamMetadata?.model || 'google-file-search',
+            inputTokens: 0,
+            outputTokens: 0,
+            totalTokens: 0,
+            confidence: streamMetadata?.confidence || 0,
+            cacheHit: false,
+            isDeepSearch: false,
+          },
+        });
+
+        // Deduct quota if not admin and not subscription user
+        if (!hasUnlimitedAccess) {
+          await (prisma as any).user.update({
+            where: { id: userId },
+            data: { aiSearchQuota: { decrement: 1 } }
+          });
+          console.log(`[Chat Stream] Deducted 1 quota from user ${userId}, remaining: ${user.aiSearchQuota - 1}`);
+        }
+
+        // Send completion event
+        sendEvent('complete', {
+          messageId: chatMessage.id,
+          confidence: streamMetadata?.confidence || 0,
+          sources: streamMetadata?.sources || [],
+          model: streamMetadata?.model || 'google-file-search',
+          quotaUsed: !hasUnlimitedAccess,
+          remainingQuota: hasUnlimitedAccess ? null : user.aiSearchQuota - 1,
+          method: 'google-file-search'
+        });
+
+        console.log(`[Chat Stream] Completed with File Search for user ${userId}`);
+        res.end();
+        return;
+      }
+
+      // === QDRANT METHOD (existing code below) ===
+      console.log('[Chat Stream] Using Qdrant method');
+
       // Check cache first for non-complex queries
       const analysisKeywords = [
         'bao nhiêu', 'có bao nhiêu', 'số lượng', 'đếm',
@@ -528,6 +600,69 @@ router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Re
 
     const questionLower = question.toLowerCase();
     const needsFullDocument = analysisKeywords.some(keyword => questionLower.includes(keyword));
+
+    // Check RAG configuration
+    const ragConfig = await ragRouterService.getRAGConfig();
+    const useFileSearch = ragConfig.method === 'google-file-search';
+
+    if (useFileSearch) {
+      console.log(`[Chat] Using Google File Search (store: ${ragConfig.fileSearchStoreName})`);
+
+      // Use RAG Router for File Search
+      const query: RAGQuery = {
+        question,
+        topK: 10,
+      };
+
+      const ragResponse: RAGResponse = await ragRouterService.processQuery(query);
+
+      // Save to database
+      const chatMessage = await prismaAny.chatMessage.create({
+        data: {
+          userId,
+          userMessage: question,
+          botResponse: ragResponse.answer,
+          retrievedChunks: JSON.stringify(ragResponse.sources || []),
+          modelUsed: ragResponse.model || 'google-file-search',
+          inputTokens: ragResponse.tokenUsage?.input || 0,
+          outputTokens: ragResponse.tokenUsage?.output || 0,
+          totalTokens: ragResponse.tokenUsage?.total || 0,
+          confidence: ragResponse.confidence || 0,
+          cacheHit: false,
+          isDeepSearch: false,
+        },
+      });
+
+      // Deduct quota if not admin and not subscription user
+      if (!hasUnlimitedAccess) {
+        await (prisma as any).user.update({
+          where: { id: userId },
+          data: { aiSearchQuota: { decrement: 1 } }
+        });
+        console.log(`[Chat] Deducted 1 quota from user ${userId}, remaining: ${user.aiSearchQuota - 1}`);
+      }
+
+      console.log(`[Chat] Answer generated with File Search, confidence: ${ragResponse.confidence}%`);
+
+      return res.json({
+        success: true,
+        message: {
+          id: chatMessage.id,
+          userId: chatMessage.userId,
+          question: chatMessage.userMessage,
+          answer: chatMessage.botResponse,
+          sources: JSON.parse(chatMessage.retrievedChunks || '[]'),
+          confidence: ragResponse.confidence,
+          createdAt: chatMessage.createdAt.toISOString(),
+          quotaUsed: !hasUnlimitedAccess,
+          remainingQuota: hasUnlimitedAccess ? null : user.aiSearchQuota - 1,
+          method: 'google-file-search'
+        },
+      });
+    }
+
+    // === QDRANT METHOD (existing code below) ===
+    console.log('[Chat] Using Qdrant method');
 
     // Check cache first for non-complex queries
     if (!needsFullDocument) {

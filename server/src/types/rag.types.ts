@@ -179,6 +179,11 @@ export interface RAGResponse {
     total: number;
   };
   structured?: boolean;          // Whether answer is structured (quiz format)
+  citations?: Array<{            // Detailed citation mapping (File Search specific)
+    segment: any;                // Text segment from answer
+    chunkIndices: number[];      // Which source chunks were used
+    confidenceScores?: number[]; // Confidence for each chunk
+  }>;
 }
 
 export interface RetrievedChunk {

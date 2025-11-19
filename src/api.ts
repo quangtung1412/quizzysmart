@@ -41,7 +41,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     ...options,
   });
-  
+
   if (!res.ok) {
     // Handle 401 Unauthorized - session expired or invalid
     if (res.status === 401) {
@@ -56,7 +56,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
     throw new Error(`API ${res.status}`);
   }
-  
+
   const contentType = res.headers.get("content-type");
   if (contentType && contentType.indexOf("application/json") !== -1) {
     return res.json();
@@ -330,7 +330,7 @@ export const api = {
     peakHoursEnd?: string;
     peakHoursDays?: number[];
   }>('/api/peak-hours-status'),
-  
+
   // Chat / RAG Q&A
   chatAsk: (question: string) => request<{
     message: {
@@ -362,4 +362,69 @@ export const api = {
       documentType: string;
     }>;
   }>('/api/chat/documents'),
+
+  // RAG Configuration (Admin)
+  ragConfigGet: () => request<{
+    success: boolean;
+    config: { method: string; fileSearchStoreName?: string };
+    stats: any;
+  }>('/api/rag-config'),
+  ragConfigSet: (method: string, fileSearchStoreName?: string) => request<{
+    success: boolean;
+    message: string;
+    config: any;
+  }>('/api/rag-config', {
+    method: 'POST',
+    body: JSON.stringify({ method, fileSearchStoreName })
+  }),
+  ragConfigListStores: () => request<{
+    success: boolean;
+    stores: Array<{ name: string; displayName: string; createTime: string }>;
+  }>('/api/rag-config/file-search-stores'),
+  ragConfigCreateStore: (displayName: string) => request<{
+    success: boolean;
+    message: string;
+    store: any;
+  }>('/api/rag-config/file-search-stores', {
+    method: 'POST',
+    body: JSON.stringify({ displayName })
+  }),
+  ragConfigDeleteStore: (storeName: string) => request<{
+    success: boolean;
+    message: string;
+  }>(`/api/rag-config/file-search-stores/${encodeURIComponent(storeName)}`, {
+    method: 'DELETE'
+  }),
+  ragConfigListDocuments: (ragMethod?: string, fileSearchStoreName?: string) => {
+    const params = new URLSearchParams();
+    if (ragMethod) params.append('ragMethod', ragMethod);
+    if (fileSearchStoreName) params.append('fileSearchStoreName', fileSearchStoreName);
+    return request<{
+      success: boolean;
+      documents: any[];
+    }>(`/api/rag-config/documents?${params.toString()}`);
+  },
+  ragConfigDeleteDocument: (documentId: string) => request<{
+    success: boolean;
+    message: string;
+  }>(`/api/rag-config/documents/${documentId}`, { method: 'DELETE' }),
+  ragConfigUploadToFileSearch: async (file: File, fileSearchStoreName: string, displayName: string) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('fileSearchStoreName', fileSearchStoreName);
+    formData.append('displayName', displayName);
+
+    const res = await fetch(`${API_BASE}/api/rag-config/upload-to-file-search`, {
+      method: 'POST',
+      credentials: 'include',
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(errorText || `HTTP ${res.status}`);
+    }
+
+    return res.json();
+  },
 };
