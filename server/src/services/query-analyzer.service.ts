@@ -7,6 +7,7 @@
 
 import { GoogleGenAI } from '@google/genai';
 import { modelSettingsService } from './model-settings.service.js';
+import { geminiTrackerService } from './gemini-tracker.service.js';
 
 interface QueryAnalysisResult {
   collections: string[];
@@ -29,7 +30,9 @@ class QueryAnalyzerService {
    */
   async analyzeQuery(
     query: string,
-    availableCollections: string[]
+    availableCollections: string[],
+    sessionId?: string,
+    userId?: string
   ): Promise<QueryAnalysisResult> {
     if (!this.ai) {
       console.warn('[QueryAnalyzer] Gemini not configured, using default collection');
@@ -44,9 +47,18 @@ class QueryAnalyzerService {
       // Get cheaper model from settings
       const cheapModel = await modelSettingsService.getCheaperModel();
       const prompt = this.buildAnalysisPrompt(query, availableCollections);
-      
+
       console.log('[QueryAnalyzer] Analyzing query with model:', cheapModel);
-      
+
+      const trackingId = await geminiTrackerService.startTracking({
+        endpoint: 'generateContent',
+        modelName: cheapModel,
+        requestType: 'query_analysis', // Changed from query_preprocessing to distinguish from preprocessor
+        userId,
+        sessionId,
+        metadata: { query, availableCollections },
+      });
+
       const response = await this.ai.models.generateContent({
         model: cheapModel,
         contents: [prompt],
@@ -57,13 +69,23 @@ class QueryAnalyzerService {
       });
 
       const text = response.text || '';
+      const usageMetadata: any = (response as any).usageMetadata || {};
+      const inputTokens = usageMetadata.promptTokenCount || 0;
+      const outputTokens = usageMetadata.candidatesTokenCount || 0;
+
+      await geminiTrackerService.endTracking(trackingId, {
+        inputTokens,
+        outputTokens,
+        status: 'success',
+      });
+
       console.log('[QueryAnalyzer] Raw AI response:', text);
 
       // Parse the AI response
       const analysis = this.parseAnalysisResponse(text, availableCollections);
-      
+
       console.log('[QueryAnalyzer] Analysis result:', analysis);
-      
+
       return analysis;
     } catch (error) {
       console.error('[QueryAnalyzer] Analysis failed:', error);
@@ -127,13 +149,13 @@ CHÚ Ý:
       }
 
       const parsed = JSON.parse(jsonMatch[0]);
-      
+
       // Validate and filter collections
       const validCollections = (parsed.collections || [])
         .filter((c: string) => availableCollections.includes(c));
 
       const confidence = Math.min(Math.max(parsed.confidence || 0.5, 0), 1);
-      
+
       // If confidence is low (< 0.5), search all collections to avoid missing info
       if (confidence < 0.5) {
         console.log(`[QueryAnalyzer] Low confidence (${confidence.toFixed(2)}), expanding to all collections`);
@@ -179,7 +201,7 @@ CHÚ Ý:
     availableCollections: string[]
   ): Promise<QueryAnalysisResult> {
     const queryLower = query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    
+
     const keywords: Record<string, string[]> = {
       tien_gui: ['tien gui', 'gui tiet kiem', 'lai suat gui', 'ky han', 'so tiet kiem'],
       tien_vay: ['tien vay', 'vay von', 'cho vay', 'lai suat vay', 'khoan vay', 'tin dung'],
@@ -207,7 +229,7 @@ CHÚ Ý:
     }
 
     // Calculate confidence based on matches
-    const confidence = matchedCollections.length > 0 
+    const confidence = matchedCollections.length > 0
       ? Math.min(0.5 + (maxMatches * 0.1), 0.9)
       : 0.3;
 
@@ -216,7 +238,7 @@ CHÚ Ý:
       console.log(`[QueryAnalyzer] Quick analysis: low confidence (${confidence.toFixed(2)}), searching all collections`);
       return {
         collections: availableCollections,
-        reasoning: matchedCollections.length === 0 
+        reasoning: matchedCollections.length === 0
           ? 'Không tìm thấy từ khóa cụ thể, tìm trong tất cả collections'
           : `Tìm thấy từ khóa liên quan nhưng độ tin cậy thấp (${confidence.toFixed(2)}), mở rộng tìm kiếm`,
         confidence: confidence,

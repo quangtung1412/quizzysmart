@@ -8,9 +8,9 @@ import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { geminiRAGService } from '../services/gemini-rag.service.js';
 import { qdrantService } from '../services/qdrant.service.js';
-import { queryAnalyzerService } from '../services/query-analyzer.service.js';
-import { queryPreprocessorService } from '../services/query-preprocessor.service.js';
+import { unifiedQueryProcessorService } from '../services/unified-query-processor.service.js';
 import { chatCacheService } from '../services/chat-cache.service.js';
+import { generateSessionId } from '../utils/session-id.js';
 import type { RAGQuery, RAGResponse } from '../types/rag.types.js';
 
 const router = Router();
@@ -73,7 +73,10 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
       });
     }
 
-    console.log(`[Chat Stream] User ${userId} asked: "${question.substring(0, 50)}..."`);
+    // Generate session ID to group all API calls for this request
+    const { generateSessionId } = await import('../utils/session-id.js');
+    const sessionId = generateSessionId(userId);
+    console.log(`[Chat Stream] Session ${sessionId} - User ${userId} asked: "${question.substring(0, 50)}..."`);
 
     // Check user quota first (admin has unlimited, others use aiSearchQuota)
     const user = await (prisma as any).user.findUnique({
@@ -241,53 +244,47 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
       } else {
         sendEvent('status', { message: 'Đang phân tích câu hỏi...' });
 
-        // NEW: Get all available collections
+        // Get all available collections
         const availableCollections = await qdrantService.listCollections();
         const collectionNames = availableCollections.map(c => c.name);
 
         console.log(`[Chat Stream] Available collections:`, collectionNames);
 
-        // NEW: Analyze query to determine which collections to search
-        const queryAnalysis = await queryAnalyzerService.analyzeQuery(question, collectionNames);
-        console.log(`[Chat Stream] Query analysis:`, {
-          collections: queryAnalysis.collections,
-          confidence: queryAnalysis.confidence.toFixed(2),
-          reasoning: queryAnalysis.reasoning,
-          searchingAll: queryAnalysis.collections.length === collectionNames.length
+        // OPTIMIZED: Use unified processor to analyze collections AND preprocess query in ONE API call
+        console.log(`[Chat Stream] Processing query with unified analyzer...`);
+        const queryResult = await unifiedQueryProcessorService.processQuery(question, collectionNames, sessionId, userId);
+        console.log(`[Chat Stream] Unified processing result:`, {
+          collections: queryResult.collections,
+          collectionConfidence: queryResult.collectionConfidence.toFixed(2),
+          variantCount: queryResult.simplifiedQueries.length,
+          preprocessingConfidence: queryResult.preprocessingConfidence.toFixed(2),
+          searchingAll: queryResult.collections.length === collectionNames.length
         });
 
         // Display user-friendly message
-        const searchMessage = queryAnalysis.collections.length === collectionNames.length
-          ? `Tìm kiếm trong tất cả nguồn (độ tin cậy: ${(queryAnalysis.confidence * 100).toFixed(0)}%)`
-          : `Tìm kiếm trong: ${queryAnalysis.collections.join(', ')} (độ tin cậy: ${(queryAnalysis.confidence * 100).toFixed(0)}%)`;
+        const searchMessage = queryResult.collections.length === collectionNames.length
+          ? `Tìm kiếm trong tất cả nguồn (độ tin cậy: ${(queryResult.collectionConfidence * 100).toFixed(0)}%)`
+          : `Tìm kiếm trong: ${queryResult.collections.join(', ')} (độ tin cậy: ${(queryResult.collectionConfidence * 100).toFixed(0)}%)`;
 
         sendEvent('status', { message: searchMessage });
 
-        // NEW: Preprocess query to improve semantic search accuracy
-        console.log(`[Chat Stream] Preprocessing query for better semantic matching...`);
-        const preprocessResult = await queryPreprocessorService.preprocessQuery(question);
-        console.log(`[Chat Stream] Query preprocessing:`, {
-          originalQuery: preprocessResult.originalQuery,
-          variantCount: preprocessResult.simplifiedQueries.length,
-          confidence: preprocessResult.confidence.toFixed(2),
-          reasoning: preprocessResult.reasoning
-        });
-
         // Display preprocessing info to user
-        if (preprocessResult.simplifiedQueries.length > 1) {
+        if (queryResult.simplifiedQueries.length > 1) {
           sendEvent('status', {
-            message: `Đã tối ưu hóa câu hỏi thành ${preprocessResult.simplifiedQueries.length} biến thể tìm kiếm`
+            message: `Đã tối ưu hóa câu hỏi thành ${queryResult.simplifiedQueries.length} biến thể tìm kiếm`
           });
         }
 
-        // Generate embeddings for all query variants
-        console.log(`[Chat Stream] Generating embeddings for ${preprocessResult.simplifiedQueries.length} query variants...`);
-        const allEmbeddings = await Promise.all(
-          preprocessResult.simplifiedQueries.map(q => geminiRAGService.generateEmbedding(q))
+        // OPTIMIZATION: Batch embed all simplified queries in ONE API call (N queries → 1 API call)
+        // This dramatically reduces costs compared to embedding each query separately
+        console.log(`[Chat Stream] Batch generating embeddings for ${queryResult.simplifiedQueries.length} simplified queries...`);
+        const allEmbeddings = await geminiRAGService.generateEmbeddings(
+          queryResult.simplifiedQueries,
+          sessionId,
+          userId
         );
-
-        // Use the first (most important) embedding as primary
-        const questionEmbedding = allEmbeddings[0];
+        const questionEmbedding = allEmbeddings[0]; // Use first simplified query's embedding
+        console.log(`[Chat Stream] Using primary embedding from: "${queryResult.simplifiedQueries[0]}"`);
 
         // Extract keywords for debugging
         const queryKeywords = question.toLowerCase()
@@ -301,28 +298,27 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
 
         console.log(`[Chat Stream] Query complexity: ${isComplexQuery ? 'COMPLEX' : 'SIMPLE'}, topK: ${topK}`);
 
-        // NEW: For complex queries or low preprocessing confidence, search with multiple query variants
-        const shouldUseMultipleVariants = isComplexQuery || preprocessResult.confidence < 0.7;
+        // NEW: For complex queries or low confidence, use multi-variant search with multiple embeddings
+        const shouldUseMultipleVariants = isComplexQuery || queryResult.preprocessingConfidence < 0.7;
 
         let searchResults;
-        if (shouldUseMultipleVariants && preprocessResult.simplifiedQueries.length > 1) {
-          console.log(`[Chat Stream] Using multi-variant search for better coverage`);
+        if (shouldUseMultipleVariants && queryResult.simplifiedQueries.length > 1) {
+          console.log(`[Chat Stream] Using multi-variant search with ${Math.min(allEmbeddings.length, 3)} embeddings for better coverage`);
 
-          // Search with each variant and merge results
-          const perVariantTopK = Math.ceil(topK / preprocessResult.simplifiedQueries.length);
+          // Search with multiple simplified query embeddings and merge results
+          const perVariantTopK = Math.ceil(topK / Math.min(allEmbeddings.length, 3));
           const allResults: any[] = [];
 
-          for (let i = 0; i < Math.min(preprocessResult.simplifiedQueries.length, 3); i++) {
+          for (let i = 0; i < Math.min(allEmbeddings.length, 3); i++) {
             const variantEmbedding = allEmbeddings[i];
-            const variantQuery = preprocessResult.simplifiedQueries[i];
-
+            const variantQuery = queryResult.simplifiedQueries[i];
             console.log(`[Chat Stream]   Searching with variant ${i + 1}: "${variantQuery}"`);
 
-            let variantResults;
-            if (queryAnalysis.collections.length > 1) {
+            let variantResults: any[] = [];
+            if (queryResult.collections.length > 1) {
               variantResults = await qdrantService.searchMultipleCollections(
                 variantEmbedding,
-                queryAnalysis.collections,
+                queryResult.collections,
                 { topK: perVariantTopK, minScore: 0.5 }
               );
             } else {
@@ -331,44 +327,43 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
                 {
                   topK: perVariantTopK,
                   minScore: 0.5,
-                  collectionName: queryAnalysis.collections[0]
+                  collectionName: queryResult.collections[0]
                 }
               );
             }
-
             allResults.push(...variantResults);
           }
 
           // Deduplicate and sort by score
           const seenIds = new Set<string>();
           searchResults = allResults
-            .filter(r => {
+            .filter((r: any) => {
               if (seenIds.has(r.id)) return false;
               seenIds.add(r.id);
               return true;
             })
-            .sort((a, b) => b.score - a.score)
+            .sort((a: any, b: any) => b.score - a.score)
             .slice(0, topK);
 
           console.log(`[Chat Stream] Multi-variant search: ${allResults.length} → ${searchResults.length} unique results`);
         } else {
-          // Standard single-query search
-          // NEW: Search across multiple collections (if analysis determined multiple)
-          if (queryAnalysis.collections.length > 1) {
-            console.log(`[Chat Stream] Searching in multiple collections:`, queryAnalysis.collections);
+          // Simple query: use primary embedding only
+          console.log(`[Chat Stream] Using primary embedding for direct search`);
+          if (queryResult.collections.length > 1) {
+            console.log(`[Chat Stream] Searching across ${queryResult.collections.length} collections with topK=${topK}`);
             searchResults = await qdrantService.searchMultipleCollections(
               questionEmbedding,
-              queryAnalysis.collections,
+              queryResult.collections,
               { topK, minScore: 0.5 }
             );
           } else {
-            console.log(`[Chat Stream] Searching in single collection:`, queryAnalysis.collections[0]);
+            console.log(`[Chat Stream] Searching in single collection:`, queryResult.collections[0]);
             searchResults = await qdrantService.search(
               questionEmbedding,
               {
                 topK,
                 minScore: 0.5,
-                collectionName: queryAnalysis.collections[0]
+                collectionName: queryResult.collections[0]
               }
             );
           }
@@ -465,12 +460,13 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
       const query: RAGQuery = {
         question: documentFilterMatch ? question.replace(documentFilterMatch[0], '').trim() : question,
         topK: retrievedChunks.length,
+        format: 'prose' // Chat always uses prose format, never JSON
       };
 
       let fullAnswer = '';
       let streamMetadata: any = null;
 
-      for await (const chunk of geminiRAGService.generateRAGAnswerStream(query, retrievedChunks)) {
+      for await (const chunk of geminiRAGService.generateRAGAnswerStream(query, retrievedChunks, sessionId, userId)) {
         if (chunk.done) {
           streamMetadata = chunk.metadata;
         } else {
@@ -555,6 +551,9 @@ router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Re
   try {
     const { question } = req.body;
     const userId = (req as any).user?.id;
+
+    // Generate session ID for grouping API calls
+    const sessionId = generateSessionId(userId);
 
     if (!question || typeof question !== 'string') {
       return res.status(400).json({
@@ -716,22 +715,30 @@ router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Re
       retrievedChunks = allChunks;
       console.log(`[Chat] Retrieved ${allChunks.length} chunks for full document analysis`);
     } else {
-      // NEW: Preprocess query before generating embedding
-      console.log(`[Chat] Preprocessing query for better semantic matching...`);
-      const preprocessResult = await queryPreprocessorService.preprocessQuery(question);
-      console.log(`[Chat] Query preprocessing:`, {
-        originalQuery: preprocessResult.originalQuery,
-        variantCount: preprocessResult.simplifiedQueries.length,
-        confidence: preprocessResult.confidence.toFixed(2),
-        reasoning: preprocessResult.reasoning
+      // Get all available collections
+      const availableCollections = await qdrantService.listCollections();
+      const collectionNames = availableCollections.map(c => c.name);
+
+      // OPTIMIZED: Use unified processor
+      console.log(`[Chat] Processing query with unified analyzer...`);
+      const queryResult = await unifiedQueryProcessorService.processQuery(question, collectionNames, sessionId, userId);
+      console.log(`[Chat] Unified processing result:`, {
+        collections: queryResult.collections,
+        variantCount: queryResult.simplifiedQueries.length,
+        collectionConfidence: queryResult.collectionConfidence.toFixed(2),
+        preprocessingConfidence: queryResult.preprocessingConfidence.toFixed(2),
       });
 
-      // Step 1: Generate embeddings for query variants
-      console.log(`[Chat] Generating embeddings for ${preprocessResult.simplifiedQueries.length} query variants...`);
-      const allEmbeddings = await Promise.all(
-        preprocessResult.simplifiedQueries.map(q => geminiRAGService.generateEmbedding(q))
+      // Step 1: Batch embed all simplified query variants in ONE API call (optimized for legal documents)
+      // These queries use formal legal terminology that matches better with document content
+      console.log(`[Chat] Batch generating embeddings for ${queryResult.simplifiedQueries.length} query variants...`);
+      const allEmbeddings = await geminiRAGService.generateEmbeddings(
+        queryResult.simplifiedQueries,
+        sessionId,
+        userId
       );
-      const questionEmbedding = allEmbeddings[0];
+      const questionEmbedding = allEmbeddings[0]; // Primary embedding from first simplified query
+      console.log(`[Chat] Using primary embedding from: "${queryResult.simplifiedQueries[0]}"`);
 
       // Extract keywords for debugging
       const queryKeywords = question.toLowerCase()
@@ -751,18 +758,18 @@ router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Re
       const topK = isComplexQuery ? 20 : 12; // Reduced from 30
 
       // NEW: For complex queries or low preprocessing confidence, use multi-variant search
-      const shouldUseMultipleVariants = isComplexQuery || preprocessResult.confidence < 0.7;
+      const shouldUseMultipleVariants = isComplexQuery || queryResult.preprocessingConfidence < 0.7;
 
-      if (shouldUseMultipleVariants && preprocessResult.simplifiedQueries.length > 1) {
+      if (shouldUseMultipleVariants && queryResult.simplifiedQueries.length > 1) {
         console.log(`[Chat] Using multi-variant search for better coverage`);
 
         // Search with each variant and merge results
-        const perVariantTopK = Math.ceil(topK / preprocessResult.simplifiedQueries.length);
+        const perVariantTopK = Math.ceil(topK / queryResult.simplifiedQueries.length);
         const allResults: any[] = [];
 
-        for (let i = 0; i < Math.min(preprocessResult.simplifiedQueries.length, 3); i++) {
+        for (let i = 0; i < Math.min(queryResult.simplifiedQueries.length, 3); i++) {
           const variantEmbedding = allEmbeddings[i];
-          const variantQuery = preprocessResult.simplifiedQueries[i];
+          const variantQuery = queryResult.simplifiedQueries[i];
 
           console.log(`[Chat]   Searching with variant ${i + 1}: "${variantQuery}"`);
 
@@ -877,11 +884,14 @@ router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Re
     const query: RAGQuery = {
       question: documentFilterMatch ? question.replace(documentFilterMatch[0], '').trim() : question,
       topK: retrievedChunks.length,
+      format: 'prose' // Chat always uses prose format, never JSON
     };
 
     const ragResponse: RAGResponse = await geminiRAGService.generateRAGAnswer(
       query,
-      retrievedChunks
+      retrievedChunks,
+      sessionId,
+      userId
     );
 
     // Step 5: Save chat message to database
@@ -1095,6 +1105,9 @@ router.post('/deep-search', requireAuth, requireChatAccess, async (req: Request,
     const { originalQuestion, messageId } = req.body;
     const userId = (req as any).user?.id;
 
+    // Generate session ID for grouping API calls
+    const sessionId = generateSessionId(userId);
+
     if (!originalQuestion || typeof originalQuestion !== 'string') {
       return res.status(400).json({
         success: false,
@@ -1148,7 +1161,7 @@ router.post('/deep-search', requireAuth, requireChatAccess, async (req: Request,
       });
       console.log(`[Deep Search] Deducted 1 quota from user ${userId}, remaining: ${user.aiSearchQuota - 1}`);
     }    // Enhanced search parameters for deep search
-    const questionEmbedding = await geminiRAGService.generateEmbedding(originalQuestion);
+    const questionEmbedding = await geminiRAGService.generateEmbedding(originalQuestion, sessionId, userId.toString());
 
     // Use higher topK and lower minScore for more comprehensive search
     const searchResults = await qdrantService.searchSimilar(questionEmbedding, 25, 0.3);
@@ -1194,11 +1207,14 @@ router.post('/deep-search', requireAuth, requireChatAccess, async (req: Request,
     const query: RAGQuery = {
       question: originalQuestion,
       topK: 25, // Use more chunks for deep search
+      format: 'prose' // Chat always uses prose format, never JSON
     };
 
     const ragResponse: RAGResponse = await geminiRAGService.generateRAGAnswer(
       query,
-      retrievedChunks
+      retrievedChunks,
+      sessionId,
+      userId
     );
 
     // Save as new chat message with deep search flag

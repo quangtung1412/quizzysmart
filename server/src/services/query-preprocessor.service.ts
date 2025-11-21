@@ -7,6 +7,7 @@
 
 import { GoogleGenAI } from '@google/genai';
 import { modelSettingsService } from './model-settings.service.js';
+import { geminiTrackerService } from './gemini-tracker.service.js';
 
 interface QueryPreprocessingResult {
     originalQuery: string;
@@ -31,7 +32,7 @@ class QueryPreprocessorService {
      * Preprocess query before embedding generation
      * Returns multiple simplified/rephrased versions suitable for legal document search
      */
-    async preprocessQuery(query: string): Promise<QueryPreprocessingResult> {
+    async preprocessQuery(query: string, sessionId?: string, userId?: string): Promise<QueryPreprocessingResult> {
         // Check cache first
         const cacheKey = query.toLowerCase().trim();
         if (this.cache.has(cacheKey)) {
@@ -55,6 +56,15 @@ class QueryPreprocessorService {
 
             console.log('[QueryPreprocessor] Preprocessing query with model:', cheapModel);
 
+            const trackingId = await geminiTrackerService.startTracking({
+                endpoint: 'generateContent',
+                modelName: cheapModel,
+                requestType: 'query_preprocessing',
+                userId,
+                sessionId,
+                metadata: { query },
+            });
+
             const response = await this.ai.models.generateContent({
                 model: cheapModel,
                 contents: [prompt],
@@ -65,6 +75,16 @@ class QueryPreprocessorService {
             });
 
             const text = response.text || '';
+            const usageMetadata: any = (response as any).usageMetadata || {};
+            const inputTokens = usageMetadata.promptTokenCount || 0;
+            const outputTokens = usageMetadata.candidatesTokenCount || 0;
+
+            await geminiTrackerService.endTracking(trackingId, {
+                inputTokens,
+                outputTokens,
+                status: 'success',
+            });
+
             console.log('[QueryPreprocessor] Raw AI response:', text.substring(0, 200) + '...');
 
             const result = this.parsePreprocessingResponse(text, query);

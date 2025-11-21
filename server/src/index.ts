@@ -16,9 +16,11 @@ import crypto from 'crypto';
 import documentRoutes from './routes/document.routes.js';
 import chatRoutes from './routes/chat.routes.js';
 import collectionRoutes from './routes/collection.routes.js';
+import geminiMonitoringRoutes from './routes/gemini-monitoring.routes.js';
 import { pdfProcessorService } from './services/pdf-processor.service.js';
 import { qdrantService } from './services/qdrant.service.js';
 import { modelSettingsService } from './services/model-settings.service.js';
+import { geminiTrackerService } from './services/gemini-tracker.service.js';
 
 const prisma = new PrismaClient();
 // Temporary any-cast for newly added models if type generation not up-to-date
@@ -300,6 +302,9 @@ app.use('/api/chat', chatRoutes);
 
 // Mount collection management routes (admin only)
 app.use('/api/admin', collectionRoutes);
+
+// Mount Gemini API monitoring routes (admin only)
+app.use('/api/gemini', geminiMonitoringRoutes);
 
 
 // OAuth routes (canonical path /api/auth/...)
@@ -3051,6 +3056,10 @@ app.post('/api/premium/search-by-image', async (req: Request, res: Response) => 
     user = req.user as any;
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+    // Generate session ID for grouping API calls
+    const { generateSessionId } = await import('./utils/session-id.js');
+    const sessionId = generateSessionId(user.id);
+
     // Check AI search quota
     const dbUser = await prisma.user.findUnique({
       where: { id: user.id },
@@ -3144,31 +3153,66 @@ QUY TẮC:
 Ví dụ:
 {"question":"Agribank được thành lập năm nào?","optionA":"1988","optionB":"1990","optionC":"1995","optionD":"2000"}`;
 
-    const startTime = Date.now(); // Track response time
-    const result = await genAI.models.generateContent({
-      model: selectedModel.name,
-      contents: [prompt, imagePart],
+    // Start tracking API call
+    const trackingId = await geminiTrackerService.startTracking({
+      endpoint: 'vision/generateContent',
+      modelName: selectedModel.name,
+      modelPriority: selectedModel.priority,
+      userId: user.id.toString(),
+      requestType: 'vision-ocr',
+      sessionId,
+      metadata: { feature: 'camera-search', hasImage: true }
     });
-    const responseTime = Date.now() - startTime; // Calculate response time
 
-    let responseText = (result.text || '').trim();
+    let responseText = '';
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let totalTokens = 0;
+    let responseTime = 0;
 
-    // Record successful request for rate limiting (ONLY if rotation is enabled)
-    // When rotation is DISABLED: We assume using paid/upgraded model with high limits,
-    // so no need to track RPM/RPD quotas
-    // When rotation is ENABLED: We use free tier models, so must track quotas to avoid hitting limits
-    if (!systemSettings || systemSettings.modelRotationEnabled) {
-      geminiModelRotation.recordRequest(selectedModel.name);
-      console.log(`[AI Search] Recorded request for quota tracking (free tier mode)`);
-    } else {
-      console.log(`[AI Search] Skipped quota tracking (paid/upgraded model mode)`);
+    try {
+      const startTime = Date.now(); // Track response time
+      const result = await genAI.models.generateContent({
+        model: selectedModel.name,
+        contents: [prompt, imagePart],
+      });
+      responseTime = Date.now() - startTime; // Calculate response time
+
+      responseText = (result.text || '').trim();
+
+      // Record successful request for rate limiting (ONLY if rotation is enabled)
+      // When rotation is DISABLED: We assume using paid/upgraded model with high limits,
+      // so no need to track RPM/RPD quotas
+      // When rotation is ENABLED: We use free tier models, so must track quotas to avoid hitting limits
+      if (!systemSettings || systemSettings.modelRotationEnabled) {
+        geminiModelRotation.recordRequest(selectedModel.name);
+        console.log(`[AI Search] Recorded request for quota tracking (free tier mode)`);
+      } else {
+        console.log(`[AI Search] Skipped quota tracking (paid/upgraded model mode)`);
+      }
+
+      // Get token usage from response
+      const usageMetadata = (result as any).usageMetadata || {};
+      inputTokens = usageMetadata.promptTokenCount || 0;
+      outputTokens = usageMetadata.candidatesTokenCount || 0;
+      totalTokens = usageMetadata.totalTokenCount || (inputTokens + outputTokens);
+
+      // End tracking with success
+      await geminiTrackerService.endTracking(trackingId, {
+        inputTokens,
+        outputTokens,
+        status: 'success'
+      });
+    } catch (apiError: any) {
+      // Track failed API call
+      await geminiTrackerService.endTracking(trackingId, {
+        inputTokens: 0,
+        outputTokens: 0,
+        status: 'error',
+        errorMessage: apiError.message || 'Vision API call failed'
+      });
+      throw apiError; // Re-throw to outer catch
     }
-
-    // Get token usage from response
-    const usageMetadata = (result as any).usageMetadata || {};
-    const inputTokens = usageMetadata.promptTokenCount || 0;
-    const outputTokens = usageMetadata.candidatesTokenCount || 0;
-    const totalTokens = usageMetadata.totalTokenCount || (inputTokens + outputTokens);
 
     // Remove markdown code blocks if present
     responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -3373,7 +3417,7 @@ Ví dụ:
         const { qdrantService } = await import('./services/qdrant.service.js');
 
         // Generate embedding for the recognized question
-        const questionEmbedding = await geminiRAGService.generateEmbedding(recognizedText);
+        const questionEmbedding = await geminiRAGService.generateEmbedding(recognizedText, sessionId, user.id.toString());
 
         // Get all available collections for comprehensive search
         const availableCollections = await qdrantService.listCollections();
@@ -3442,11 +3486,14 @@ Ví dụ:
           }));
 
           // Generate RAG answer with optimized prompt for image-extracted questions
+          // Use JSON format only for multiple choice questions, otherwise use prose
+          const hasOptions = !!(extractedData.optionA && extractedData.optionB);
+
           const ragQuery = {
             question: `Dựa trên câu hỏi: "${recognizedText}"
-                      ${extractedData.optionA ? `\nCác đáp án: A) ${extractedData.optionA}, B) ${extractedData.optionB}, C) ${extractedData.optionC}, D) ${extractedData.optionD}` : ''}
+                      ${hasOptions ? `\nCác đáp án: A) ${extractedData.optionA}, B) ${extractedData.optionB}, C) ${extractedData.optionC}, D) ${extractedData.optionD}` : ''}
                       
-                      Hãy phân tích và trả về CHÍNH XÁC theo định dạng JSON:
+                      ${hasOptions ? `Hãy phân tích và trả về CHÍNH XÁC theo định dạng JSON:
                       {
                         "correctAnswer": "A/B/C/D (chọn đáp án đúng)",
                         "explanation": "Lý do ngắn gọn",
@@ -3454,11 +3501,12 @@ Ví dụ:
                         "confidence": "số từ 1-100"
                       }
                       
-                      Chỉ trả về JSON, không giải thích dài dòng. Nếu không có đáp án A/B/C/D thì trả về câu trả lời ngắn gọn trong trường "correctAnswer".`,
-            topK: ragSearchResults.length
+                      Chỉ trả về JSON, không giải thích dài dòng.` : 'Hãy trả lời ngắn gọn, rõ ràng và chính xác.'}`,
+            topK: ragSearchResults.length,
+            format: hasOptions ? 'json' as const : 'prose' as const
           };
 
-          const ragResponse = await geminiRAGService.generateRAGAnswer(ragQuery, retrievedChunks);
+          const ragResponse = await geminiRAGService.generateRAGAnswer(ragQuery, retrievedChunks, sessionId, user.id.toString());
 
           // Add RAG result to response using structured format from service
           result_data.ragResult = {
@@ -3637,6 +3685,10 @@ app.post('/api/premium/search-by-image-stream', async (req: Request, res: Respon
     user = req.user as any;
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+    // Generate session ID for grouping API calls
+    const { generateSessionId } = await import('./utils/session-id.js');
+    const sessionId = generateSessionId(user.id);
+
     // Check AI search quota
     const dbUser = await prisma.user.findUnique({
       where: { id: user.id },
@@ -3736,24 +3788,59 @@ QUY TẮC:
 - Nếu không có đáp án nào, để giá trị rỗng ""
 - Không thêm văn bản không có trong ảnh`;
 
-      startTime = Date.now();
-      const result = await genAI.models.generateContent({
-        model: selectedModel.name,
-        contents: [prompt, imagePart],
+      // Start tracking API call
+      const trackingId = await geminiTrackerService.startTracking({
+        endpoint: 'vision/generateContent',
+        modelName: selectedModel.name,
+        modelPriority: selectedModel.priority,
+        userId: user.id.toString(),
+        requestType: 'vision-ocr',
+        sessionId,
+        metadata: { feature: 'camera-search-stream', hasImage: true }
       });
-      const responseTime = Date.now() - startTime;
 
-      let responseText = (result.text || '').trim();
+      let responseText = '';
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let totalTokens = 0;
+      let responseTime = 0;
 
-      if (!systemSettings || systemSettings.modelRotationEnabled) {
-        geminiModelRotation.recordRequest(selectedModel.name);
+      try {
+        startTime = Date.now();
+        const result = await genAI.models.generateContent({
+          model: selectedModel.name,
+          contents: [prompt, imagePart],
+        });
+        responseTime = Date.now() - startTime;
+
+        responseText = (result.text || '').trim();
+
+        if (!systemSettings || systemSettings.modelRotationEnabled) {
+          geminiModelRotation.recordRequest(selectedModel.name);
+        }
+
+        // Get token usage from response
+        const usageMetadata = (result as any).usageMetadata || {};
+        inputTokens = usageMetadata.promptTokenCount || 0;
+        outputTokens = usageMetadata.candidatesTokenCount || 0;
+        totalTokens = usageMetadata.totalTokenCount || (inputTokens + outputTokens);
+
+        // End tracking with success
+        await geminiTrackerService.endTracking(trackingId, {
+          inputTokens,
+          outputTokens,
+          status: 'success'
+        });
+      } catch (apiError: any) {
+        // Track failed API call
+        await geminiTrackerService.endTracking(trackingId, {
+          inputTokens: 0,
+          outputTokens: 0,
+          status: 'error',
+          errorMessage: apiError.message || 'Vision API call failed'
+        });
+        throw apiError; // Re-throw to outer catch
       }
-
-      // Get token usage from response
-      const usageMetadata = (result as any).usageMetadata || {};
-      const inputTokens = usageMetadata.promptTokenCount || 0;
-      const outputTokens = usageMetadata.candidatesTokenCount || 0;
-      const totalTokens = usageMetadata.totalTokenCount || (inputTokens + outputTokens);
 
       // Remove markdown code blocks if present
       responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -3935,7 +4022,7 @@ QUY TẮC:
           const { geminiRAGService } = await import('./services/gemini-rag.service.js');
           const { qdrantService } = await import('./services/qdrant.service.js');
 
-          const questionEmbedding = await geminiRAGService.generateEmbedding(recognizedText);
+          const questionEmbedding = await geminiRAGService.generateEmbedding(recognizedText, sessionId, user.id.toString());
 
           sendEvent('status', { message: 'Đang phân tích các tài liệu liên quan...' });
 
@@ -3992,13 +4079,27 @@ QUY TẮC:
               },
             }));
 
+            // Use JSON format only for multiple choice questions, otherwise use prose
+            const hasOptions = !!(extractedData.optionA && extractedData.optionB);
+
             const ragQuery = {
               question: `Dựa trên câu hỏi: "${recognizedText}"
-                        ${extractedData.optionA ? `\nCác đáp án: A) ${extractedData.optionA}, B) ${extractedData.optionB}, C) ${extractedData.optionC}, D) ${extractedData.optionD}` : ''}`,
-              topK: ragSearchResults.length
+                        ${hasOptions ? `\nCác đáp án: A) ${extractedData.optionA}, B) ${extractedData.optionB}, C) ${extractedData.optionC}, D) ${extractedData.optionD}` : ''}
+                        
+                        ${hasOptions ? `Hãy phân tích và trả về CHÍNH XÁC theo định dạng JSON:
+                        {
+                          "correctAnswer": "A/B/C/D (chọn đáp án đúng)",
+                          "explanation": "Lý do ngắn gọn",
+                          "source": "Số điều, số văn bản hoặc quy định cụ thể",
+                          "confidence": "số từ 1-100"
+                        }
+                        
+                        Chỉ trả về JSON, không giải thích dài dòng.` : 'Hãy trả lời ngắn gọn, rõ ràng và chính xác.'}`,
+              topK: ragSearchResults.length,
+              format: hasOptions ? 'json' as const : 'prose' as const
             };
 
-            const ragResponse = await geminiRAGService.generateRAGAnswer(ragQuery, retrievedChunks);
+            const ragResponse = await geminiRAGService.generateRAGAnswer(ragQuery, retrievedChunks, sessionId, user.id.toString());
 
             result_data.ragResult = {
               answer: ragResponse.answer,

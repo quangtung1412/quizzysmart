@@ -28,6 +28,7 @@ model User {
   subscriptions Subscription[]
   aiSearchHistory AiSearchHistory[]
   chatMessages ChatMessage[]  // RAG chat history
+  geminiApiCalls GeminiApiCall[] // API calls tracking
 }
 
 model KnowledgeBase {
@@ -353,4 +354,55 @@ model ChatMessage {
   @@index([createdAt])
   @@index([isDeepSearch])
   @@map("chat_messages")
+}
+
+// ============================================
+// Gemini API Tracking & Monitoring
+// ============================================
+
+model GeminiApiCall {
+  id                String   @id @default(cuid())
+  
+  // Request info
+  endpoint          String   // 'generateContent', 'embedContent', 'generateContentStream', 'extractDocument'
+  modelName         String   // Model used (gemini-2.5-flash, etc.)
+  modelPriority     Int      @default(0) // Priority from model rotation
+  
+  // User context
+  userId            String?  // User who made the request (if applicable)
+  user              User?    @relation(fields: [userId], references: [id])
+  requestType       String   // 'chat', 'search', 'embedding', 'document_extraction', 'query_preprocessing'
+  sessionId         String?  // Groups multiple API calls from single user request
+  
+  // Token usage
+  inputTokens       Int      @default(0)
+  outputTokens      Int      @default(0)
+  totalTokens       Int      @default(0)
+  
+  // Cost calculation (in USD)
+  inputCost         Float    @default(0.0)  // Cost for input tokens
+  outputCost        Float    @default(0.0)  // Cost for output tokens
+  totalCost         Float    @default(0.0)  // Total cost
+  
+  // Performance metrics
+  startTime         DateTime @default(now())
+  endTime           DateTime?
+  duration          Int      @default(0) // Duration in milliseconds
+  
+  // Status
+  status            String   @default("pending") // 'pending', 'success', 'error', 'retried'
+  errorMessage      String?
+  retryCount        Int      @default(0)
+  
+  // Additional metadata (JSON string)
+  metadata          String?  // {question, chunkCount, cacheHit, confidence, etc.}
+  
+  // Indexes for querying
+  @@index([userId])
+  @@index([modelName])
+  @@index([requestType])
+  @@index([startTime])
+  @@index([status])
+  @@index([sessionId])
+  @@map("gemini_api_calls")
 }

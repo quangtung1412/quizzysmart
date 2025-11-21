@@ -13,6 +13,24 @@ interface SearchResult {
     matchedQuestion: Question | null;
     confidence: number;
     alternativeMatches?: Question[];
+    ragResult?: {
+        answer: string;
+        confidence: number;
+        sources?: Array<{
+            documentName: string;
+            documentNumber?: string;
+            score: number;
+        }>;
+        model?: string;
+        chunksUsed?: number;
+    };
+    searchType?: string;
+    extractedOptions?: {
+        A?: string;
+        B?: string;
+        C?: string;
+        D?: string;
+    };
 }
 
 const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledgeBases, user }) => {
@@ -287,8 +305,8 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                         }}
                                         disabled={isCameraLoading}
                                         className={`w-full font-bold py-5 px-6 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl flex items-center justify-center gap-3 min-h-[64px] text-lg ${isCameraLoading
-                                                ? 'bg-slate-400 cursor-not-allowed text-white'
-                                                : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white'
+                                            ? 'bg-slate-400 cursor-not-allowed text-white'
+                                            : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white'
                                             }`}
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-7 h-7">
@@ -448,6 +466,55 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                         )}
                                     </div>
                                 </div>
+                            ) : searchResult.ragResult ? (
+                                <div className="bg-gradient-to-br from-purple-50 to-indigo-50 border-2 border-purple-300 rounded-xl p-4 sm:p-6 shadow-lg">
+                                    <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                                        <h4 className="font-bold text-purple-900 flex items-center gap-2 text-base sm:text-lg">
+                                            🤖 Câu trả lời từ AI
+                                        </h4>
+                                        <span className="bg-purple-200 text-purple-900 px-3 py-1.5 rounded-full text-xs font-bold shadow-sm">
+                                            {Math.round(searchResult.ragResult.confidence)}% độ tin cậy
+                                        </span>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        <div className="bg-white/70 rounded-lg p-4 border border-purple-200">
+                                            <p className="text-slate-800 text-sm sm:text-base leading-relaxed whitespace-pre-wrap">
+                                                {searchResult.ragResult.answer}
+                                            </p>
+                                        </div>
+
+                                        {searchResult.ragResult.sources && searchResult.ragResult.sources.length > 0 && (
+                                            <div className="mt-3 pt-3 border-t border-purple-200">
+                                                <p className="text-xs sm:text-sm text-purple-800 font-semibold mb-2">
+                                                    📚 Nguồn tài liệu ({searchResult.ragResult.sources.length}):
+                                                </p>
+                                                <div className="space-y-1.5">
+                                                    {searchResult.ragResult.sources.slice(0, 3).map((source, idx) => (
+                                                        <div key={idx} className="bg-purple-100/50 rounded px-3 py-2">
+                                                            <p className="text-xs text-purple-900">
+                                                                <span className="font-bold">[{idx + 1}]</span> {source.documentName}
+                                                                {source.documentNumber && ` (${source.documentNumber})`}
+                                                                <span className="ml-2 text-purple-600">• {Math.round(source.score * 100)}%</span>
+                                                            </p>
+                                                        </div>
+                                                    ))}
+                                                    {searchResult.ragResult.sources.length > 3 && (
+                                                        <p className="text-xs text-purple-700 italic pl-3">
+                                                            + {searchResult.ragResult.sources.length - 3} nguồn khác...
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {searchResult.ragResult.model && (
+                                            <p className="text-xs text-purple-600 italic mt-2">
+                                                Model: {searchResult.ragResult.model}
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
                             ) : (
                                 <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-4 sm:p-6">
                                     <div className="flex items-start gap-3">
@@ -528,8 +595,8 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                             <div
                                                 key={index}
                                                 className={`rounded-lg p-3 text-xs sm:text-sm ${index === searchResult.matchedQuestion!.correctAnswerIndex
-                                                        ? 'bg-green-100 border-2 border-green-400 font-semibold'
-                                                        : 'bg-gray-50 border border-gray-200'
+                                                    ? 'bg-green-100 border-2 border-green-400 font-semibold'
+                                                    : 'bg-gray-50 border border-gray-200'
                                                     }`}
                                             >
                                                 <span className="flex items-start gap-2">
@@ -550,6 +617,55 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                             </p>
                                         </div>
                                     )}
+                                </div>
+                            ) : searchResult.ragResult ? (
+                                <div className="bg-gradient-to-br from-purple-50 to-indigo-50 border-2 border-purple-300 rounded-xl p-4 sm:p-6">
+                                    <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                                        <h4 className="font-bold text-purple-900 flex items-center gap-2 text-sm sm:text-base">
+                                            🤖 Câu trả lời từ AI
+                                        </h4>
+                                        <span className="bg-purple-200 text-purple-900 px-3 py-1.5 rounded-full text-xs font-bold">
+                                            {Math.round(searchResult.ragResult.confidence)}% độ tin cậy
+                                        </span>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        <div className="bg-white/70 rounded-lg p-4 border border-purple-200">
+                                            <p className="text-slate-800 text-xs sm:text-sm leading-relaxed whitespace-pre-wrap">
+                                                {searchResult.ragResult.answer}
+                                            </p>
+                                        </div>
+
+                                        {searchResult.ragResult.sources && searchResult.ragResult.sources.length > 0 && (
+                                            <div className="mt-3 pt-3 border-t border-purple-200">
+                                                <p className="text-xs text-purple-800 font-semibold mb-2">
+                                                    📚 Nguồn tài liệu ({searchResult.ragResult.sources.length}):
+                                                </p>
+                                                <div className="space-y-1.5">
+                                                    {searchResult.ragResult.sources.slice(0, 3).map((source, idx) => (
+                                                        <div key={idx} className="bg-purple-100/50 rounded px-2 py-1.5">
+                                                            <p className="text-xs text-purple-900">
+                                                                <span className="font-bold">[{idx + 1}]</span> {source.documentName}
+                                                                {source.documentNumber && ` (${source.documentNumber})`}
+                                                                <span className="ml-2 text-purple-600">• {Math.round(source.score * 100)}%</span>
+                                                            </p>
+                                                        </div>
+                                                    ))}
+                                                    {searchResult.ragResult.sources.length > 3 && (
+                                                        <p className="text-xs text-purple-700 italic pl-2">
+                                                            + {searchResult.ragResult.sources.length - 3} nguồn khác...
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {searchResult.ragResult.model && (
+                                            <p className="text-xs text-purple-600 italic mt-2">
+                                                Model: {searchResult.ragResult.model}
+                                            </p>
+                                        )}
+                                    </div>
                                 </div>
                             ) : (
                                 <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-4 sm:p-6">

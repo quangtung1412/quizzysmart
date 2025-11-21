@@ -166,6 +166,7 @@ export interface RAGQuery {
   documentIds?: string[];        // Optional: filter by specific documents
   topK?: number;                 // Number of chunks to retrieve (default: 5)
   minScore?: number;             // Minimum similarity score (default: 0.5)
+  format?: 'json' | 'prose';     // Response format: 'json' for structured (camera search with options), 'prose' for natural text (default)
 }
 
 export interface RAGResponse {

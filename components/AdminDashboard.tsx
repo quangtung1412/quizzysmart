@@ -5,6 +5,7 @@ import UserManagement from './admin/UserManagement';
 import TestManagement from './admin/TestManagement';
 import KnowledgeManagement from './admin/KnowledgeManagement';
 import ModelUsageStats from './admin/ModelUsageStats';
+import GeminiMonitoring from './admin/GeminiMonitoring';
 import AiSearchHistory from './admin/AiSearchHistory';
 import SubscriptionPlanManagement from './admin/SubscriptionPlanManagement';
 import SubscriptionManagement from './admin/SubscriptionManagement';
@@ -14,7 +15,7 @@ import CollectionManagement from './admin/CollectionManagement';
 import ModelManagement from './admin/ModelManagement';
 import { Question } from '../types';
 
-type AdminTab = 'overview' | 'users' | 'tests' | 'knowledge' | 'categories' | 'settings' | 'model-usage' | 'ai-history' | 'subscription-plans' | 'subscriptions' | 'documents' | 'collections' | 'model-settings';
+type AdminTab = 'overview' | 'users' | 'tests' | 'knowledge' | 'categories' | 'settings' | 'model-usage' | 'gemini-monitoring' | 'ai-history' | 'subscription-plans' | 'subscriptions' | 'documents' | 'collections' | 'model-settings';
 
 interface AdminDashboardProps {
   userEmail: string;
@@ -67,6 +68,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         return <CollectionManagement />;
       case 'model-usage':
         return <ModelUsageStats onBack={() => setActiveTab('overview')} />;
+      case 'gemini-monitoring':
+        return <GeminiMonitoring onBack={() => setActiveTab('overview')} />;
       case 'ai-history':
         return <AiSearchHistory />;
       case 'subscription-plans':
@@ -159,7 +162,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
         </div>
         <nav className="p-4 space-y-2">
           <TabButton tab="overview" label="Tổng quan" icon="📊" />
-          
+
           {/* Quản lý người dùng */}
           <div className="space-y-1">
             <DropdownButton dropdownKey="user-management" label="Quản lý người dùng" icon="👥" />
@@ -192,8 +195,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
                 <SubTabButton tab="subscription-plans" label="Quản lý gói" icon="💎" />
                 <SubTabButton tab="model-settings" label="Quản lý Models" icon="🤖" />
                 <SubTabButton tab="model-usage" label="AI Model Stats" icon="📈" />
+                <SubTabButton tab="gemini-monitoring" label="Gemini API Monitor" icon="💰" />
                 <SubTabButton tab="ai-history" label="AI Search History" icon="🔍" />
-                <SubTabButton tab="settings" label="Cài đặt chung" icon="�" />
+                <SubTabButton tab="settings" label="Cài đặt chung" icon="⚙" />
               </div>
             )}
           </div>

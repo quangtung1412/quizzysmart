@@ -18,6 +18,7 @@ import type {
 import { geminiModelRotation } from '../gemini-model-rotation.js';
 import { qdrantService } from './qdrant.service.js';
 import { modelSettingsService } from './model-settings.service.js';
+import { geminiTrackerService } from './gemini-tracker.service.js';
 
 class GeminiRAGService {
   private ai: GoogleGenAI;
@@ -243,12 +244,29 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
         try {
           console.log(`[Gemini] Extraction attempt ${attempt}/${this.maxRetries}`);
 
+          const trackingId = await geminiTrackerService.startTracking({
+            endpoint: 'generateContent',
+            modelName: 'gemini-2.5-flash',
+            requestType: 'document_extraction',
+            metadata: { fileUri },
+          });
+
           const response = await this.ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents,
           });
 
           const text = response.text || '';
+          const usageMetadata: any = (response as any).usageMetadata || {};
+          const inputTokens = usageMetadata.promptTokenCount || 0;
+          const outputTokens = usageMetadata.candidatesTokenCount || 0;
+
+          await geminiTrackerService.endTracking(trackingId, {
+            inputTokens,
+            outputTokens,
+            status: 'success',
+          });
+
           console.log(`[Gemini] Extraction completed successfully`);
 
           // Parse JSON response
@@ -369,7 +387,7 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
   /**
    * Generate embedding for text with retry logic
    */
-  async generateEmbedding(text: string): Promise<number[]> {
+  async generateEmbedding(text: string, sessionId?: string, userId?: string): Promise<number[]> {
     let lastError: any;
 
     // Get embedding model from settings
@@ -377,6 +395,15 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
 
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
+        const trackingId = await geminiTrackerService.startTracking({
+          endpoint: 'embedContent',
+          modelName: embeddingModel,
+          requestType: 'embedding',
+          userId,
+          sessionId,
+          metadata: { textLength: text.length },
+        });
+
         const result = await this.ai.models.embedContent({
           model: embeddingModel,
           contents: text,
@@ -388,6 +415,14 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
         if (!result.embeddings || result.embeddings.length === 0 || !result.embeddings[0].values) {
           throw new Error('Invalid embedding response');
         }
+
+        // Estimate tokens for embedding (rough estimate: 1 token ≈ 4 characters)
+        const estimatedTokens = Math.ceil(text.length / 4);
+        await geminiTrackerService.endTracking(trackingId, {
+          inputTokens: estimatedTokens,
+          outputTokens: 0,
+          status: 'success',
+        });
 
         return result.embeddings[0].values;
       } catch (error) {
@@ -411,7 +446,7 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
    * Generate embeddings for multiple texts (batch)
    * Optimized to send multiple texts in a single API call to reduce costs
    */
-  async generateEmbeddings(texts: string[]): Promise<number[][]> {
+  async generateEmbeddings(texts: string[], sessionId?: string, userId?: string): Promise<number[][]> {
     try {
       const startTime = Date.now();
       console.log(`[Gemini] 🚀 Generating embeddings for ${texts.length} texts using batch mode`);
@@ -443,6 +478,15 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
         // Retry logic for the entire batch
         for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
           try {
+            const trackingId = await geminiTrackerService.startTracking({
+              endpoint: 'embedContent',
+              modelName: embeddingModel,
+              requestType: 'embedding',
+              userId,
+              sessionId,
+              metadata: { batchSize: batch.length, batchNum, totalBatches },
+            });
+
             // Send all texts in the batch as an array to embedContent
             const result = await this.ai.models.embedContent({
               model: embeddingModel,
@@ -462,6 +506,16 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
                 throw new Error('Embedding response missing values');
               }
               return emb.values;
+            });
+
+            // Estimate tokens (rough: 1 token ≈ 4 chars, sum all texts)
+            const totalChars = batch.reduce((sum, t) => sum + t.length, 0);
+            const estimatedTokens = Math.ceil(totalChars / 4);
+
+            await geminiTrackerService.endTracking(trackingId, {
+              inputTokens: estimatedTokens,
+              outputTokens: 0,
+              status: 'success',
             });
 
             console.log(`[Gemini] ✅ Batch ${batchNum}/${totalBatches}: Successfully generated ${batchEmbeddings.length} embeddings`);
@@ -488,7 +542,7 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
           const fallbackResults: number[][] = [];
           for (const text of batch) {
             try {
-              const embedding = await this.generateEmbedding(text);
+              const embedding = await this.generateEmbedding(text, sessionId, userId);
               fallbackResults.push(embedding);
             } catch (error) {
               console.error(`[Gemini] Failed to generate embedding for individual text: ${error}`);
@@ -520,7 +574,9 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
    */
   async generateRAGAnswer(
     query: RAGQuery,
-    retrievedChunks: RetrievedChunk[]
+    retrievedChunks: RetrievedChunk[],
+    sessionId?: string,
+    userId?: string
   ): Promise<RAGResponse> {
     try {
       console.log(`[Gemini] Generating RAG answer for query: "${query.question.substring(0, 50)}..."`);
@@ -550,7 +606,7 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
 
       console.log(`[Gemini] Context built from ${filteredChunks.length} filtered chunks (was ${retrievedChunks.length})`);
 
-      const prompt = this.buildRAGPrompt(query.question, context);
+      const prompt = this.buildRAGPrompt(query.question, context, query.format || 'prose');
 
       const modelInfo = await this.getAnswerModel();
 
@@ -633,96 +689,160 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
   }
 
   /**
-   * Generate answer using RAG with streaming
+   * Generate answer using RAG with streaming (with retry logic)
    */
   async *generateRAGAnswerStream(
     query: RAGQuery,
-    retrievedChunks: RetrievedChunk[]
+    retrievedChunks: RetrievedChunk[],
+    sessionId?: string,
+    userId?: string
   ): AsyncGenerator<{ chunk: string; done: boolean; metadata?: any }> {
-    try {
-      console.log(`[Gemini] Generating streaming RAG answer for query: "${query.question.substring(0, 50)}..."`);
+    console.log(`[Gemini] Generating streaming RAG answer for query: "${query.question.substring(0, 50)}..."`);
 
-      // Apply intelligent filtering (Phase 2 optimization)
-      const maxChunks = query.topK || 12;
-      const filteredChunks = this.filterChunksByRelevance(retrievedChunks, maxChunks, 0.5);
+    // Apply intelligent filtering (Phase 2 optimization)
+    const maxChunks = query.topK || 12;
+    const filteredChunks = this.filterChunksByRelevance(retrievedChunks, maxChunks, 0.5);
 
-      // Build context from filtered chunks
-      const context = filteredChunks
-        .map((chunk, idx) => {
-          const source = chunk.documentNumber
-            ? `${chunk.documentName} (${chunk.documentNumber})`
-            : chunk.documentName;
+    // Build context from filtered chunks
+    const context = filteredChunks
+      .map((chunk, idx) => {
+        const source = chunk.documentNumber
+          ? `${chunk.documentName} (${chunk.documentNumber})`
+          : chunk.documentName;
 
-          let location = '';
-          if (chunk.metadata.chapterNumber) {
-            location += `Chương ${chunk.metadata.chapterNumber}`;
-          }
-          if (chunk.metadata.articleNumber) {
-            location += location ? `, Điều ${chunk.metadata.articleNumber}` : `Điều ${chunk.metadata.articleNumber}`;
-          }
+        let location = '';
+        if (chunk.metadata.chapterNumber) {
+          location += `Chương ${chunk.metadata.chapterNumber}`;
+        }
+        if (chunk.metadata.articleNumber) {
+          location += location ? `, Điều ${chunk.metadata.articleNumber}` : `Điều ${chunk.metadata.articleNumber}`;
+        }
 
-          return `[${idx + 1}] ${source}${location ? ` - ${location}` : ''}:\n${chunk.content}`;
-        })
-        .join('\n\n---\n\n');
+        return `[${idx + 1}] ${source}${location ? ` - ${location}` : ''}:\n${chunk.content}`;
+      })
+      .join('\n\n---\n\n');
 
-      console.log(`[Gemini] Context built from ${filteredChunks.length} filtered chunks (was ${retrievedChunks.length})`);
+    console.log(`[Gemini] Context built from ${filteredChunks.length} filtered chunks (was ${retrievedChunks.length})`);
 
-      const prompt = this.buildRAGPrompt(query.question, context);
+    const prompt = this.buildRAGPrompt(query.question, context, query.format || 'prose');
 
-      console.log(prompt);
-
-      const modelInfo = await this.getAnswerModel();
-
-      console.log(`[Gemini] Streaming with model: ${modelInfo.name}`);
-
-      const streamPromise = this.ai.models.generateContentStream({
-        model: modelInfo.name,
-        contents: prompt,
-      });
-
-      const stream = await streamPromise;
-
-      let fullText = '';
-      for await (const chunk of stream) {
-        const text = chunk.text || '';
-        fullText += text;
-        yield { chunk: text, done: false };
-      }
-
-      // Calculate confidence based on retrieval scores
-      const avgScore = filteredChunks.reduce((sum, c) => sum + c.score, 0) / filteredChunks.length;
-      const confidence = Math.round(avgScore * 100);
-
-      console.log(`[Gemini] Streaming completed, total length: ${fullText.length}`);
-
-      // Parse structured quiz answer if available
-      let structuredAnswer: any = null;
+    // Retry logic for streaming
+    let lastError: any;
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      let trackingId: string | undefined;
       try {
-        const jsonMatch = fullText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          structuredAnswer = JSON.parse(jsonMatch[0]);
-          console.log('[Gemini] Parsed structured quiz answer (streaming):', structuredAnswer);
-        }
-      } catch (parseError) {
-        console.warn('[Gemini] Could not parse structured answer in streaming, using raw text');
-      }
+        console.log(`[Gemini] Streaming attempt ${attempt}/${this.maxRetries}`);
 
-      // Final chunk with metadata (use filtered chunks for sources)
-      yield {
-        chunk: '',
-        done: true,
-        metadata: {
+        const modelInfo = await this.getAnswerModel();
+        console.log(`[Gemini] Streaming with model: ${modelInfo.name}`);
+
+        trackingId = await geminiTrackerService.startTracking({
+          endpoint: 'generateContentStream',
+          modelName: modelInfo.name,
+          modelPriority: modelInfo.priority,
+          requestType: 'chat',
+          userId,
+          sessionId,
+          metadata: {
+            question: query.question.substring(0, 100),
+            chunkCount: filteredChunks.length,
+          },
+        });
+
+        const streamPromise = this.ai.models.generateContentStream({
           model: modelInfo.name,
-          confidence: structuredAnswer?.confidence || confidence,
-          sources: filteredChunks,
-          answer: structuredAnswer || fullText,
-          structured: !!structuredAnswer
+          contents: prompt,
+        });
+
+        const stream = await streamPromise;
+
+        let fullText = '';
+        let tokenCount = 0;
+
+        for await (const chunk of stream) {
+          const text = chunk.text || '';
+          fullText += text;
+          tokenCount += Math.ceil(text.length / 4); // Rough estimate
+          yield { chunk: text, done: false };
         }
-      };
-    } catch (error) {
-      console.error('[Gemini] RAG streaming failed:', error);
-      throw new Error(`Failed to stream answer: ${error}`);
+
+        // Estimate tokens (rough: prompt + response)
+        const estimatedInputTokens = Math.ceil(prompt.length / 4);
+        const estimatedOutputTokens = tokenCount;
+
+        await geminiTrackerService.endTracking(trackingId, {
+          inputTokens: estimatedInputTokens,
+          outputTokens: estimatedOutputTokens,
+          status: 'success',
+        });
+
+        // Calculate confidence based on retrieval scores
+        const avgScore = filteredChunks.reduce((sum, c) => sum + c.score, 0) / filteredChunks.length;
+        const confidence = Math.round(avgScore * 100);
+
+        console.log(`[Gemini] Streaming completed, total length: ${fullText.length}`);
+
+        // Parse structured quiz answer if available
+        let structuredAnswer: any = null;
+        try {
+          const jsonMatch = fullText.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            structuredAnswer = JSON.parse(jsonMatch[0]);
+            console.log('[Gemini] Parsed structured quiz answer (streaming):', structuredAnswer);
+          }
+        } catch (parseError) {
+          console.warn('[Gemini] Could not parse structured answer in streaming, using raw text');
+        }
+
+        // Final chunk with metadata (use filtered chunks for sources)
+        yield {
+          chunk: '',
+          done: true,
+          metadata: {
+            model: modelInfo.name,
+            confidence: structuredAnswer?.confidence || confidence,
+            sources: filteredChunks,
+            answer: structuredAnswer || fullText,
+            structured: !!structuredAnswer
+          }
+        };
+
+        return; // Success, exit retry loop
+      } catch (error) {
+        lastError = error;
+
+        // Try to end tracking with error status if trackingId exists
+        if (typeof trackingId !== 'undefined') {
+          try {
+            await geminiTrackerService.endTracking(trackingId, {
+              inputTokens: 0,
+              outputTokens: 0,
+              status: 'error',
+              errorMessage: String(error).substring(0, 500),
+              retryCount: attempt,
+            });
+          } catch (trackingError) {
+            console.warn('[Gemini] Failed to record error tracking:', trackingError);
+          }
+        }
+
+        if (this.isRetryableError(error) && attempt < this.maxRetries) {
+          const delay = this.retryDelay * Math.pow(2, attempt - 1);
+          console.warn(`[Gemini] Streaming retry ${attempt}/${this.maxRetries}: ${error}`);
+          console.log(`[Gemini] Waiting ${delay}ms before retry...`);
+          await this.sleep(delay);
+          continue;
+        } else {
+          // Non-retryable or max retries reached
+          console.error(`[Gemini] Streaming failed after ${attempt} attempts:`, error);
+          break;
+        }
+      }
     }
+
+    // All retries failed
+    console.error('[Gemini] RAG streaming failed:', lastError);
+    throw new Error(`Failed to stream answer: ${lastError}`);
   }
 
   /**
@@ -829,11 +949,12 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
   /**
    * Build RAG prompt (optimized version)
    */
-  private buildRAGPrompt(question: string, context: string): string {
+  private buildRAGPrompt(question: string, context: string, format: 'json' | 'prose' = 'prose'): string {
     // Check if it's a multiple choice question
     const isMultipleChoiceQuestion = this.isMultipleChoiceQuestion(question);
 
-    if (isMultipleChoiceQuestion) {
+    // Only use JSON format if explicitly requested AND it's a multiple choice question
+    if (format === 'json' && isMultipleChoiceQuestion) {
       // Multiple choice question - return specific answer format
       const hasExtractedOptions = question.includes('Các đáp án:');
 
@@ -896,7 +1017,7 @@ Trả về JSON theo format trên:
 `;
       }
     } else {
-      // Regular question - return natural text response
+      // Regular question OR prose format requested - return natural text response
       return `
 Bạn là một trợ lý AI chuyên về pháp luật Việt Nam. Nhiệm vụ của bạn là trả lời câu hỏi của người dùng dựa trên các văn bản pháp luật được cung cấp.
 
