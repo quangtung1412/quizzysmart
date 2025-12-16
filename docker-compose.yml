@@ -34,7 +34,9 @@ services:
       dockerfile: Dockerfile
     container_name: agribank-quiz-frontend
     ports:
-      - "80:80"
+      - "5173:5173"
+    environment:
+      - VITE_API_PROXY_TARGET=http://backend:3000
     depends_on:
       backend:
         condition: service_healthy

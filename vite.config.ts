@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+  const apiProxyTarget = env.VITE_API_PROXY_TARGET || 'http://localhost:3000';
   return {
     plugins: [react()],
     define: {
@@ -24,7 +25,7 @@ export default defineConfig(({ mode }) => {
       ],
       proxy: {
         '/api': {
-          target: 'http://localhost:3000',
+          target: apiProxyTarget,
           changeOrigin: true,
           secure: false
         }
