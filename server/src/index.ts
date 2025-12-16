@@ -321,8 +321,12 @@ app.get('/api/auth/google', (req, res, next) => {
   console.log('[OAuth] Start flow callback=', dynamicCallback);
   return passport.authenticate('google', { scope: ['profile', 'email'], callbackURL: dynamicCallback } as any)(req, res, next);
 });
-app.get('/api/auth/google/callback', passport.authenticate('google', { failureRedirect: '/api/auth/fail' }), async (req: Request, res: Response) => {
-  // If APP_BASE_URL provided, always trust it. Otherwise derive from forwarded headers (production behind Nginx)
+app.get('/api/auth/fail', (req: Request, res: Response) => {
+  return res.status(401).send('Đăng nhập Google thất bại. Vui lòng thử lại hoặc kiểm tra cấu hình OAuth (redirect URI / client secret).');
+});
+
+app.get('/api/auth/google/callback', (req: Request, res: Response, next) => {
+  // If APP_BASE_URL provided, always trust it. Otherwise derive from forwarded headers.
   let finalBase = appBaseUrl;
   if (!process.env.APP_BASE_URL) {
     const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
@@ -332,22 +336,54 @@ app.get('/api/auth/google/callback', passport.authenticate('google', { failureRe
     }
   }
 
-  // Handle device tracking for OAuth login
-  try {
-    const user = req.user as any;
-    const deviceId = req.query.deviceId as string || `google-${Date.now()}`;
-
-    // Generate session token and handle device logout
-    const { sessionToken } = await handleDeviceLogin(user.id, deviceId);
-
-    // Store sessionToken in session for later retrieval
-    (req.session as any).deviceSessionToken = sessionToken;
-    (req.session as any).deviceId = deviceId;
-  } catch (error) {
-    console.error('Device tracking error during OAuth:', error);
+  // Ensure the same callbackURL is used when exchanging the code
+  let effectiveCallback = callbackURL;
+  if (!process.env.GOOGLE_CALLBACK_URL) {
+    const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
+    if (host) {
+      const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'http');
+      effectiveCallback = `${proto}://${host.replace(/\/$/, '')}/api/auth/google/callback`;
+    }
   }
 
-  res.redirect(finalBase + '/');
+  return passport.authenticate('google', { failureRedirect: '/api/auth/fail', callbackURL: effectiveCallback } as any, (err: any, user: any, info: any) => {
+    if (err) {
+      const anyErr = err as any;
+      console.error('[OAuth] Google callback error:', {
+        name: anyErr?.name,
+        message: anyErr?.message,
+        status: anyErr?.status,
+        code: anyErr?.code,
+        data: anyErr?.data,
+        oauthError: anyErr?.oauthError?.data || anyErr?.oauthError,
+      });
+      return res.status(500).send(`Google OAuth lỗi: ${anyErr?.message || 'Unknown error'}`);
+    }
+
+    if (!user) {
+      console.warn('[OAuth] Google callback: no user returned', { info });
+      return res.redirect('/api/auth/fail');
+    }
+
+    req.logIn(user, async (loginErr) => {
+      if (loginErr) {
+        console.error('[OAuth] req.logIn error:', loginErr);
+        return res.status(500).send('Google OAuth lỗi đăng nhập phiên (session).');
+      }
+
+      // Handle device tracking for OAuth login
+      try {
+        const deviceId = (req.query.deviceId as string) || `google-${Date.now()}`;
+        const { sessionToken } = await handleDeviceLogin(user.id, deviceId);
+        (req.session as any).deviceSessionToken = sessionToken;
+        (req.session as any).deviceId = deviceId;
+      } catch (error) {
+        console.error('Device tracking error during OAuth:', error);
+      }
+
+      return res.redirect(finalBase + '/');
+    });
+  })(req, res, next);
 });
 
 app.post('/api/auth/register', async (req: Request, res: Response) => {
