@@ -282,7 +282,9 @@ CHÚ Ý:
         if (this.cache.size >= this.maxCacheSize) {
             // Remove oldest entry (first key)
             const firstKey = this.cache.keys().next().value;
-            this.cache.delete(firstKey);
+            if (firstKey) {
+                this.cache.delete(firstKey);
+            }
         }
         this.cache.set(key, result);
     }

@@ -9,7 +9,7 @@ import bcrypt from 'bcrypt';
 import { PrismaClient, User } from '@prisma/client';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
-import { geminiModelRotation } from './gemini-model-rotation';
+import { geminiModelRotation } from './gemini-model-rotation.js';
 import crypto from 'crypto';
 
 // RAG imports

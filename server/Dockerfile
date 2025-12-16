@@ -3,6 +3,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Install OpenSSL for Prisma
+RUN apk add --no-cache openssl
+
 # Copy package files for better layer caching
 COPY package*.json ./
 
@@ -12,7 +15,7 @@ RUN npm ci
 # Copy prisma schema
 COPY prisma ./prisma/
 
-# Generate Prisma client
+# Generate Prisma client (skip migrations in build)
 RUN npx prisma generate
 
 # Copy source code
@@ -20,16 +23,16 @@ COPY tsconfig.json ./
 COPY src ./src/
 COPY scripts ./scripts/
 
-# Build TypeScript
-RUN npm run build
+# Build TypeScript (without prebuild hook)
+RUN npx tsc -p tsconfig.json
 
 # Production stage
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Install curl and wget for healthcheck
-RUN apk add --no-cache curl wget
+# Install OpenSSL, curl and wget for Prisma and healthcheck
+RUN apk add --no-cache openssl curl wget
 
 # Copy package files
 COPY package*.json ./

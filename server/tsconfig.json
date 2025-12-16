@@ -7,7 +7,11 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "strict": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "paths": {
+      "@prisma/client": ["./node_modules/@prisma/client"]
+    }
   },
-  "include": ["src", "prisma"]
+  "include": ["src", "prisma"],
+  "exclude": ["node_modules", "dist"]
 }

@@ -10,10 +10,11 @@ COPY package*.json ./
 RUN npm ci
 
 # Copy source code and config files
-COPY tsconfig.json vite.config.ts tailwind.config.cjs postcss.config.cjs index.html ./
+COPY tsconfig.json vite.config.ts tailwind.config.cjs postcss.config.cjs index.html index.tsx ./
 COPY src ./src/
 COPY components ./components/
 COPY public ./public/
+COPY App.tsx AppWithRouter.tsx types.ts metadata.json ./
 
 # Build the application
 RUN npm run build
