@@ -48,12 +48,20 @@ router.post(
   uploadDocuments,
   handleUploadError,
   async (req: Request, res: Response) => {
+    const startTime = Date.now();
     try {
       const files = req.files as Express.Multer.File[];
       const userId = (req as any).user?.id;
+      const userEmail = (req as any).user?.email;
       const { collectionName } = req.body; // NEW: Get collection name from request
 
+      console.log(`\n[Document Upload] ========== NEW REQUEST ==========`);
+      console.log(`[Document Upload] User: ${userEmail} (${userId})`);
+      console.log(`[Document Upload] Files count: ${files?.length || 0}`);
+      console.log(`[Document Upload] Target collection: ${collectionName}`);
+
       if (!files || files.length === 0) {
+        console.log(`[Document Upload] ✗ No files received`);
         return res.status(400).json({
           success: false,
           error: 'Không có file nào được upload',

@@ -35,7 +35,6 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -44,7 +43,6 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
     scrollToBottom();
   }, [messages]);
 
-  // Load chat history on mount
   useEffect(() => {
     loadHistory();
     loadDocuments();
@@ -54,7 +52,6 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
     try {
       setIsLoadingHistory(true);
       const response = await api.chatHistory(50);
-      // Reverse the messages array to show oldest first (top to bottom)
       setMessages((response.messages || []).reverse());
     } catch (error) {
       console.error('Lỗi tải lịch sử chat:', error);
@@ -77,10 +74,9 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
 
     const question = inputValue.trim();
     setInputValue('');
-    setSelectedDocuments([]); // Clear selected documents
+    setSelectedDocuments([]);
     setIsLoading(true);
 
-    // Add user message placeholder
     const tempMessageId = Date.now();
     const tempMessage: ChatMessage = {
       id: tempMessageId,
@@ -93,31 +89,21 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
     setMessages(prev => [...prev, tempMessage]);
 
     try {
-      // Use EventSource for SSE streaming
       const response = await fetch(`${API_BASE}/api/chat/ask-stream`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ question }),
       });
 
-      if (!response.ok) {
-        throw new Error('Network response was not ok');
-      }
+      if (!response.ok) throw new Error('Network response was not ok');
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
       let streamingAnswer = '';
-      let finalMessageId: number | null = null;
-      let finalSources: any[] = [];
-      let finalConfidence: number = 0;
 
-      if (!reader) {
-        throw new Error('No reader available');
-      }
+      if (!reader) throw new Error('No reader available');
 
       while (true) {
         const { done, value } = await reader.read();
@@ -138,7 +124,6 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
             const data = JSON.parse(dataMatch[1]);
 
             if (event === 'status') {
-              // Update status message
               setMessages(prev =>
                 prev.map(msg =>
                   msg.id === tempMessageId
@@ -147,7 +132,6 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
                 )
               );
             } else if (event === 'chunk') {
-              // Append text chunk
               streamingAnswer += data.text;
               setMessages(prev =>
                 prev.map(msg =>
@@ -157,30 +141,24 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
                 )
               );
             } else if (event === 'complete') {
-              // Stream completed
-              finalMessageId = data.messageId;
-              finalSources = data.sources || [];
-              finalConfidence = data.confidence || 0;
-              
               setMessages(prev =>
                 prev.map(msg =>
                   msg.id === tempMessageId
                     ? {
                         ...msg,
-                        id: finalMessageId || msg.id,
+                        id: data.messageId || msg.id,
                         answer: streamingAnswer,
-                        sources: finalSources,
-                        confidence: finalConfidence,
+                        sources: data.sources || [],
+                        confidence: data.confidence || 0,
                       }
                     : msg
                 )
               );
             } else if (event === 'error') {
-              // Error occurred
               setMessages(prev =>
                 prev.map(msg =>
                   msg.id === tempMessageId
-                    ? { ...msg, answer: `❌ Lỗi: ${data.message}` }
+                    ? { ...msg, answer: `Lỗi: ${data.message}` }
                     : msg
                 )
               );
@@ -189,16 +167,10 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
         }
       }
     } catch (error: any) {
-      console.error('Lỗi gửi câu hỏi:', error);
-      
-      // Show error message
       setMessages(prev =>
         prev.map(msg =>
           msg.id === tempMessageId
-            ? {
-                ...msg,
-                answer: `❌ Lỗi: ${error.message || 'Không thể kết nối đến server'}`,
-              }
+            ? { ...msg, answer: `Lỗi: ${error.message || 'Không thể kết nối'}` }
             : msg
         )
       );
@@ -211,7 +183,6 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
     const value = e.target.value;
     setInputValue(value);
 
-    // Check if user typed # at the start or after a space
     const lastChar = value[value.length - 1];
     const beforeLastChar = value[value.length - 2];
     
@@ -221,19 +192,15 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
   };
 
   const handleDocumentSelect = (docId: string) => {
-    if (selectedDocuments.includes(docId)) {
-      setSelectedDocuments(prev => prev.filter(id => id !== docId));
-    } else {
-      setSelectedDocuments(prev => [...prev, docId]);
-    }
+    setSelectedDocuments(prev => 
+      prev.includes(docId) ? prev.filter(id => id !== docId) : [...prev, docId]
+    );
   };
 
   const handleApplyDocumentFilter = () => {
     if (selectedDocuments.length > 0) {
       const selectedDocs = documents.filter(doc => selectedDocuments.includes(doc.id));
       const docNames = selectedDocs.map(doc => doc.documentName || doc.fileName).join(', ');
-      
-      // Remove the # and add the document filter to the question
       const cleanedInput = inputValue.replace(/#\s*$/, '').trim();
       setInputValue(`${cleanedInput} [Tìm trong: ${docNames}]`);
     }
@@ -258,21 +225,18 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
   };
 
   const formatTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+    return new Date(dateString).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Function to render answer with clickable citations
   const renderAnswerWithCitations = (answer: string, sources: any[]) => {
     if (!sources || sources.length === 0) {
-      return <p className="text-gray-800 whitespace-pre-wrap">{answer}</p>;
+      return <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">{answer}</p>;
     }
 
-    // Replace [🔗1], [🔗2], etc. with clickable citation links
     const parts = answer.split(/(\[🔗\d+\])/g);
     
     return (
-      <p className="text-gray-800 whitespace-pre-wrap">
+      <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">
         {parts.map((part, idx) => {
           const match = part.match(/\[🔗(\d+)\]/);
           if (match) {
@@ -280,17 +244,14 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
             const source = sources[sourceIndex];
             
             if (source) {
-              const tooltipText = `${source.metadata?.documentNumber || 'Tài liệu'} - ${source.metadata?.chunkType || 'Phần'} ${source.metadata?.chunkIndex || ''}`;
-              
               return (
-                <span
+                <button
                   key={idx}
                   onClick={() => setSelectedSource(source)}
-                  className="inline-flex items-center mx-0.5 px-1 py-0.5 bg-blue-100 text-blue-600 rounded cursor-pointer text-xs font-medium hover:bg-blue-200 transition-colors"
-                  title={tooltipText}
+                  className="inline-flex items-center mx-0.5 px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded-full text-xs font-medium hover:bg-blue-200 transition-colors"
                 >
-                  🔗{match[1]}
-                </span>
+                  {match[1]}
+                </button>
               );
             }
           }
@@ -301,110 +262,102 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black bg-opacity-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl h-[700px] flex flex-col">
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl h-[85vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white p-4 rounded-t-2xl flex items-center justify-between">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div className="flex items-center gap-3">
-            <div className="bg-white bg-opacity-20 p-2 rounded-lg">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+              <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
               </svg>
             </div>
             <div>
-              <h2 className="text-lg font-bold">Trợ lý AI Học tập</h2>
-              <p className="text-xs text-blue-100">Hỏi đáp từ tài liệu đã tải lên</p>
+              <h2 className="text-lg font-medium text-gray-800">Trợ lý AI</h2>
+              <p className="text-xs text-gray-500">Hỏi đáp từ tài liệu của bạn</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="hover:bg-white hover:bg-opacity-20 p-2 rounded-lg transition-colors"
+            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
 
-        {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50">
           {isLoadingHistory ? (
             <div className="flex items-center justify-center h-full">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+              <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-gray-400">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-              <p className="text-lg font-medium">Chưa có cuộc trò chuyện</p>
-              <p className="text-sm">Hãy đặt câu hỏi để bắt đầu!</p>
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+              </div>
+              <p className="text-gray-800 font-medium mb-1">Bắt đầu cuộc trò chuyện</p>
+              <p className="text-sm text-gray-500">Đặt câu hỏi về tài liệu của bạn</p>
             </div>
           ) : (
             messages.map((msg) => (
-              <div key={msg.id} className="space-y-3">
-                {/* User Question */}
+              <div key={msg.id} className="space-y-4">
+                {/* User message */}
                 <div className="flex justify-end">
-                  <div className="bg-blue-500 text-white rounded-2xl rounded-tr-sm px-4 py-2 max-w-[80%] shadow-md">
+                  <div className="bg-blue-500 text-white rounded-2xl rounded-br-md px-4 py-3 max-w-[80%]">
                     <p className="text-sm">{msg.question}</p>
-                    <p className="text-xs text-blue-100 mt-1">{formatTime(msg.createdAt)}</p>
                   </div>
                 </div>
 
-                {/* AI Answer */}
-                <div className="flex justify-start items-start gap-2">
-                  <div className="bg-gradient-to-br from-purple-500 to-blue-500 text-white p-2 rounded-full flex-shrink-0">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
+                {/* AI response */}
+                <div className="flex gap-3">
+                  <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center flex-shrink-0">
+                    <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                     </svg>
                   </div>
-                  <div className="bg-white rounded-2xl rounded-tl-sm px-4 py-3 max-w-[75%] shadow-md border border-gray-200 relative group">
-                    <div className="prose prose-sm max-w-none">
+                  <div className="flex-1 max-w-[85%]">
+                    <div className="bg-white rounded-2xl rounded-tl-md px-4 py-3 border border-gray-200 group relative">
                       {renderAnswerWithCitations(msg.answer, msg.sources)}
-                    </div>
-                    
-                    {/* Sources - Only show if there are sources */}
-                    {msg.sources && msg.sources.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-gray-200">
-                        <p className="text-xs font-semibold text-gray-600 mb-2">📚 Nguồn tham khảo:</p>
-                        <div className="space-y-1">
-                          {msg.sources.map((source: any, idx: number) => (
-                            <div key={idx} className="text-xs text-gray-500 flex items-start gap-1">
-                              <span className="text-blue-500 font-medium">🔗{idx + 1}</span>
-                              <span>
-                                {source.metadata?.documentNumber || 'Tài liệu'} - 
-                                {source.metadata?.chunkType || 'Phần'} {source.metadata?.chunkIndex || ''}
-                                {source.score && ` (${(source.score * 100).toFixed(0)}%)`}
-                              </span>
-                            </div>
-                          ))}
+                      
+                      {/* Sources */}
+                      {msg.sources && msg.sources.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-gray-100">
+                          <p className="text-xs font-medium text-gray-500 mb-2">Nguồn tham khảo</p>
+                          <div className="flex flex-wrap gap-2">
+                            {msg.sources.map((source: any, idx: number) => (
+                              <button
+                                key={idx}
+                                onClick={() => setSelectedSource(source)}
+                                className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs text-gray-600 transition-colors"
+                              >
+                                <span className="font-medium">[{idx + 1}]</span>
+                                <span className="truncate max-w-[150px]">
+                                  {source.metadata?.documentNumber || 'Tài liệu'}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
 
-                    {/* Confidence & Actions */}
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
-                      <div className="flex items-center gap-2 text-xs text-gray-400">
-                        {msg.confidence && (
-                          <span className="flex items-center gap-1">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                            </svg>
-                            {(msg.confidence * 100).toFixed(0)}%
-                          </span>
-                        )}
-                        <span>{formatTime(msg.createdAt)}</span>
-                      </div>
+                      {/* Delete button */}
                       <button
                         onClick={() => handleDeleteMessage(msg.id)}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-600"
-                        title="Xóa tin nhắn"
+                        className="absolute top-2 right-2 p-1 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all"
                       >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                          <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                         </svg>
                       </button>
                     </div>
+                    
+                    {/* Timestamp */}
+                    <p className="text-xs text-gray-400 mt-1 px-1">{formatTime(msg.createdAt)}</p>
                   </div>
                 </div>
               </div>
@@ -413,39 +366,37 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Area */}
-        <div className="p-4 bg-white border-t border-gray-200 rounded-b-2xl relative">
-          {/* Document Picker Modal */}
+        {/* Input */}
+        <div className="p-4 bg-white border-t border-gray-100 relative">
+          {/* Document Picker */}
           {showDocumentPicker && (
-            <div className="absolute bottom-full left-0 right-0 mb-2 bg-white border border-gray-300 rounded-xl shadow-2xl max-h-80 overflow-y-auto z-50">
-              <div className="sticky top-0 bg-gradient-to-r from-blue-500 to-purple-600 text-white p-3 rounded-t-xl">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-sm">📁 Chọn tài liệu để tìm kiếm</h3>
-                  <button
-                    onClick={() => setShowDocumentPicker(false)}
-                    className="hover:bg-white hover:bg-opacity-20 p-1 rounded"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                </div>
+            <div className="absolute bottom-full left-4 right-4 mb-2 bg-white rounded-2xl border border-gray-200 shadow-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                <p className="font-medium text-gray-800">Chọn tài liệu</p>
+                <button
+                  onClick={() => setShowDocumentPicker(false)}
+                  className="p-1 text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
               
-              <div className="p-3 space-y-2">
+              <div className="max-h-60 overflow-y-auto p-2">
                 {documents.length === 0 ? (
-                  <p className="text-gray-500 text-sm text-center py-4">Chưa có tài liệu nào</p>
+                  <p className="text-gray-500 text-sm text-center py-4">Chưa có tài liệu</p>
                 ) : (
                   documents.map(doc => (
                     <label
                       key={doc.id}
-                      className="flex items-start gap-2 p-2 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors"
+                      className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded-xl cursor-pointer transition-colors"
                     >
                       <input
                         type="checkbox"
                         checked={selectedDocuments.includes(doc.id)}
                         onChange={() => handleDocumentSelect(doc.id)}
-                        className="mt-1 w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                        className="w-4 h-4 text-blue-500 rounded border-gray-300 focus:ring-blue-500"
                       />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">
@@ -461,178 +412,140 @@ const ChatModal: React.FC<ChatModalProps> = ({ onClose }) => {
               </div>
 
               {selectedDocuments.length > 0 && (
-                <div className="sticky bottom-0 bg-gray-50 border-t p-3">
+                <div className="p-3 border-t border-gray-100 bg-gray-50">
                   <button
                     onClick={handleApplyDocumentFilter}
-                    className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white rounded-lg px-4 py-2 text-sm font-medium transition-all"
+                    className="w-full py-2 bg-blue-500 text-white rounded-xl text-sm font-medium hover:bg-blue-600 transition-colors"
                   >
-                    Áp dụng ({selectedDocuments.length} tài liệu)
+                    Áp dụng ({selectedDocuments.length})
                   </button>
                 </div>
               )}
             </div>
           )}
 
-          <div className="flex gap-2">
-            <textarea
-              ref={textareaRef}
-              value={inputValue}
-              onChange={handleInputChange}
-              onKeyPress={handleKeyPress}
-              placeholder="Đặt câu hỏi về tài liệu... (Gõ # để chọn tài liệu cụ thể)"
-              disabled={isLoading}
-              className="flex-1 border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
-              rows={2}
-            />
+          <div className="flex gap-3 items-end">
+            <div className="flex-1 relative">
+              <textarea
+                ref={textareaRef}
+                value={inputValue}
+                onChange={handleInputChange}
+                onKeyPress={handleKeyPress}
+                placeholder="Nhập câu hỏi... (# để chọn tài liệu)"
+                disabled={isLoading}
+                className="w-full px-4 py-3 bg-gray-100 border-0 rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 text-sm"
+                rows={1}
+                style={{ minHeight: '48px', maxHeight: '120px' }}
+              />
+            </div>
             <button
               onClick={handleSendMessage}
               disabled={isLoading || !inputValue.trim()}
-              className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white rounded-xl px-6 py-3 font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg hover:shadow-xl"
+              className="w-12 h-12 bg-blue-500 text-white rounded-full flex items-center justify-center hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0"
             >
               {isLoading ? (
-                <>
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                  <span>Đang xử lý...</span>
-                </>
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
               ) : (
-                <>
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-                  </svg>
-                  <span>Gửi</span>
-                </>
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                </svg>
               )}
             </button>
           </div>
-          <p className="text-xs text-gray-400 mt-2 text-center">
-            💡 Nhấn Enter để gửi, Shift+Enter để xuống dòng • Gõ # để chọn tài liệu cụ thể
-          </p>
         </div>
       </div>
 
       {/* Source Detail Modal */}
       {selectedSource && (
-        <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black bg-opacity-60 p-4" onClick={() => setSelectedSource(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div 
+          className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setSelectedSource(null)}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[80vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Header */}
-            <div className="bg-gradient-to-r from-indigo-500 to-blue-600 text-white p-4 rounded-t-2xl flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-                </svg>
-                <h3 className="font-bold text-lg">Chi tiết nguồn trích dẫn</h3>
-              </div>
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="font-medium text-gray-800">Chi tiết nguồn</h3>
               <button
                 onClick={() => setSelectedSource(null)}
-                className="hover:bg-white hover:bg-opacity-20 p-2 rounded-lg transition-colors"
+                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
-              {/* Document Info */}
-              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <p className="text-xs text-gray-600 mb-1">📄 Tài liệu</p>
-                    <p className="font-semibold text-gray-800">{selectedSource.metadata?.documentName || selectedSource.documentName || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-600 mb-1">🔢 Số hiệu</p>
-                    <p className="font-semibold text-gray-800">{selectedSource.metadata?.documentNumber || selectedSource.documentNumber || 'N/A'}</p>
-                  </div>
-                  {selectedSource.metadata?.chapterNumber && (
-                    <div>
-                      <p className="text-xs text-gray-600 mb-1">📚 Chương</p>
-                      <p className="font-semibold text-gray-800">Chương {selectedSource.metadata.chapterNumber}</p>
-                    </div>
-                  )}
-                  {selectedSource.metadata?.articleNumber && (
-                    <div>
-                      <p className="text-xs text-gray-600 mb-1">📋 Điều</p>
-                      <p className="font-semibold text-gray-800">Điều {selectedSource.metadata.articleNumber}</p>
-                    </div>
-                  )}
-                  {selectedSource.score && (
-                    <div>
-                      <p className="text-xs text-gray-600 mb-1">🎯 Độ liên quan</p>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 bg-gray-200 rounded-full h-2">
-                          <div 
-                            className="bg-gradient-to-r from-green-400 to-blue-500 h-2 rounded-full transition-all"
-                            style={{ width: `${selectedSource.score * 100}%` }}
-                          />
-                        </div>
-                        <span className="font-semibold text-gray-800">{(selectedSource.score * 100).toFixed(0)}%</span>
-                      </div>
-                    </div>
-                  )}
+              {/* Info Grid */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-xs text-gray-500 mb-1">Tài liệu</p>
+                  <p className="text-sm font-medium text-gray-800">
+                    {selectedSource.metadata?.documentName || 'N/A'}
+                  </p>
                 </div>
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-xs text-gray-500 mb-1">Số hiệu</p>
+                  <p className="text-sm font-medium text-gray-800">
+                    {selectedSource.metadata?.documentNumber || 'N/A'}
+                  </p>
+                </div>
+                {selectedSource.metadata?.chapterNumber && (
+                  <div className="bg-gray-50 rounded-xl p-3">
+                    <p className="text-xs text-gray-500 mb-1">Chương</p>
+                    <p className="text-sm font-medium text-gray-800">
+                      Chương {selectedSource.metadata.chapterNumber}
+                    </p>
+                  </div>
+                )}
+                {selectedSource.metadata?.articleNumber && (
+                  <div className="bg-gray-50 rounded-xl p-3">
+                    <p className="text-xs text-gray-500 mb-1">Điều</p>
+                    <p className="text-sm font-medium text-gray-800">
+                      Điều {selectedSource.metadata.articleNumber}
+                    </p>
+                  </div>
+                )}
               </div>
+
+              {/* Relevance */}
+              {selectedSource.score && (
+                <div className="bg-blue-50 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm text-gray-600">Độ liên quan</p>
+                    <p className="text-sm font-medium text-blue-600">
+                      {(selectedSource.score * 100).toFixed(0)}%
+                    </p>
+                  </div>
+                  <div className="h-2 bg-blue-100 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-blue-500 rounded-full transition-all"
+                      style={{ width: `${selectedSource.score * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Content */}
               <div>
-                <p className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z" clipRule="evenodd" />
-                  </svg>
-                  Nội dung trích xuất
-                </p>
-                <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
-                  <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">
+                <p className="text-sm font-medium text-gray-700 mb-2">Nội dung</p>
+                <div className="bg-gray-50 rounded-xl p-4 max-h-60 overflow-y-auto">
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
                     {selectedSource.content || 'Không có nội dung'}
                   </p>
                 </div>
               </div>
-
-              {/* Metadata */}
-              {selectedSource.metadata && (
-                <div>
-                  <p className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                    </svg>
-                    Thông tin bổ sung
-                  </p>
-                  <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 grid grid-cols-2 gap-2 text-xs">
-                    {selectedSource.metadata.chunkType && (
-                      <div>
-                        <span className="text-gray-600">Loại phần:</span>
-                        <span className="ml-2 font-medium text-gray-800">{selectedSource.metadata.chunkType}</span>
-                      </div>
-                    )}
-                    {selectedSource.metadata.chunkIndex !== undefined && (
-                      <div>
-                        <span className="text-gray-600">Vị trí:</span>
-                        <span className="ml-2 font-medium text-gray-800">#{selectedSource.metadata.chunkIndex}</span>
-                      </div>
-                    )}
-                    {selectedSource.metadata.chapterTitle && (
-                      <div className="col-span-2">
-                        <span className="text-gray-600">Tiêu đề chương:</span>
-                        <span className="ml-2 font-medium text-gray-800">{selectedSource.metadata.chapterTitle}</span>
-                      </div>
-                    )}
-                    {selectedSource.metadata.articleTitle && (
-                      <div className="col-span-2">
-                        <span className="text-gray-600">Tiêu đề điều:</span>
-                        <span className="ml-2 font-medium text-gray-800">{selectedSource.metadata.articleTitle}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Footer */}
-            <div className="p-4 bg-gray-50 border-t rounded-b-2xl">
+            <div className="px-6 py-4 border-t border-gray-100">
               <button
                 onClick={() => setSelectedSource(null)}
-                className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-xl px-4 py-2 font-medium transition-all"
+                className="w-full py-2.5 bg-gray-100 text-gray-700 rounded-xl font-medium hover:bg-gray-200 transition-colors"
               >
                 Đóng
               </button>
