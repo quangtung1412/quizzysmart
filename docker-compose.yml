@@ -87,6 +87,7 @@ services:
     volumes:
       - uploaded-docs:/app/uploads
       - ./server/prisma:/app/prisma:ro  # Mount SQLite for migration
+      - ./backups:/backups:ro  # Mount backups for auto-restore
     networks:
       - quiz-network
     restart: unless-stopped

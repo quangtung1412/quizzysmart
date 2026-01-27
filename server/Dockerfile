@@ -31,8 +31,8 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install OpenSSL, curl and wget for Prisma and healthcheck
-RUN apk add --no-cache openssl curl wget libc6-compat
+# Install OpenSSL, curl, wget, netcat for Prisma, healthcheck and entrypoint
+RUN apk add --no-cache openssl curl wget libc6-compat netcat-openbsd mysql-client
 
 # Copy package files
 COPY package*.json ./
@@ -53,11 +53,15 @@ COPY scripts ./scripts/
 # Copy migration and export scripts
 COPY migrate-sqlite-to-mysql.mjs export-sqlite-to-sql.mjs ./
 
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Create uploads directory
 RUN mkdir -p /app/uploads
 
 # Expose port
 EXPOSE 3000
 
-# Start server (skip migrations if schema exists)
-CMD ["sh", "-c", "npx prisma db push --accept-data-loss --skip-generate || true && node dist/index.js"]
+# Use custom entrypoint
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
