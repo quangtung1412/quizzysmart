@@ -47,11 +47,7 @@ docker compose exec mysql mysql -u root -prootpassword -e "SET NAMES utf8mb4; DR
 
 # Run migrations
 Write-Host "    Creating tables..." -ForegroundColor Gray
-docker compose exec backend npx prisma migrate deploy 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    # Try migrate dev if deploy fails
-    docker compose exec backend npx prisma migrate dev --name migration_from_sqlite --skip-seed 2>&1 | Select-String -Pattern "Applied|created|Your database" | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
-}
+docker compose exec backend npx prisma db push --accept-data-loss 2>&1 | Select-String -Pattern "sync|Generated" | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
 
 # Run migration
 Write-Host ""

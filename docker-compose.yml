@@ -86,6 +86,7 @@ services:
       - PORT=3000
     volumes:
       - uploaded-docs:/app/uploads
+      - ./server/prisma:/app/prisma:ro  # Mount SQLite for migration
     networks:
       - quiz-network
     restart: unless-stopped

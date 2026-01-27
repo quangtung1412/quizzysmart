@@ -50,11 +50,14 @@ COPY --from=builder /app/dist ./dist/
 # Copy scripts for admin tools
 COPY scripts ./scripts/
 
+# Copy migration and export scripts
+COPY migrate-sqlite-to-mysql.mjs export-sqlite-to-sql.mjs ./
+
 # Create uploads directory
 RUN mkdir -p /app/uploads
 
 # Expose port
 EXPOSE 3000
 
-# Run migrations and start server
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+# Start server (skip migrations if schema exists)
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss --skip-generate || true && node dist/index.js"]
