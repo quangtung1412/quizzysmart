@@ -1,7 +1,14 @@
 import { PrismaClient } from '@prisma/client';
 import Database from 'better-sqlite3';
 
-const mysqlPrisma = new PrismaClient();
+// Set correct charset for MySQL connection
+const mysqlPrisma = new PrismaClient({
+    datasources: {
+        db: {
+            url: process.env.DATABASE_URL || 'mysql://root:rootpassword@localhost:3306/quizzysmart?charset=utf8mb4'
+        }
+    }
+});
 const sqlite = new Database(process.argv[2] || './prisma/dev.db', { readonly: true });
 
 async function migrate() {

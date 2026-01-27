@@ -80,7 +80,7 @@ services:
       - ./server/.env
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=mysql://root:rootpassword@mysql:3306/quizzysmart
+      - DATABASE_URL=mysql://root:rootpassword@mysql:3306/quizzysmart?charset=utf8mb4
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_API_KEY=
       - PORT=3000
