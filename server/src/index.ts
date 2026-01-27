@@ -21,6 +21,7 @@ import { pdfProcessorService } from './services/pdf-processor.service.js';
 import { qdrantService } from './services/qdrant.service.js';
 import { modelSettingsService } from './services/model-settings.service.js';
 import { geminiTrackerService } from './services/gemini-tracker.service.js';
+import { requestLogger, errorLogger } from './middleware/logging.middleware.js';
 
 const prisma = new PrismaClient();
 // Temporary any-cast for newly added models if type generation not up-to-date
@@ -203,6 +204,9 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Add request logging middleware
+app.use(requestLogger);
+
 // Add LocalStrategy for username/password
 passport.use(new LocalStrategy(
   async (username, password, done) => {
@@ -325,7 +329,19 @@ app.get('/api/auth/fail', (req: Request, res: Response) => {
   return res.status(401).send('Đăng nhập Google thất bại. Vui lòng thử lại hoặc kiểm tra cấu hình OAuth (redirect URI / client secret).');
 });
 
+// Fallback route for Google OAuth callback without /api prefix (for compatibility)
+app.get('/auth/google/callback', (req: Request, res: Response) => {
+  console.log(`[OAuth] Redirecting /auth/google/callback to /api/auth/google/callback`);
+  // Preserve all query parameters
+  const queryString = new URLSearchParams(req.query as any).toString();
+  res.redirect(`/api/auth/google/callback?${queryString}`);
+});
+
 app.get('/api/auth/google/callback', (req: Request, res: Response, next) => {
+  console.log(`\n[OAuth Callback] ========== GOOGLE CALLBACK ==========`);
+  console.log(`[OAuth Callback] Code: ${(req.query.code as string)?.substring(0, 20)}...`);
+  console.log(`[OAuth Callback] Scope: ${req.query.scope}`);
+
   // If APP_BASE_URL provided, always trust it. Otherwise derive from forwarded headers.
   let finalBase = appBaseUrl;
   if (!process.env.APP_BASE_URL) {
@@ -346,10 +362,13 @@ app.get('/api/auth/google/callback', (req: Request, res: Response, next) => {
     }
   }
 
+  console.log(`[OAuth Callback] Effective callback URL: ${effectiveCallback}`);
+  console.log(`[OAuth Callback] Final base URL: ${finalBase}`);
+
   return passport.authenticate('google', { failureRedirect: '/api/auth/fail', callbackURL: effectiveCallback } as any, (err: any, user: any, info: any) => {
     if (err) {
       const anyErr = err as any;
-      console.error('[OAuth] Google callback error:', {
+      console.error('[OAuth Callback] ✗ Google callback error:', {
         name: anyErr?.name,
         message: anyErr?.message,
         status: anyErr?.status,
@@ -361,13 +380,15 @@ app.get('/api/auth/google/callback', (req: Request, res: Response, next) => {
     }
 
     if (!user) {
-      console.warn('[OAuth] Google callback: no user returned', { info });
+      console.warn('[OAuth Callback] ✗ No user returned from Google', { info });
       return res.redirect('/api/auth/fail');
     }
 
+    console.log(`[OAuth Callback] ✓ User authenticated: ${user.email} (${user.id})`);
+
     req.logIn(user, async (loginErr) => {
       if (loginErr) {
-        console.error('[OAuth] req.logIn error:', loginErr);
+        console.error('[OAuth Callback] ✗ req.logIn error:', loginErr);
         return res.status(500).send('Google OAuth lỗi đăng nhập phiên (session).');
       }
 
@@ -377,10 +398,12 @@ app.get('/api/auth/google/callback', (req: Request, res: Response, next) => {
         const { sessionToken } = await handleDeviceLogin(user.id, deviceId);
         (req.session as any).deviceSessionToken = sessionToken;
         (req.session as any).deviceId = deviceId;
+        console.log(`[OAuth Callback] ✓ Device session created: ${deviceId}`);
       } catch (error) {
-        console.error('Device tracking error during OAuth:', error);
+        console.error('[OAuth Callback] ✗ Device tracking error:', error);
       }
 
+      console.log(`[OAuth Callback] ✓ Redirecting to: ${finalBase}/`);
       return res.redirect(finalBase + '/');
     });
   })(req, res, next);
@@ -388,13 +411,20 @@ app.get('/api/auth/google/callback', (req: Request, res: Response, next) => {
 
 app.post('/api/auth/register', async (req: Request, res: Response) => {
   const { username, password, name } = req.body;
+
+  console.log(`\n[Auth Register] ========== NEW REQUEST ==========`);
+  console.log(`[Auth Register] Username: ${username}`);
+  console.log(`[Auth Register] Name: ${name}`);
+
   if (!username || !password || !name) {
+    console.log(`[Auth Register] ✗ Missing required fields`);
     return res.status(400).json({ error: 'Username, password, and name are required.' });
   }
 
   try {
     const existingUser = await prisma.user.findUnique({ where: { username } });
     if (existingUser) {
+      console.log(`[Auth Register] ✗ Username already exists: ${username}`);
       return res.status(400).json({ error: 'Username already exists.' });
     }
 
@@ -406,9 +436,10 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
         name,
       }
     });
+    console.log(`[Auth Register] ✓ User created successfully: ${username} (${user.id})`);
     res.json({ id: user.id, username: user.username, name: user.name });
   } catch (error) {
-    console.error('Registration failed:', error);
+    console.error('[Auth Register] ✗ Registration failed:', error);
     res.status(500).json({ error: 'Registration failed.' });
   }
 });
@@ -420,12 +451,19 @@ app.post('/api/auth/login', passport.authenticate('local'), async (req: Request,
     const user = req.user as any;
     const deviceId = req.body.deviceId || req.headers['x-device-id'] as string;
 
+    console.log(`\n[Auth Login] ========== NEW REQUEST ==========`);
+    console.log(`[Auth Login] User: ${user.username} (${user.id})`);
+    console.log(`[Auth Login] Device ID: ${deviceId}`);
+
     if (!deviceId) {
+      console.log(`[Auth Login] ✗ Missing device ID`);
       return res.status(400).json({ error: 'Device ID is required' });
     }
 
     // Handle device login (will logout other devices if needed)
     const { sessionToken, needsLogout } = await handleDeviceLogin(user.id, deviceId);
+
+    console.log(`[Auth Login] ✓ Login successful, needsLogout: ${needsLogout}`);
 
     res.json({
       user: req.user,
@@ -434,7 +472,7 @@ app.post('/api/auth/login', passport.authenticate('local'), async (req: Request,
       wasLoggedOutFromOtherDevice: needsLogout
     });
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('[Auth Login] ✗ Login error:', error);
     res.status(500).json({ error: 'Login failed' });
   }
 });
@@ -442,6 +480,8 @@ app.post('/api/auth/login', passport.authenticate('local'), async (req: Request,
 app.get('/api/auth/logout', async (req: Request, res: Response) => {
   try {
     const user = req.user as any;
+
+    console.log(`[Auth Logout] User: ${user?.username || 'Anonymous'} (${user?.id || 'N/A'})`);
 
     // Clear device session from database if user is logged in
     if (user?.id) {
@@ -452,12 +492,14 @@ app.get('/api/auth/logout', async (req: Request, res: Response) => {
           currentSessionToken: null
         } as any
       });
+      console.log(`[Auth Logout] ✓ Device session cleared for user ${user.id}`);
     }
 
     req.logout(err => {
-      if (err) console.error(err);
+      if (err) console.error('[Auth Logout] ✗ Logout error:', err);
       req.session.destroy(() => {
         res.clearCookie('connect.sid');
+        console.log(`[Auth Logout] ✓ Session destroyed`);
         res.json({ ok: true });
       });
     });
@@ -2755,6 +2797,9 @@ app.get('/api/subscription-plans', async (req: Request, res: Response) => {
 
 const port = parseInt(process.env.PORT || '3000', 10);
 
+// Add error logging middleware (must be last)
+app.use(errorLogger);
+
 // Initialize Qdrant service before starting server
 (async () => {
   try {
@@ -4331,7 +4376,8 @@ app.post('/api/study-plans', async (req: Request, res: Response) => {
         minutesPerDay,
         questionsPerDay,
         startDate: new Date(startDate),
-        endDate: new Date(endDate)
+        endDate: new Date(endDate),
+        completedQuestions: '[]' // Initialize as empty array for MySQL
       }
     });
 

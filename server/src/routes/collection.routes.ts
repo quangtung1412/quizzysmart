@@ -41,8 +41,13 @@ const requireAdmin = async (req: Request, res: Response, next: any) => {
  */
 router.get('/collections', requireAdmin, async (req: Request, res: Response) => {
   try {
+    const userId = (req as any).user?.id;
+    const userEmail = (req as any).user?.email;
+    console.log(`[Collection] List collections requested by ${userEmail} (${userId})`);
+    
     const collections = await qdrantService.listCollections();
     
+    console.log(`[Collection] ✓ Found ${collections.length} collections`);
     res.json({
       success: true,
       collections,
@@ -64,8 +69,11 @@ router.get('/collections', requireAdmin, async (req: Request, res: Response) => 
 router.get('/collections/:name', requireAdmin, async (req: Request, res: Response) => {
   try {
     const { name } = req.params;
+    const userEmail = (req as any).user?.email;
+    console.log(`[Collection] Get info for "${name}" requested by ${userEmail}`);
     
     const info = await qdrantService.getCollectionInfo(name);
+    console.log(`[Collection] ✓ Retrieved info for "${name}"`);
     
     res.json({
       success: true,
@@ -88,8 +96,13 @@ router.get('/collections/:name', requireAdmin, async (req: Request, res: Respons
 router.post('/collections', requireAdmin, async (req: Request, res: Response) => {
   try {
     const { name, vectorSize, distance, description } = req.body;
+    const userEmail = (req as any).user?.email;
+
+    console.log(`[Collection] Create collection "${name}" requested by ${userEmail}`);
+    console.log(`[Collection] Parameters: vectorSize=${vectorSize}, distance=${distance}`);
 
     if (!name) {
+      console.log(`[Collection] ✗ Missing collection name`);
       return res.status(400).json({
         success: false,
         error: 'Collection name is required',

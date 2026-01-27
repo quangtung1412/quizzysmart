@@ -1,23 +1,99 @@
 services:
+  # ============================================
+  # Database Services
+  # ============================================
+  mysql:
+    image: mysql:8.0
+    container_name: quizzysmart-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: quizzysmart
+      MYSQL_USER: quizzysmart
+      MYSQL_PASSWORD: quizzysmart123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - quiz-network
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: quizzysmart-phpmyadmin
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: root
+      PMA_PASSWORD: rootpassword
+      UPLOAD_LIMIT: 100M
+    ports:
+      - "8080:80"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - quiz-network
+
+  # ============================================
+  # Vector Database (Qdrant)
+  # ============================================
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: quizzysmart-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"  # REST API
+      - "6334:6334"  # gRPC
+    volumes:
+      - qdrant-data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    networks:
+      - quiz-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  # ============================================
+  # Application Services
+  # ============================================
   backend:
     build:
       context: ./server
       dockerfile: Dockerfile
-    container_name: agribank-quiz-backend
+    container_name: quizzysmart-backend
     ports:
       - "3000:3000"
     env_file:
       - ./server/.env
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=file:/app/prisma/dev.db
+      - DATABASE_URL=mysql://root:rootpassword@mysql:3306/quizzysmart
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=
       - PORT=3000
     volumes:
-      - backend-data:/app/prisma
       - uploaded-docs:/app/uploads
     networks:
       - quiz-network
     restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/healthcheck"]
       interval: 30s
@@ -29,7 +105,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: agribank-quiz-frontend
+    container_name: quizzysmart-frontend
     ports:
       - "5173:5173"
     environment:
@@ -46,5 +122,6 @@ networks:
     driver: bridge
 
 volumes:
-  backend-data:
+  mysql-data:
+  qdrant-data:
   uploaded-docs:

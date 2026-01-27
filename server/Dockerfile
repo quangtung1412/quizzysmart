@@ -3,8 +3,8 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Install OpenSSL for Prisma
-RUN apk add --no-cache openssl
+# Install OpenSSL for Prisma (required for MySQL)
+RUN apk add --no-cache openssl libc6-compat
 
 # Copy package files for better layer caching
 COPY package*.json ./
@@ -32,13 +32,13 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Install OpenSSL, curl and wget for Prisma and healthcheck
-RUN apk add --no-cache openssl curl wget
+RUN apk add --no-cache openssl curl wget libc6-compat
 
 # Copy package files
 COPY package*.json ./
 
-# Install production dependencies only
-RUN npm ci --omit=dev
+# Install production dependencies only + tsx for scripts
+RUN npm ci --omit=dev && npm install tsx
 
 # Copy prisma schema and generate client
 COPY prisma ./prisma/
@@ -46,6 +46,9 @@ RUN npx prisma generate
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist/
+
+# Copy scripts for admin tools
+COPY scripts ./scripts/
 
 # Create uploads directory
 RUN mkdir -p /app/uploads

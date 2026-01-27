@@ -48,12 +48,20 @@ router.post(
   uploadDocuments,
   handleUploadError,
   async (req: Request, res: Response) => {
+    const startTime = Date.now();
     try {
       const files = req.files as Express.Multer.File[];
       const userId = (req as any).user?.id;
+      const userEmail = (req as any).user?.email;
       const { collectionName } = req.body; // NEW: Get collection name from request
 
+      console.log(`\n[Document Upload] ========== NEW REQUEST ==========`);
+      console.log(`[Document Upload] User: ${userEmail} (${userId})`);
+      console.log(`[Document Upload] Files count: ${files?.length || 0}`);
+      console.log(`[Document Upload] Target collection: ${collectionName}`);
+
       if (!files || files.length === 0) {
+        console.log(`[Document Upload] ✗ No files received`);
         return res.status(400).json({
           success: false,
           error: 'Không có file nào được upload',
@@ -68,7 +76,7 @@ router.post(
             fs.unlinkSync(file.path);
           }
         });
-        
+
         return res.status(400).json({
           success: false,
           error: 'Bắt buộc phải chọn collection cho tài liệu',
@@ -84,7 +92,7 @@ router.post(
             fs.unlinkSync(file.path);
           }
         });
-        
+
         return res.status(400).json({
           success: false,
           error: `Collection "${collectionName}" không tồn tại trong Qdrant`,
@@ -110,6 +118,7 @@ router.post(
               rawContent: '{}',
               processingStatus: 'processing',
               qdrantCollectionName: collectionName, // NEW: Save collection name
+              qdrantPointIds: '[]', // Initialize as empty array
             },
           });
 
@@ -226,7 +235,7 @@ router.get('/:id', requireAdmin, async (req: Request, res: Response) => {
       fileSize: document.fileSize,
       uploadedAt: document.uploadedAt.toISOString(),
       uploadedBy: document.uploadedBy,
-      
+
       // Metadata
       documentNumber: document.documentNumber,
       documentName: document.documentName,
@@ -235,14 +244,14 @@ router.get('/:id', requireAdmin, async (req: Request, res: Response) => {
       signerName: document.signerName,
       signerTitle: document.signerTitle,
       signedDate: document.signedDate?.toISOString(),
-      
+
       // Content
       markdownContent: document.markdownContent,
-      
+
       // Processing
       processingStatus: document.processingStatus,
       errorMessage: document.errorMessage,
-      
+
       // Chunks
       chunks: document.chunks.map((chunk) => ({
         id: chunk.id,

@@ -62,11 +62,18 @@ const requireChatAccess = async (req: Request, res: Response, next: any) => {
  * Ask a question using RAG with streaming response
  */
 router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, res: Response) => {
+  const startTime = Date.now();
   try {
     const { question } = req.body;
     const userId = (req as any).user?.id;
+    const userEmail = (req as any).user?.email;
+
+    console.log(`\n[Chat Stream] ========== NEW REQUEST ==========`);
+    console.log(`[Chat Stream] User: ${userEmail} (${userId})`);
+    console.log(`[Chat Stream] Question: "${question}"`);
 
     if (!question || typeof question !== 'string') {
+      console.log(`[Chat Stream] ❌ Invalid question format`);
       return res.status(400).json({
         success: false,
         error: 'Question is required',

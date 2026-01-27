@@ -40,6 +40,9 @@ const requireAdmin = async (req: Request, res: Response, next: any) => {
 router.get('/stats', requireAdmin, async (req, res) => {
     try {
         const { startDate, endDate, modelName, requestType, status } = req.query;
+        const userEmail = (req as any).user?.email;
+
+        console.log(`[Gemini Stats] Request by ${userEmail}, filters:`, { startDate, endDate, modelName, requestType, status });
 
         // Parse dates
         const start = startDate
