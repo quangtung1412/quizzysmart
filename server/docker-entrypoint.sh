@@ -10,52 +10,77 @@ echo "=========================================="
 
 # Wait for MySQL to be ready
 echo "Waiting for MySQL to be ready..."
+MAX_WAIT=60
+WAITED=0
 until nc -z mysql 3306; do
-  echo "MySQL is unavailable - sleeping"
+  echo "MySQL is unavailable - sleeping (${WAITED}s/${MAX_WAIT}s)"
   sleep 2
+  WAITED=$((WAITED + 2))
+  if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+    echo "ERROR: MySQL did not become available within ${MAX_WAIT}s"
+    exit 1
+  fi
 done
 echo "MySQL is ready!"
+
+# Additional wait for MySQL to be fully initialized
+echo "Waiting for MySQL to accept connections..."
+sleep 5
 
 # Check if database is empty (no tables)
 echo ""
 echo "Checking database state..."
-TABLE_COUNT=$(mysql -h mysql -u root -prootpassword --skip-ssl quizzysmart -e "SHOW TABLES;" 2>/dev/null | wc -l)
+TABLE_COUNT=$(mysql -h mysql -u root -prootpassword --skip-ssl quizzysmart -e "SHOW TABLES;" 2>/dev/null | wc -l || echo "0")
+
+echo "Found $TABLE_COUNT table entries"
 
 if [ "$TABLE_COUNT" -le 1 ]; then
   echo "Database is empty, initializing..."
   
-  # Check for backup files
-  if [ -d "/backups" ] && [ -n "$(ls -A /backups/*.sql 2>/dev/null)" ]; then
-    # Find the most recent backup
-    LATEST_BACKUP=$(ls -t /backups/*.sql 2>/dev/null | head -n 1)
+  # Run Prisma migration first to create schema
+  echo ""
+  echo "=========================================="
+  echo "Running Prisma DB Push to create schema..."
+  echo "=========================================="
+  npx prisma db push --accept-data-loss --skip-generate 2>&1 || {
+    echo "WARNING: Prisma db push had issues, continuing..."
+  }
+  
+  # Check for backup files to import data
+  if [ -d "/backups" ]; then
+    # Find the most recent backup (sorted by filename which contains timestamp)
+    LATEST_BACKUP=$(find /backups -maxdepth 1 -name "*.sql" -type f 2>/dev/null | sort -r | head -n 1)
     
-    if [ -n "$LATEST_BACKUP" ]; then
+    if [ -n "$LATEST_BACKUP" ] && [ -f "$LATEST_BACKUP" ]; then
       echo ""
       echo "=========================================="
       echo "Found backup: $(basename $LATEST_BACKUP)"
-      echo "Restoring database from backup..."
+      echo "File size: $(du -h "$LATEST_BACKUP" | cut -f1)"
+      echo "Importing data from backup..."
       echo "=========================================="
       
-      cat "$LATEST_BACKUP" | mysql -h mysql -u root -prootpassword --skip-ssl 2>&1 | grep -v "Warning\|Deprecated" || true
-      
-      if [ $? -eq 0 ]; then
-        echo "✓ Backup restored successfully!"
+      # Import the SQL file (--skip-ssl to avoid TLS cert issues in container)
+      if mysql -h mysql -u root -prootpassword --skip-ssl quizzysmart < "$LATEST_BACKUP" 2>&1; then
+        echo "[OK] Backup imported successfully!"
+        
+        # Verify import
+        NEW_TABLE_COUNT=$(mysql -h mysql -u root -prootpassword --skip-ssl quizzysmart -e "SHOW TABLES;" 2>/dev/null | wc -l || echo "0")
+        echo "[OK] Database now has $((NEW_TABLE_COUNT - 1)) tables"
       else
-        echo "✗ Backup restore failed, will create empty schema"
-        npx prisma db push --accept-data-loss --skip-generate || true
+        echo "[ERROR] Backup import had errors, database may be partially restored"
       fi
     else
-      echo "No backup found, creating empty schema..."
-      npx prisma db push --accept-data-loss --skip-generate || true
+      echo "No SQL backup files found in /backups directory"
     fi
   else
-    echo "No backup directory or files, creating empty schema..."
-    npx prisma db push --accept-data-loss --skip-generate || true
+    echo "No /backups directory mounted"
   fi
 else
   echo "Database already initialized ($(($TABLE_COUNT - 1)) tables found)"
-  echo "Syncing schema..."
-  npx prisma db push --accept-data-loss --skip-generate || true
+  echo "Syncing schema with Prisma..."
+  npx prisma db push --accept-data-loss --skip-generate 2>&1 || {
+    echo "WARNING: Prisma db push had issues, continuing..."
+  }
 fi
 
 echo ""
