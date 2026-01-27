@@ -61,6 +61,7 @@
     "@types/passport-local": "^1.0.38",
     "@types/pdf-parse": "^1.1.4",
     "@types/qrcode": "^1.5.5",
+    "better-sqlite3": "^12.6.2",
     "prisma": "^5.18.0",
     "tsx": "^4.19.0",
     "typescript": "^5.8.2"

@@ -341,7 +341,6 @@ app.get('/api/auth/google/callback', (req: Request, res: Response, next) => {
   console.log(`\n[OAuth Callback] ========== GOOGLE CALLBACK ==========`);
   console.log(`[OAuth Callback] Code: ${(req.query.code as string)?.substring(0, 20)}...`);
   console.log(`[OAuth Callback] Scope: ${req.query.scope}`);
-  
   // If APP_BASE_URL provided, always trust it. Otherwise derive from forwarded headers.
   let finalBase = appBaseUrl;
   if (!process.env.APP_BASE_URL) {
@@ -411,11 +410,11 @@ app.get('/api/auth/google/callback', (req: Request, res: Response, next) => {
 
 app.post('/api/auth/register', async (req: Request, res: Response) => {
   const { username, password, name } = req.body;
-  
+
   console.log(`\n[Auth Register] ========== NEW REQUEST ==========`);
   console.log(`[Auth Register] Username: ${username}`);
   console.log(`[Auth Register] Name: ${name}`);
-  
+
   if (!username || !password || !name) {
     console.log(`[Auth Register] ✗ Missing required fields`);
     return res.status(400).json({ error: 'Username, password, and name are required.' });
@@ -4376,7 +4375,8 @@ app.post('/api/study-plans', async (req: Request, res: Response) => {
         minutesPerDay,
         questionsPerDay,
         startDate: new Date(startDate),
-        endDate: new Date(endDate)
+        endDate: new Date(endDate),
+        completedQuestions: '[]' // Initialize as empty array for MySQL
       }
     });
 
