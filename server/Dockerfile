@@ -53,9 +53,10 @@ COPY scripts ./scripts/
 # Copy migration and export scripts
 COPY migrate-sqlite-to-mysql.mjs export-sqlite-to-sql.mjs ./
 
-# Copy entrypoint script
+# Copy entrypoint script and fix line endings (Windows CRLF -> Unix LF)
 COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN dos2unix /usr/local/bin/docker-entrypoint.sh || sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && \
+    chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Create uploads directory
 RUN mkdir -p /app/uploads
