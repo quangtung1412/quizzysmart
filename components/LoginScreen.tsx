@@ -3,6 +3,10 @@ import { api, API_BASE } from '../src/api';
 import { User } from '../types';
 import { getDeviceId, setSessionToken } from '../src/utils/deviceId';
 
+const OLD_DOMAIN = 'giadinhnhimsoc.site';
+const NEW_DOMAIN = 'elearning.claymatium.com';
+const isOldDomain = () => window.location.hostname.includes(OLD_DOMAIN);
+
 interface LoginScreenProps {
   onLoginSuccess: (user: User) => void;
   onSwitchToRegister: () => void;
@@ -23,8 +27,13 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onSwitchToReg
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showDomainPopup, setShowDomainPopup] = useState(false);
 
   const handleGoogleLogin = () => {
+    if (isOldDomain()) {
+      setShowDomainPopup(true);
+      return;
+    }
     const deviceId = getDeviceId();
     window.location.href = `${API_BASE}/api/auth/google?deviceId=${encodeURIComponent(deviceId)}`;
   };
@@ -55,6 +64,49 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onSwitchToReg
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-sky-50 to-blue-100 p-4 sm:p-6">
+      {/* Domain migration popup */}
+      {showDomainPopup && (
+        <>
+          <div className="fixed inset-0 bg-black/50 z-[9998]" onClick={() => setShowDomainPopup(false)} />
+          <div className="fixed inset-0 flex items-center justify-center z-[9999] p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6">
+              <div className="flex justify-center mb-3">
+                <div className="w-14 h-14 bg-amber-100 rounded-full flex items-center justify-center">
+                  <svg className="w-7 h-7 text-amber-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                  </svg>
+                </div>
+              </div>
+              <h3 className="text-lg font-bold text-center text-slate-800 mb-2">Chuyển sang domain mới</h3>
+              <p className="text-sm text-center text-slate-600 mb-2">
+                Website đã chuyển sang địa chỉ mới. Vui lòng đăng nhập tại:
+              </p>
+              <a
+                href={`https://${NEW_DOMAIN}`}
+                className="block text-center px-4 py-2 bg-blue-50 text-blue-700 font-semibold rounded-lg hover:bg-blue-100 transition-colors mb-3"
+              >
+                {NEW_DOMAIN}
+              </a>
+              <p className="text-xs text-center text-red-500 mb-4">
+                Domain <strong>{OLD_DOMAIN}</strong> sẽ ngừng hoạt động sau 0h ngày 11/04/2026
+              </p>
+              <a
+                href={`https://${NEW_DOMAIN}`}
+                className="block w-full py-2.5 bg-blue-600 text-white font-semibold rounded-xl text-center hover:bg-blue-700 transition-colors shadow-md mb-2"
+              >
+                Đi đến domain mới →
+              </a>
+              <button
+                onClick={() => setShowDomainPopup(false)}
+                className="block w-full py-2 text-slate-500 text-sm hover:text-slate-700 transition-colors text-center"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       <div className="p-6 sm:p-8 bg-white rounded-xl shadow-lg w-full max-w-sm sm:max-w-md border border-slate-200">
         <div className="mb-6 text-center">
           <div className="w-16 h-16 bg-gradient-to-br from-sky-500 to-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
