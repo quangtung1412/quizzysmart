@@ -8,6 +8,7 @@ export default defineConfig(({ mode }) => {
   // (docker-compose `environment:`). `loadEnv` mainly reads from .env files, so also fall back to
   // process.env to ensure the proxy target is picked up.
   const apiProxyTarget = env.VITE_API_PROXY_TARGET || process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000';
+  const appDomain = env.APP_DOMAIN || process.env.APP_DOMAIN || '';
   return {
     plugins: [react()],
     define: {
@@ -23,8 +24,7 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0', // Cho phép truy cập từ các địa chỉ IP khác
       port: 5173,
       allowedHosts: [
-        'giadinhnhimsoc.site',
-        'www.giadinhnhimsoc.site'
+        ...(appDomain ? [appDomain] : [])
       ],
       proxy: {
         '/api': {

@@ -42,13 +42,10 @@ const io = new SocketIOServer(httpServer, {
       const allowedOrigins = [
         'http://localhost:5173',
         'http://localhost:3000',
-        'http://13.229.10.40',
-        'http://13.229.10.40:3000',
-        'https://13.229.10.40',
-        'https://giadinhnhimsoc.site',
-        'https://www.giadinhnhimsoc.site',
-        'http://giadinhnhimsoc.site',
-        'http://www.giadinhnhimsoc.site',
+        ...(process.env.APP_DOMAIN ? [
+          `https://${process.env.APP_DOMAIN}`,
+          `http://${process.env.APP_DOMAIN}`,
+        ] : []),
         process.env.FRONTEND_URL || '',
       ].filter(Boolean);
 
@@ -170,18 +167,14 @@ async function validateDeviceSession(userId: string, deviceId: string, sessionTo
 
 const bodyLimit = process.env.MAX_BODY_SIZE || '5mb';
 
-// Allow multiple origins (localhost + production domains/IP) configurable via env
+// Derive allowed origins from APP_DOMAIN (single source of truth)
+const appDomain = process.env.APP_DOMAIN || '';
+const domainOrigins = appDomain ? [`https://${appDomain}`, `http://${appDomain}`] : [];
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || [
   'http://localhost',
   'http://localhost:3000',
   'http://localhost:5173',
-  'http://13.229.10.40',
-  'http://13.229.10.40:3000',
-  'https://13.229.10.40',
-  'https://giadinhnhimsoc.site',
-  'https://www.giadinhnhimsoc.site',
-  'http://giadinhnhimsoc.site',
-  'http://www.giadinhnhimsoc.site'
+  ...domainOrigins
 ].join(',')).split(',').map(o => o.trim()).filter(Boolean);
 
 app.use(cors({
@@ -240,9 +233,9 @@ passport.deserializeUser(async (id: string, done: (err: any, user?: any) => void
 });
 
 // --- Unified configuration (no production branching) ---
-// Use single set of env vars; fall back to localhost defaults.
-const appBaseUrl = (process.env.APP_BASE_URL || 'http://localhost:5173').replace(/\/$/, '');
-const backendBaseUrl = (process.env.BACKEND_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+// APP_DOMAIN is the single source of truth. Other URLs are auto-derived unless explicitly overridden.
+const appBaseUrl = (process.env.APP_BASE_URL || (appDomain ? `https://${appDomain}` : 'http://localhost:5173')).replace(/\/$/, '');
+const backendBaseUrl = (process.env.BACKEND_BASE_URL || (appDomain ? `https://${appDomain}` : 'http://localhost:3000')).replace(/\/$/, '');
 const clientID = (process.env.GOOGLE_CLIENT_ID || '').trim();
 const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
 const callbackURL = (process.env.GOOGLE_CALLBACK_URL || `${backendBaseUrl}/api/auth/google/callback`).replace(/\/$/, '');
