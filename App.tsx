@@ -31,6 +31,7 @@ import PremiumIntroScreen from './components/PremiumIntroScreen';
 import ChatFloatingButton from './components/ChatFloatingButton';
 import LiveCameraSearch from './components/LiveCameraSearch';
 import PremiumPlansScreen from './components/PremiumPlansScreen';
+import DomainMigrationBanner from './components/DomainMigrationBanner';
 
 
 type Screen = 'login' | 'register' | 'userSetup' | 'modeSelection' | 'testList' | 'testDetail' | 'attemptDetail' | 'knowledgeBase' | 'upload' | 'menu' | 'setup' | 'quiz' | 'results' | 'history' | 'admin' | 'studyPlanSetup' | 'studyPlanOverview' | 'dailyStudy' | 'smartReview' | 'studyPlanList' | 'quickSearch' | 'premiumIntro' | 'liveCamera' | 'premiumPlans';
@@ -975,6 +976,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-1 sm:p-2 bg-slate-50 text-slate-800">{/* Thank You Modal */}
+      <DomainMigrationBanner />
       <ThankYouModal />
 
       <div className="w-full max-w-8xl mx-auto relative">

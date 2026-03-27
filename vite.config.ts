@@ -9,6 +9,8 @@ export default defineConfig(({ mode }) => {
   // process.env to ensure the proxy target is picked up.
   const apiProxyTarget = env.VITE_API_PROXY_TARGET || process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000';
   const appDomain = env.APP_DOMAIN || process.env.APP_DOMAIN || '';
+  const oldDomain = env.OLD_DOMAIN || process.env.OLD_DOMAIN || '';
+  const allowedHosts = [appDomain, oldDomain].filter(Boolean);
   return {
     plugins: [react()],
     define: {
@@ -23,7 +25,7 @@ export default defineConfig(({ mode }) => {
     server: {
       host: '0.0.0.0', // Cho phép truy cập từ các địa chỉ IP khác
       port: 5173,
-      allowedHosts: appDomain ? [appDomain] : true,
+      allowedHosts: allowedHosts.length > 0 ? allowedHosts : true,
       proxy: {
         '/api': {
           target: apiProxyTarget,

@@ -46,6 +46,10 @@ const io = new SocketIOServer(httpServer, {
           `https://${process.env.APP_DOMAIN}`,
           `http://${process.env.APP_DOMAIN}`,
         ] : []),
+        ...(process.env.OLD_DOMAIN ? [
+          `https://${process.env.OLD_DOMAIN}`,
+          `http://${process.env.OLD_DOMAIN}`,
+        ] : []),
         process.env.FRONTEND_URL || '',
       ].filter(Boolean);
 
@@ -169,7 +173,11 @@ const bodyLimit = process.env.MAX_BODY_SIZE || '5mb';
 
 // Derive allowed origins from APP_DOMAIN (single source of truth)
 const appDomain = process.env.APP_DOMAIN || '';
-const domainOrigins = appDomain ? [`https://${appDomain}`, `http://${appDomain}`] : [];
+const oldDomain = process.env.OLD_DOMAIN || '';
+const domainOrigins = [
+  ...(appDomain ? [`https://${appDomain}`, `http://${appDomain}`] : []),
+  ...(oldDomain ? [`https://${oldDomain}`, `http://${oldDomain}`] : []),
+];
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || [
   'http://localhost',
   'http://localhost:3000',
