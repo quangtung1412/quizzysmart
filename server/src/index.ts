@@ -314,13 +314,17 @@ app.use('/api/gemini', geminiMonitoringRoutes);
 
 // OAuth routes (canonical path /api/auth/...)
 app.get('/api/auth/google', (req, res, next) => {
-  // Build dynamic callback only if no explicit GOOGLE_CALLBACK_URL provided.
+  // Build dynamic callback: prefer APP_DOMAIN, then forwarded headers, then callbackURL default
   let dynamicCallback = callbackURL;
   if (!process.env.GOOGLE_CALLBACK_URL) {
-    const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
-    if (host) {
-      const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'http');
-      dynamicCallback = `${proto}://${host.replace(/\/$/, '')}/api/auth/google/callback`;
+    if (appDomain) {
+      dynamicCallback = `https://${appDomain}/api/auth/google/callback`;
+    } else {
+      const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
+      if (host && !host.includes('backend:')) {
+        const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'http');
+        dynamicCallback = `${proto}://${host.replace(/\/$/, '')}/api/auth/google/callback`;
+      }
     }
   }
   console.log('[OAuth] Start flow callback=', dynamicCallback);
@@ -342,11 +346,11 @@ app.get('/api/auth/google/callback', (req: Request, res: Response, next) => {
   console.log(`\n[OAuth Callback] ========== GOOGLE CALLBACK ==========`);
   console.log(`[OAuth Callback] Code: ${(req.query.code as string)?.substring(0, 20)}...`);
   console.log(`[OAuth Callback] Scope: ${req.query.scope}`);
-  // If APP_BASE_URL provided, always trust it. Otherwise derive from forwarded headers.
+  // If APP_BASE_URL or APP_DOMAIN provided, always trust it. Otherwise derive from forwarded headers.
   let finalBase = appBaseUrl;
-  if (!process.env.APP_BASE_URL) {
+  if (!process.env.APP_BASE_URL && !appDomain) {
     const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
-    if (host) {
+    if (host && !host.includes('backend:')) {
       const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'http');
       finalBase = `${proto}://${host.replace(/\/$/, '')}`;
     }
@@ -355,10 +359,14 @@ app.get('/api/auth/google/callback', (req: Request, res: Response, next) => {
   // Ensure the same callbackURL is used when exchanging the code
   let effectiveCallback = callbackURL;
   if (!process.env.GOOGLE_CALLBACK_URL) {
-    const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
-    if (host) {
-      const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'http');
-      effectiveCallback = `${proto}://${host.replace(/\/$/, '')}/api/auth/google/callback`;
+    if (appDomain) {
+      effectiveCallback = `https://${appDomain}/api/auth/google/callback`;
+    } else {
+      const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
+      if (host && !host.includes('backend:')) {
+        const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'http');
+        effectiveCallback = `${proto}://${host.replace(/\/$/, '')}/api/auth/google/callback`;
+      }
     }
   }
 
