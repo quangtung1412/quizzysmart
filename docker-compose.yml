@@ -111,6 +111,8 @@ services:
       - "5173:5173"
     env_file:
       - ./server/.env
+    volumes:
+      - ./server/.env:/app/.env:ro
     environment:
       - VITE_API_PROXY_TARGET=http://backend:3000
     depends_on:
