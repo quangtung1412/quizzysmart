@@ -23,9 +23,7 @@ export default defineConfig(({ mode }) => {
     server: {
       host: '0.0.0.0', // Cho phép truy cập từ các địa chỉ IP khác
       port: 5173,
-      allowedHosts: [
-        ...(appDomain ? [appDomain] : [])
-      ],
+      allowedHosts: appDomain ? [appDomain] : true,
       proxy: {
         '/api': {
           target: apiProxyTarget,
