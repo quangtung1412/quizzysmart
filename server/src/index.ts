@@ -564,6 +564,50 @@ async function getActiveSubscription(userId: string) {
   });
 }
 
+// Cleanup expired subscriptions: mark as 'expired' and reset AI quota to 10
+async function cleanupExpiredSubscriptions() {
+  const now = new Date();
+  try {
+    // Find all subscriptions that are still 'active' but have expired
+    const expiredSubs = await prismaAny.subscription.findMany({
+      where: {
+        status: 'active',
+        expiresAt: { lte: now }
+      },
+      select: { id: true, userId: true, plan: true, expiresAt: true }
+    });
+
+    if (expiredSubs.length === 0) return;
+
+    console.log(`[Subscription Cleanup] Found ${expiredSubs.length} expired subscription(s)`);
+
+    for (const sub of expiredSubs) {
+      // Mark subscription as expired
+      await prismaAny.subscription.update({
+        where: { id: sub.id },
+        data: { status: 'expired' }
+      });
+
+      // Check if user has any OTHER active (non-expired) subscription
+      const otherActive = await getActiveSubscription(sub.userId);
+      if (!otherActive) {
+        // No other active subscription → reset to regular user quota
+        await prisma.user.update({
+          where: { id: sub.userId },
+          data: { aiSearchQuota: 10 }
+        });
+        console.log(`[Subscription Cleanup] User ${sub.userId}: plan '${sub.plan}' expired, quota reset to 10`);
+      } else {
+        console.log(`[Subscription Cleanup] User ${sub.userId}: plan '${sub.plan}' expired, but has another active subscription until ${otherActive.expiresAt}`);
+      }
+    }
+
+    console.log(`[Subscription Cleanup] Done. Processed ${expiredSubs.length} expired subscription(s)`);
+  } catch (error) {
+    console.error('[Subscription Cleanup] Error:', error);
+  }
+}
+
 app.get('/api/auth/me', async (req: Request, res: Response) => {
   if (!req.user) return res.status(401).json({ user: null });
 
@@ -2823,6 +2867,10 @@ app.use(errorLogger);
 httpServer.listen(port, () => {
   console.log('API server on :' + port);
   console.log('Socket.IO enabled for real-time updates');
+
+  // Run expired subscription cleanup on startup and every hour
+  cleanupExpiredSubscriptions();
+  setInterval(cleanupExpiredSubscriptions, 60 * 60 * 1000);
 });
 
 // Initialize Telegram Bot for subscription management

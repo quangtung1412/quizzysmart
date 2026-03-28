@@ -92,7 +92,7 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
         role: true,
         aiSearchQuota: true,
         subscriptions: {
-          where: { status: 'active' },
+          where: { status: 'active', expiresAt: { gt: new Date() } },
           select: {
             status: true,
             plan: true
@@ -578,7 +578,7 @@ router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Re
         role: true,
         aiSearchQuota: true,
         subscriptions: {
-          where: { status: 'active' },
+          where: { status: 'active', expiresAt: { gt: new Date() } },
           select: {
             status: true,
             plan: true
@@ -1138,7 +1138,7 @@ router.post('/deep-search', requireAuth, requireChatAccess, async (req: Request,
         role: true,
         aiSearchQuota: true,
         subscriptions: {
-          where: { status: 'active' },
+          where: { status: 'active', expiresAt: { gt: new Date() } },
           select: {
             status: true,
             plan: true
