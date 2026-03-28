@@ -314,21 +314,22 @@ app.use('/api/gemini', geminiMonitoringRoutes);
 
 // OAuth routes (canonical path /api/auth/...)
 app.get('/api/auth/google', (req, res, next) => {
-  // Build dynamic callback: prefer APP_DOMAIN, then forwarded headers, then callbackURL default
+  // Pass origin through OAuth state so callback redirects to correct domain
+  const clientOrigin = (req.query.origin as string) || '';
+  const deviceId = (req.query.deviceId as string) || '';
+  const state = Buffer.from(JSON.stringify({ origin: clientOrigin, deviceId })).toString('base64url');
+
+  // Build callback URL: always use APP_DOMAIN for Google's registered redirect URI
   let dynamicCallback = callbackURL;
-  if (!process.env.GOOGLE_CALLBACK_URL) {
-    if (appDomain) {
-      dynamicCallback = `https://${appDomain}/api/auth/google/callback`;
-    } else {
-      const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
-      if (host && !host.includes('backend:')) {
-        const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'http');
-        dynamicCallback = `${proto}://${host.replace(/\/$/, '')}/api/auth/google/callback`;
-      }
-    }
+  if (!process.env.GOOGLE_CALLBACK_URL && appDomain) {
+    dynamicCallback = `https://${appDomain}/api/auth/google/callback`;
   }
-  console.log('[OAuth] Start flow callback=', dynamicCallback);
-  return passport.authenticate('google', { scope: ['profile', 'email'], callbackURL: dynamicCallback } as any)(req, res, next);
+  console.log('[OAuth] Start flow callback=', dynamicCallback, 'clientOrigin=', clientOrigin);
+  return passport.authenticate('google', {
+    scope: ['profile', 'email'],
+    callbackURL: dynamicCallback,
+    state
+  } as any)(req, res, next);
 });
 app.get('/api/auth/fail', (req: Request, res: Response) => {
   return res.status(401).send('Đăng nhập Google thất bại. Vui lòng thử lại hoặc kiểm tra cấu hình OAuth (redirect URI / client secret).');
@@ -346,32 +347,31 @@ app.get('/api/auth/google/callback', (req: Request, res: Response, next) => {
   console.log(`\n[OAuth Callback] ========== GOOGLE CALLBACK ==========`);
   console.log(`[OAuth Callback] Code: ${(req.query.code as string)?.substring(0, 20)}...`);
   console.log(`[OAuth Callback] Scope: ${req.query.scope}`);
-  // If APP_BASE_URL or APP_DOMAIN provided, always trust it. Otherwise derive from forwarded headers.
-  let finalBase = appBaseUrl;
-  if (!process.env.APP_BASE_URL && !appDomain) {
-    const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
-    if (host && !host.includes('backend:')) {
-      const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'http');
-      finalBase = `${proto}://${host.replace(/\/$/, '')}`;
-    }
-  }
+
+  // Decode state to get client's original domain
+  let clientOrigin = '';
+  let stateDeviceId = '';
+  try {
+    const stateStr = Buffer.from((req.query.state as string) || '', 'base64url').toString();
+    const stateObj = JSON.parse(stateStr);
+    clientOrigin = stateObj.origin || '';
+    stateDeviceId = stateObj.deviceId || '';
+  } catch { /* ignore */ }
+
+  // Validate clientOrigin against known domains to prevent open redirect
+  const allowedBases = domainOrigins.length > 0 ? domainOrigins : [appBaseUrl];
+  const validOrigin = clientOrigin && allowedBases.includes(clientOrigin) ? clientOrigin : appBaseUrl;
+  const finalBase = validOrigin;
 
   // Ensure the same callbackURL is used when exchanging the code
   let effectiveCallback = callbackURL;
-  if (!process.env.GOOGLE_CALLBACK_URL) {
-    if (appDomain) {
-      effectiveCallback = `https://${appDomain}/api/auth/google/callback`;
-    } else {
-      const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
-      if (host && !host.includes('backend:')) {
-        const proto = (req.headers['x-forwarded-proto'] as string) || (req.secure ? 'https' : 'http');
-        effectiveCallback = `${proto}://${host.replace(/\/$/, '')}/api/auth/google/callback`;
-      }
-    }
+  if (!process.env.GOOGLE_CALLBACK_URL && appDomain) {
+    effectiveCallback = `https://${appDomain}/api/auth/google/callback`;
   }
 
   console.log(`[OAuth Callback] Effective callback URL: ${effectiveCallback}`);
   console.log(`[OAuth Callback] Final base URL: ${finalBase}`);
+  console.log(`[OAuth Callback] Client origin: ${clientOrigin}`);
 
   return passport.authenticate('google', { failureRedirect: '/api/auth/fail', callbackURL: effectiveCallback } as any, (err: any, user: any, info: any) => {
     if (err) {
@@ -402,7 +402,7 @@ app.get('/api/auth/google/callback', (req: Request, res: Response, next) => {
 
       // Handle device tracking for OAuth login
       try {
-        const deviceId = (req.query.deviceId as string) || `google-${Date.now()}`;
+        const deviceId = stateDeviceId || (req.query.deviceId as string) || `google-${Date.now()}`;
         const { sessionToken } = await handleDeviceLogin(user.id, deviceId);
         (req.session as any).deviceSessionToken = sessionToken;
         (req.session as any).deviceId = deviceId;

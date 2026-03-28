@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { api, API_BASE } from '../src/api';
 import { User } from '../types';
 import { getDeviceId, setSessionToken } from '../src/utils/deviceId';
+import DomainMigrationBanner from './DomainMigrationBanner';
 
 interface LoginScreenProps {
   onLoginSuccess: (user: User) => void;
@@ -26,7 +27,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onSwitchToReg
 
   const handleGoogleLogin = () => {
     const deviceId = getDeviceId();
-    window.location.href = `${API_BASE}/api/auth/google?deviceId=${encodeURIComponent(deviceId)}`;
+    const origin = window.location.origin;
+    window.location.href = `${API_BASE}/api/auth/google?deviceId=${encodeURIComponent(deviceId)}&origin=${encodeURIComponent(origin)}`;
   };
 
   const handleLocalLogin = async (e: React.FormEvent) => {
@@ -55,6 +57,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, onSwitchToReg
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-sky-50 to-blue-100 p-4 sm:p-6">
+      <DomainMigrationBanner />
       <div className="p-6 sm:p-8 bg-white rounded-xl shadow-lg w-full max-w-sm sm:max-w-md border border-slate-200">
         <div className="mb-6 text-center">
           <div className="w-16 h-16 bg-gradient-to-br from-sky-500 to-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
