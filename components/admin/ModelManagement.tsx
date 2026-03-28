@@ -11,6 +11,8 @@ interface ModelSettings {
 }
 
 const AVAILABLE_MODELS = [
+    'gemini-3.1-flash-lite-preview',
+    'gemini-3.1-flash-preview',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite-preview-09-2025',
     'gemini-2.5-flash-lite',

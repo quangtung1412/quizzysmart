@@ -3,8 +3,6 @@ import React, { useState, useEffect } from 'react';
 const NEW_DOMAIN = 'elearning.claymatium.com';
 const OLD_DOMAIN = 'giadinhnhimsoc.site';
 const DEADLINE = new Date('2026-04-11T00:00:00+07:00'); // 0h ngày 11/4/2026 (GMT+7)
-const DISMISS_KEY = 'domain_migration_dismissed';
-
 const DomainMigrationBanner: React.FC = () => {
   const [visible, setVisible] = useState(false);
   const [countdown, setCountdown] = useState('');
@@ -12,10 +10,6 @@ const DomainMigrationBanner: React.FC = () => {
   useEffect(() => {
     const hostname = window.location.hostname;
     if (!hostname.includes(OLD_DOMAIN)) return;
-    
-    const dismissed = sessionStorage.getItem(DISMISS_KEY);
-    if (dismissed) return;
-
     setVisible(true);
   }, []);
 
@@ -42,15 +36,10 @@ const DomainMigrationBanner: React.FC = () => {
 
   const newUrl = `https://${NEW_DOMAIN}${window.location.pathname}${window.location.search}`;
 
-  const handleDismiss = () => {
-    sessionStorage.setItem(DISMISS_KEY, '1');
-    setVisible(false);
-  };
-
   return (
     <>
-      {/* Overlay */}
-      <div className="fixed inset-0 bg-black/50 z-[9998]" onClick={handleDismiss} />
+      {/* Overlay - không cho dismiss */}
+      <div className="fixed inset-0 bg-black/50 z-[9998]" />
       
       {/* Popup */}
       <div className="fixed inset-0 flex items-center justify-center z-[9999] p-4">
@@ -92,7 +81,7 @@ const DomainMigrationBanner: React.FC = () => {
             </p>
           </div>
 
-          {/* Buttons */}
+          {/* Button */}
           <div className="flex flex-col gap-2">
             <a
               href={newUrl}
@@ -100,12 +89,6 @@ const DomainMigrationBanner: React.FC = () => {
             >
               Chuyển sang domain mới →
             </a>
-            <button
-              onClick={handleDismiss}
-              className="w-full py-2 text-slate-500 text-sm hover:text-slate-700 transition-colors"
-            >
-              Tôi biết rồi, tiếp tục dùng tạm
-            </button>
           </div>
         </div>
       </div>

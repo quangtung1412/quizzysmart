@@ -14,6 +14,8 @@ interface SystemSettingsData {
 }
 
 const AVAILABLE_MODELS = [
+    'gemini-3.1-flash-lite-preview',
+    'gemini-3.1-flash-preview',
     'gemini-2.5-flash',
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite',

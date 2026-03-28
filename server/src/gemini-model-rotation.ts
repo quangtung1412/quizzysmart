@@ -19,16 +19,18 @@ interface ModelUsage {
 
 // Model configurations from the provided data
 const MODEL_CONFIGS: ModelConfig[] = [
-    { name: 'gemini-2.5-flash', rpm: 10, tpm: 250000, rpd: 250, priority: 1, category: 'Text-out models' },
-    { name: 'gemini-2.0-flash', rpm: 15, tpm: 1000000, rpd: 200, priority: 2, category: 'Text-out models' },
-    { name: 'gemini-2.0-flash-lite', rpm: 30, tpm: 1000000, rpd: 200, priority: 3, category: 'Text-out models' },
-    { name: 'gemini-2.5-flash-lite', rpm: 15, tpm: 250000, rpd: 1000, priority: 4, category: 'Text-out models' },
-    { name: 'gemini-2.0-flash-exp', rpm: 10, tpm: 250000, rpd: 50, priority: 5, category: 'Text-out models' },
-    { name: 'gemini-2.5-pro', rpm: 2, tpm: 125000, rpd: 50, priority: 6, category: 'Text-out models' },
-    { name: 'gemma-3-12b', rpm: 30, tpm: 15000, rpd: 14400, priority: 7, category: 'Other models' },
-    { name: 'gemma-3-27b', rpm: 30, tpm: 15000, rpd: 14400, priority: 8, category: 'Other models' },
-    { name: 'gemma-3-4b', rpm: 30, tpm: 15000, rpd: 14400, priority: 9, category: 'Other models' },
-    { name: 'learnlm-2.0-flash-experimental', rpm: 15, tpm: 0, rpd: 1500, priority: 10, category: 'Text-out models' },
+    { name: 'gemini-3.1-flash-lite-preview', rpm: 10, tpm: 250000, rpd: 250, priority: 1, category: 'Text-out models' },
+    { name: 'gemini-3.1-flash-preview', rpm: 10, tpm: 250000, rpd: 250, priority: 2, category: 'Text-out models' },
+    { name: 'gemini-2.5-flash', rpm: 10, tpm: 250000, rpd: 250, priority: 3, category: 'Text-out models' },
+    { name: 'gemini-2.0-flash', rpm: 15, tpm: 1000000, rpd: 200, priority: 4, category: 'Text-out models' },
+    { name: 'gemini-2.0-flash-lite', rpm: 30, tpm: 1000000, rpd: 200, priority: 5, category: 'Text-out models' },
+    { name: 'gemini-2.5-flash-lite', rpm: 15, tpm: 250000, rpd: 1000, priority: 6, category: 'Text-out models' },
+    { name: 'gemini-2.0-flash-exp', rpm: 10, tpm: 250000, rpd: 50, priority: 7, category: 'Text-out models' },
+    { name: 'gemini-2.5-pro', rpm: 2, tpm: 125000, rpd: 50, priority: 8, category: 'Text-out models' },
+    { name: 'gemma-3-12b', rpm: 30, tpm: 15000, rpd: 14400, priority: 9, category: 'Other models' },
+    { name: 'gemma-3-27b', rpm: 30, tpm: 15000, rpd: 14400, priority: 10, category: 'Other models' },
+    { name: 'gemma-3-4b', rpm: 30, tpm: 15000, rpd: 14400, priority: 11, category: 'Other models' },
+    { name: 'learnlm-2.0-flash-experimental', rpm: 15, tpm: 0, rpd: 1500, priority: 12, category: 'Text-out models' },
 ];
 
 // Sort by priority (lowest first)
