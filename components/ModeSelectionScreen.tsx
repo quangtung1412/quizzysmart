@@ -31,7 +31,7 @@ const ModeSelectionScreen: React.FC<ModeSelectionScreenProps> = ({
   // Check if user is premium - matching App.tsx logic
   const isPremiumUser = isAdmin || (
     user?.premiumPlan &&
-    (user.premiumPlan === 'plus' || user.premiumPlan === 'premium') &&
+    (user.premiumPlan === 'plus' || user.premiumPlan === 'premium' || user.premiumPlan === 'max') &&
     (!user.premiumExpiresAt || new Date(user.premiumExpiresAt) > new Date())
   );
 

@@ -29,7 +29,7 @@ export interface User {
   quickSearchQuota?: number; // Number of quick searches remaining (free trial)
   role?: UserRole;
   hasQuickSearchAccess?: boolean; // Quick Search feature access
-  premiumPlan?: string | null; // 'plus' | 'premium' | null
+  premiumPlan?: string | null; // 'plus' | 'premium' | 'max' | null
   premiumExpiresAt?: string | null; // ISO date string
 }
 

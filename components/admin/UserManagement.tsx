@@ -102,7 +102,7 @@ const UserManagement: React.FC = () => {
     if (user.subscriptionPlan && user.subscriptionStatus === 'active') {
       const expiresAt = user.subscriptionExpiresAt ? new Date(user.subscriptionExpiresAt) : null;
       if (expiresAt && expiresAt > new Date()) {
-        return user.subscriptionPlan; // 'plus' or 'premium'
+        return user.subscriptionPlan; // 'plus', 'premium', or 'max'
       }
     }
     return 'regular'; // No active subscription
@@ -171,6 +171,7 @@ const UserManagement: React.FC = () => {
 
   const getPremiumBadgeColor = (plan: string | null) => {
     switch (plan) {
+      case 'max': return 'bg-emerald-100 text-emerald-800';
       case 'premium': return 'bg-yellow-100 text-yellow-800';
       case 'plus': return 'bg-purple-100 text-purple-800';
       default: return 'bg-gray-100 text-gray-600';
@@ -343,6 +344,7 @@ const UserManagement: React.FC = () => {
           <option value="regular">Người dùng thường</option>
           <option value="plus">Plus</option>
           <option value="premium">Premium</option>
+          <option value="max">Max</option>
         </select>
       </div>
 
@@ -521,11 +523,13 @@ const UserManagement: React.FC = () => {
                         <td className="px-6 py-4">
                           {user.subscriptionPlan && user.subscriptionStatus === 'active' ? (
                             <div>
-                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${user.subscriptionPlan === 'premium'
-                                ? 'bg-yellow-100 text-yellow-800'
-                                : user.subscriptionPlan === 'plus'
-                                  ? 'bg-purple-100 text-purple-800'
-                                  : 'bg-gray-100 text-gray-600'
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${user.subscriptionPlan === 'max'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : user.subscriptionPlan === 'premium'
+                                  ? 'bg-yellow-100 text-yellow-800'
+                                  : user.subscriptionPlan === 'plus'
+                                    ? 'bg-purple-100 text-purple-800'
+                                    : 'bg-gray-100 text-gray-600'
                                 }`}>
                                 {user.subscriptionPlan.toUpperCase()}
                               </span>
@@ -834,6 +838,7 @@ const UserManagement: React.FC = () => {
                     <option value="">Không có</option>
                     <option value="plus">Plus</option>
                     <option value="premium">Premium</option>
+                    <option value="max">Max</option>
                   </select>
                 </div>
 

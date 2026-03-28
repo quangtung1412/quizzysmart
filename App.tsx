@@ -127,7 +127,7 @@ const App: React.FC = () => {
             // Find most recent active subscription for display
             setThankYouData({
               plan: freshUserData.premiumPlan || 'premium',
-              planName: freshUserData.premiumPlan === 'plus' ? 'Plus' : 'Premium',
+              planName: freshUserData.premiumPlan === 'plus' ? 'Plus' : freshUserData.premiumPlan === 'max' ? 'Max' : 'Premium',
               aiQuota: freshUserData.aiSearchQuota || 0,
               expiresAt: freshUserData.premiumExpiresAt || new Date()
             });
@@ -999,7 +999,7 @@ const App: React.FC = () => {
             {user && (
               <div className="flex items-center gap-1 sm:gap-3 flex-shrink-0">
                 {/* Premium Button - Bên trái AI quota cho user thường/plus */}
-                {(!user.premiumPlan || user.premiumPlan === 'plus') && (
+                {(!user.premiumPlan || user.premiumPlan === 'plus') && user.premiumPlan !== 'max' && (
                   <button
                     onClick={handleGoToPremiumPlans}
                     className="bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-white font-bold py-2 px-4 rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center gap-2 animate-pulse"
@@ -1033,20 +1033,24 @@ const App: React.FC = () => {
                 )}
 
                 {/* User Info with Premium Styling */}
-                <div className={`flex items-center gap-2 bg-white p-2 rounded-full shadow-sm transition-all duration-200 ${user.premiumPlan === 'plus'
-                  ? 'border-2 border-purple-500 shadow-purple-200'
-                  : user.premiumPlan === 'premium'
-                    ? 'border-2 border-yellow-500 shadow-yellow-200'
-                    : 'border border-slate-200'
+                <div className={`flex items-center gap-2 bg-white p-2 rounded-full shadow-sm transition-all duration-200 ${user.premiumPlan === 'max'
+                  ? 'border-2 border-emerald-500 shadow-emerald-200'
+                  : user.premiumPlan === 'plus'
+                    ? 'border-2 border-purple-500 shadow-purple-200'
+                    : user.premiumPlan === 'premium'
+                      ? 'border-2 border-yellow-500 shadow-yellow-200'
+                      : 'border border-slate-200'
                   }`}>
                   {user.picture && <img src={user.picture} alt={user.name} className="w-8 h-8 rounded-full" />}
 
                   <div className="hidden sm:flex flex-col items-start">
-                    <span className={`text-sm font-medium ${user.premiumPlan === 'plus'
-                      ? 'text-purple-700 font-bold'
-                      : user.premiumPlan === 'premium'
-                        ? 'text-yellow-700 font-bold'
-                        : 'text-slate-600'
+                    <span className={`text-sm font-medium ${user.premiumPlan === 'max'
+                      ? 'text-emerald-700 font-bold'
+                      : user.premiumPlan === 'plus'
+                        ? 'text-purple-700 font-bold'
+                        : user.premiumPlan === 'premium'
+                          ? 'text-yellow-700 font-bold'
+                          : 'text-slate-600'
                       }`}>
                       Chào, {user.name}
                     </span>

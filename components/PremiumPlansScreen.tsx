@@ -196,8 +196,9 @@ const PremiumPlansScreen: React.FC<PremiumPlansScreenProps> = ({ onBack, user, o
             planColor = 'from-blue-500 to-cyan-500';
         } else if (activatedPlan.plan === 'premium') {
             planColor = 'from-purple-500 to-pink-500';
+        } else if (activatedPlan.plan === 'max') {
+            planColor = 'from-emerald-500 to-teal-500';
         } else {
-            // For other plans, use green gradient
             planColor = 'from-green-500 to-emerald-500';
         }
 
