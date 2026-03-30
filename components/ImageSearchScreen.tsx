@@ -25,6 +25,8 @@ interface SearchResult {
         chunksUsed?: number;
     };
     searchType?: string;
+    ragRestricted?: boolean;
+    ragRestrictedMessage?: string;
     extractedOptions?: {
         A?: string;
         B?: string;
@@ -515,6 +517,26 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                         )}
                                     </div>
                                 </div>
+                            ) : searchResult.ragRestricted ? (
+                                <div className="bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-300 rounded-xl p-4 sm:p-6">
+                                    <div className="flex items-start gap-3">
+                                        <span className="text-2xl flex-shrink-0">🔒</span>
+                                        <div className="flex-1">
+                                            <h4 className="font-bold text-amber-900 mb-2 text-sm sm:text-base">Không tìm thấy trong ngân hàng câu hỏi</h4>
+                                            <p className="text-amber-800 text-xs sm:text-sm mb-3">
+                                                {searchResult.ragRestrictedMessage || 'Tính năng tìm kiếm AI nâng cao trong văn bản quy định chỉ dành cho gói Premium và MAX.'}
+                                            </p>
+                                            <div className="bg-amber-100/60 rounded-lg p-3 mb-3">
+                                                <p className="text-amber-800 font-semibold text-xs sm:text-sm mb-2">✨ Với gói Premium/MAX, bạn sẽ có:</p>
+                                                <ul className="text-amber-800 text-xs sm:text-sm space-y-1 list-disc list-inside">
+                                                    <li>AI tìm kiếm trong hàng nghìn trang văn bản quy định</li>
+                                                    <li>Câu trả lời kèm trích dẫn nguồn tài liệu</li>
+                                                    <li>Độ chính xác cao với công nghệ RAG</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             ) : (
                                 <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-4 sm:p-6">
                                     <div className="flex items-start gap-3">
@@ -665,6 +687,26 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                                 Model: {searchResult.ragResult.model}
                                             </p>
                                         )}
+                                    </div>
+                                </div>
+                            ) : searchResult.ragRestricted ? (
+                                <div className="bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-300 rounded-xl p-4 sm:p-6">
+                                    <div className="flex items-start gap-3">
+                                        <span className="text-2xl flex-shrink-0">🔒</span>
+                                        <div className="flex-1">
+                                            <h4 className="font-bold text-amber-900 mb-2 text-sm sm:text-base">Không tìm thấy trong ngân hàng câu hỏi</h4>
+                                            <p className="text-amber-800 text-xs sm:text-sm mb-3">
+                                                {searchResult.ragRestrictedMessage || 'Tính năng tìm kiếm AI nâng cao trong văn bản quy định chỉ dành cho gói Premium và MAX.'}
+                                            </p>
+                                            <div className="bg-amber-100/60 rounded-lg p-3 mb-3">
+                                                <p className="text-amber-800 font-semibold text-xs sm:text-sm mb-2">✨ Với gói Premium/MAX, bạn sẽ có:</p>
+                                                <ul className="text-amber-800 text-xs sm:text-sm space-y-1 list-disc list-inside">
+                                                    <li>AI tìm kiếm trong hàng nghìn trang văn bản quy định</li>
+                                                    <li>Câu trả lời kèm trích dẫn nguồn tài liệu</li>
+                                                    <li>Độ chính xác cao với công nghệ RAG</li>
+                                                </ul>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             ) : (

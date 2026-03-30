@@ -3215,6 +3215,12 @@ app.post('/api/premium/search-by-image', async (req: Request, res: Response) => 
       });
     }
 
+    // Check subscription plan for RAG access
+    const activeSubscription = await getActiveSubscription(user.id);
+    const userPlan = dbUser.role === 'admin' ? 'premium' : (activeSubscription?.plan || null);
+    const canUseRAG = dbUser.role === 'admin' || userPlan === 'premium' || userPlan === 'max';
+    console.log(`[AI Search] User ${user.id} plan: ${userPlan || 'none'}, canUseRAG: ${canUseRAG}`);
+
     const { image, knowledgeBaseIds: kbIds } = req.body;
     knowledgeBaseIds = kbIds;
 
@@ -3544,90 +3550,96 @@ Ví dụ:
 
     // Smart Search Strategy: If no good match found in database (confidence < 70%), try RAG search
     if (!bestMatch || bestScore < 0.7) {
-      console.log('=== RAG SEARCH INITIATED ===');
-      console.log('Best DB match confidence:', Math.round(bestScore * 100) + '%');
-      console.log('Switching to RAG search for better accuracy...');
+      // Check if user has RAG access (Premium/MAX only)
+      if (!canUseRAG) {
+        console.log(`[AI Search] User ${user.id} does not have RAG access (plan: ${userPlan || 'none'}). Skipping RAG search.`);
+        result_data.ragRestricted = true;
+        result_data.ragRestrictedMessage = 'Tính năng tìm kiếm AI nâng cao trong văn bản quy định chỉ dành cho gói Premium và MAX. Nâng cấp để trải nghiệm!';
+      } else {
+        console.log('=== RAG SEARCH INITIATED ===');
+        console.log('Best DB match confidence:', Math.round(bestScore * 100) + '%');
+        console.log('Switching to RAG search for better accuracy...');
 
-      try {
-        // Import RAG services (dynamic import to avoid circular dependencies)
-        const { geminiRAGService } = await import('./services/gemini-rag.service.js');
-        const { qdrantService } = await import('./services/qdrant.service.js');
+        try {
+          // Import RAG services (dynamic import to avoid circular dependencies)
+          const { geminiRAGService } = await import('./services/gemini-rag.service.js');
+          const { qdrantService } = await import('./services/qdrant.service.js');
 
-        // Generate embedding for the recognized question
-        const questionEmbedding = await geminiRAGService.generateEmbedding(recognizedText, sessionId, user.id.toString());
+          // Generate embedding for the recognized question
+          const questionEmbedding = await geminiRAGService.generateEmbedding(recognizedText, sessionId, user.id.toString());
 
-        // Get all available collections for comprehensive search
-        const availableCollections = await qdrantService.listCollections();
-        const collectionNames = availableCollections.map(c => c.name);
+          // Get all available collections for comprehensive search
+          const availableCollections = await qdrantService.listCollections();
+          const collectionNames = availableCollections.map(c => c.name);
 
-        console.log(`[RAG Search] Available collections:`, collectionNames);
+          console.log(`[RAG Search] Available collections:`, collectionNames);
 
-        // For image search, we do comprehensive search across all collections
-        // since we don't have enough context to determine specific domain
-        let ragSearchResults: any[] = [];
-        if (collectionNames.length > 1) {
-          console.log(`[RAG Search] Searching across multiple collections`);
-          ragSearchResults = await qdrantService.searchMultipleCollections(
-            questionEmbedding,
-            collectionNames,
-            { topK: 10, minScore: 0.4 }
-          );
-        } else if (collectionNames.length === 1) {
-          console.log(`[RAG Search] Searching in single collection:`, collectionNames[0]);
-          ragSearchResults = await qdrantService.search(
-            questionEmbedding,
-            {
-              topK: 10,
-              minScore: 0.4,
-              collectionName: collectionNames[0]
-            }
-          );
-        } else {
-          console.log(`[RAG Search] No collections available`);
-          ragSearchResults = [];
-        }
+          // For image search, we do comprehensive search across all collections
+          // since we don't have enough context to determine specific domain
+          let ragSearchResults: any[] = [];
+          if (collectionNames.length > 1) {
+            console.log(`[RAG Search] Searching across multiple collections`);
+            ragSearchResults = await qdrantService.searchMultipleCollections(
+              questionEmbedding,
+              collectionNames,
+              { topK: 10, minScore: 0.4 }
+            );
+          } else if (collectionNames.length === 1) {
+            console.log(`[RAG Search] Searching in single collection:`, collectionNames[0]);
+            ragSearchResults = await qdrantService.search(
+              questionEmbedding,
+              {
+                topK: 10,
+                minScore: 0.4,
+                collectionName: collectionNames[0]
+              }
+            );
+          } else {
+            console.log(`[RAG Search] No collections available`);
+            ragSearchResults = [];
+          }
 
-        console.log(`[RAG Search] Found ${ragSearchResults.length} RAG chunks`);
+          console.log(`[RAG Search] Found ${ragSearchResults.length} RAG chunks`);
 
-        if (ragSearchResults.length > 0) {
-          // Apply reranking for better relevance
-          ragSearchResults = qdrantService.rerankResults(ragSearchResults, recognizedText, {
-            keywordWeight: 0.1,
-            maxPerDocument: 3,
-          });
+          if (ragSearchResults.length > 0) {
+            // Apply reranking for better relevance
+            ragSearchResults = qdrantService.rerankResults(ragSearchResults, recognizedText, {
+              keywordWeight: 0.1,
+              maxPerDocument: 3,
+            });
 
-          // Take top 8 after reranking for focused answer
-          ragSearchResults = ragSearchResults.slice(0, 8);
+            // Take top 8 after reranking for focused answer
+            ragSearchResults = ragSearchResults.slice(0, 8);
 
-          // Prepare retrieved chunks for RAG
-          const retrievedChunks = ragSearchResults.map((result) => ({
-            chunkId: result.id,
-            content: result.payload.content,
-            documentId: result.payload.documentId,
-            documentName: result.payload.documentName,
-            documentNumber: result.payload.documentNumber,
-            score: result.score,
-            metadata: {
+            // Prepare retrieved chunks for RAG
+            const retrievedChunks = ragSearchResults.map((result) => ({
+              chunkId: result.id,
+              content: result.payload.content,
               documentId: result.payload.documentId,
-              documentNumber: result.payload.documentNumber,
               documentName: result.payload.documentName,
-              documentType: result.payload.documentType,
-              chapterNumber: result.payload.chapterNumber,
-              chapterTitle: result.payload.chapterTitle,
-              articleNumber: result.payload.articleNumber,
-              articleTitle: result.payload.articleTitle,
-              sectionNumber: result.payload.sectionNumber,
-              chunkType: result.payload.chunkType,
-              chunkIndex: result.payload.chunkIndex,
-            },
-          }));
+              documentNumber: result.payload.documentNumber,
+              score: result.score,
+              metadata: {
+                documentId: result.payload.documentId,
+                documentNumber: result.payload.documentNumber,
+                documentName: result.payload.documentName,
+                documentType: result.payload.documentType,
+                chapterNumber: result.payload.chapterNumber,
+                chapterTitle: result.payload.chapterTitle,
+                articleNumber: result.payload.articleNumber,
+                articleTitle: result.payload.articleTitle,
+                sectionNumber: result.payload.sectionNumber,
+                chunkType: result.payload.chunkType,
+                chunkIndex: result.payload.chunkIndex,
+              },
+            }));
 
-          // Generate RAG answer with optimized prompt for image-extracted questions
-          // Use JSON format only for multiple choice questions, otherwise use prose
-          const hasOptions = !!(extractedData.optionA && extractedData.optionB);
+            // Generate RAG answer with optimized prompt for image-extracted questions
+            // Use JSON format only for multiple choice questions, otherwise use prose
+            const hasOptions = !!(extractedData.optionA && extractedData.optionB);
 
-          const ragQuery = {
-            question: `Dựa trên câu hỏi: "${recognizedText}"
+            const ragQuery = {
+              question: `Dựa trên câu hỏi: "${recognizedText}"
                       ${hasOptions ? `\nCác đáp án: A) ${extractedData.optionA}, B) ${extractedData.optionB}, C) ${extractedData.optionC}, D) ${extractedData.optionD}` : ''}
                       
                       ${hasOptions ? `Hãy phân tích và trả về CHÍNH XÁC theo định dạng JSON:
@@ -3639,53 +3651,54 @@ Ví dụ:
                       }
                       
                       Chỉ trả về JSON, không giải thích dài dòng.` : 'Hãy trả lời ngắn gọn, rõ ràng và chính xác.'}`,
-            topK: ragSearchResults.length,
-            format: hasOptions ? 'json' as const : 'prose' as const
-          };
+              topK: ragSearchResults.length,
+              format: hasOptions ? 'json' as const : 'prose' as const
+            };
 
-          const ragResponse = await geminiRAGService.generateRAGAnswer(ragQuery, retrievedChunks, sessionId, user.id.toString());
+            const ragResponse = await geminiRAGService.generateRAGAnswer(ragQuery, retrievedChunks, sessionId, user.id.toString());
 
-          // Add RAG result to response using structured format from service
-          result_data.ragResult = {
-            answer: ragResponse.answer,
-            confidence: ragResponse.confidence,
-            sources: ragResponse.sources,
-            model: ragResponse.model,
-            chunksUsed: ragSearchResults.length,
-            structured: ragResponse.structured || false
-          };
+            // Add RAG result to response using structured format from service
+            result_data.ragResult = {
+              answer: ragResponse.answer,
+              confidence: ragResponse.confidence,
+              sources: ragResponse.sources,
+              model: ragResponse.model,
+              chunksUsed: ragSearchResults.length,
+              structured: ragResponse.structured || false
+            };
 
-          // When RAG search is successful and has high confidence, treat as primary result
-          const isHighConfidence = ragResponse.confidence >= 80;
-          if (isHighConfidence) {
-            result_data.searchType = 'rag-primary';
-            console.log(`[RAG Search] ✅ High confidence result (${ragResponse.confidence}%), using as primary answer`);
+            // When RAG search is successful and has high confidence, treat as primary result
+            const isHighConfidence = ragResponse.confidence >= 80;
+            if (isHighConfidence) {
+              result_data.searchType = 'rag-primary';
+              console.log(`[RAG Search] ✅ High confidence result (${ragResponse.confidence}%), using as primary answer`);
+            } else {
+              result_data.searchType = 'rag-fallback';
+              console.log(`[RAG Search] ⚠️ Lower confidence result (${ragResponse.confidence}%), using as fallback answer`);
+            }
+
+            result_data.matchedQuestion = null; // Hide database match to show RAG results
+            result_data.confidence = ragResponse.confidence; // Use RAG confidence
+
+            console.log(`[RAG Search] Search successful, confidence: ${ragResponse.confidence}%`);
+            console.log(`[RAG Search] Sources used:`, ragResponse.sources?.slice(0, 3).map(s => s.documentName));
+            if (isHighConfidence) {
+              console.log('[RAG Search] High confidence result - showing RAG results as primary answer');
+            } else {
+              console.log('[RAG Search] Database results hidden, showing RAG results as fallback');
+            }
           } else {
-            result_data.searchType = 'rag-fallback';
-            console.log(`[RAG Search] ⚠️ Lower confidence result (${ragResponse.confidence}%), using as fallback answer`);
+            console.log('[RAG Search] No RAG chunks found');
+            result_data.ragResult = null;
           }
-
-          result_data.matchedQuestion = null; // Hide database match to show RAG results
-          result_data.confidence = ragResponse.confidence; // Use RAG confidence
-
-          console.log(`[RAG Search] Search successful, confidence: ${ragResponse.confidence}%`);
-          console.log(`[RAG Search] Sources used:`, ragResponse.sources?.slice(0, 3).map(s => s.documentName));
-          if (isHighConfidence) {
-            console.log('[RAG Search] High confidence result - showing RAG results as primary answer');
-          } else {
-            console.log('[RAG Search] Database results hidden, showing RAG results as fallback');
-          }
-        } else {
-          console.log('[RAG Search] No RAG chunks found');
+        } catch (ragError) {
+          console.error('[RAG Search] Search failed:', ragError);
           result_data.ragResult = null;
+          result_data.ragError = 'RAG search không khả dụng';
         }
-      } catch (ragError) {
-        console.error('[RAG Search] Search failed:', ragError);
-        result_data.ragResult = null;
-        result_data.ragError = 'RAG search không khả dụng';
-      }
 
-      console.log('=== RAG SEARCH COMPLETED ===');
+        console.log('=== RAG SEARCH COMPLETED ===');
+      } // end canUseRAG else block
     }
 
     // Deduct quota for non-admin users (after successful search)
@@ -3843,6 +3856,12 @@ app.post('/api/premium/search-by-image-stream', async (req: Request, res: Respon
         quota: 0
       });
     }
+
+    // Check subscription plan for RAG access
+    const activeSubscriptionStream = await getActiveSubscription(user.id);
+    const userPlanStream = dbUser.role === 'admin' ? 'premium' : (activeSubscriptionStream?.plan || null);
+    const canUseRAGStream = dbUser.role === 'admin' || userPlanStream === 'premium' || userPlanStream === 'max';
+    console.log(`[AI Search Stream] User ${user.id} plan: ${userPlanStream || 'none'}, canUseRAG: ${canUseRAGStream}`);
 
     const { image, knowledgeBaseIds: kbIds } = req.body;
     knowledgeBaseIds = kbIds;
@@ -4144,83 +4163,94 @@ QUY TẮC:
           data: result_data
         });
       } else {
-        // For low confidence matches, we'll use RAG instead - don't show DB results
-        if (bestMatch && bestScore < 0.7) {
-          console.log(`[Streaming] DB match found but confidence too low (${Math.round(bestScore * 100)}%), switching to RAG-only mode`);
-          result_data.matchedQuestion = null; // Hide low-confidence database match
-          result_data.confidence = 0; // Reset confidence for RAG
-          result_data.searchType = 'rag-only';
-        }
+        // Check if user has RAG access (Premium/MAX only)
+        if (!canUseRAGStream) {
+          console.log(`[AI Search Stream] User ${user.id} does not have RAG access (plan: ${userPlanStream || 'none'}). Skipping RAG search.`);
+          result_data.ragRestricted = true;
+          result_data.ragRestrictedMessage = 'Tính năng tìm kiếm AI nâng cao trong văn bản quy định chỉ dành cho gói Premium và MAX. Nâng cấp để trải nghiệm!';
 
-        // Stream RAG search process
-        sendEvent('status', { message: 'Đang tìm kiếm trong tài liệu RAG...' });
-
-        try {
-          const { geminiRAGService } = await import('./services/gemini-rag.service.js');
-          const { qdrantService } = await import('./services/qdrant.service.js');
-
-          const questionEmbedding = await geminiRAGService.generateEmbedding(recognizedText, sessionId, user.id.toString());
-
-          sendEvent('status', { message: 'Đang phân tích các tài liệu liên quan...' });
-
-          const availableCollections = await qdrantService.listCollections();
-          const collectionNames = availableCollections.map(c => c.name);
-
-          let ragSearchResults: any[] = [];
-          if (collectionNames.length > 1) {
-            ragSearchResults = await qdrantService.searchMultipleCollections(
-              questionEmbedding,
-              collectionNames,
-              { topK: 10, minScore: 0.4 }
-            );
-          } else if (collectionNames.length === 1) {
-            ragSearchResults = await qdrantService.search(
-              questionEmbedding,
-              {
-                topK: 10,
-                minScore: 0.4,
-                collectionName: collectionNames[0]
-              }
-            );
+          sendEvent('progress', {
+            step: 'rag_restricted',
+            data: result_data
+          });
+        } else {
+          // For low confidence matches, we'll use RAG instead - don't show DB results
+          if (bestMatch && bestScore < 0.7) {
+            console.log(`[Streaming] DB match found but confidence too low (${Math.round(bestScore * 100)}%), switching to RAG-only mode`);
+            result_data.matchedQuestion = null; // Hide low-confidence database match
+            result_data.confidence = 0; // Reset confidence for RAG
+            result_data.searchType = 'rag-only';
           }
 
-          if (ragSearchResults.length > 0) {
-            sendEvent('status', { message: 'Đang tạo câu trả lời từ AI...' });
+          // Stream RAG search process
+          sendEvent('status', { message: 'Đang tìm kiếm trong tài liệu RAG...' });
 
-            ragSearchResults = qdrantService.rerankResults(ragSearchResults, recognizedText, {
-              keywordWeight: 0.1,
-              maxPerDocument: 3,
-            });
+          try {
+            const { geminiRAGService } = await import('./services/gemini-rag.service.js');
+            const { qdrantService } = await import('./services/qdrant.service.js');
 
-            ragSearchResults = ragSearchResults.slice(0, 8);
+            const questionEmbedding = await geminiRAGService.generateEmbedding(recognizedText, sessionId, user.id.toString());
 
-            const retrievedChunks = ragSearchResults.map((result) => ({
-              chunkId: result.id,
-              content: result.payload.content,
-              documentId: result.payload.documentId,
-              documentName: result.payload.documentName,
-              documentNumber: result.payload.documentNumber,
-              score: result.score,
-              metadata: {
+            sendEvent('status', { message: 'Đang phân tích các tài liệu liên quan...' });
+
+            const availableCollections = await qdrantService.listCollections();
+            const collectionNames = availableCollections.map(c => c.name);
+
+            let ragSearchResults: any[] = [];
+            if (collectionNames.length > 1) {
+              ragSearchResults = await qdrantService.searchMultipleCollections(
+                questionEmbedding,
+                collectionNames,
+                { topK: 10, minScore: 0.4 }
+              );
+            } else if (collectionNames.length === 1) {
+              ragSearchResults = await qdrantService.search(
+                questionEmbedding,
+                {
+                  topK: 10,
+                  minScore: 0.4,
+                  collectionName: collectionNames[0]
+                }
+              );
+            }
+
+            if (ragSearchResults.length > 0) {
+              sendEvent('status', { message: 'Đang tạo câu trả lời từ AI...' });
+
+              ragSearchResults = qdrantService.rerankResults(ragSearchResults, recognizedText, {
+                keywordWeight: 0.1,
+                maxPerDocument: 3,
+              });
+
+              ragSearchResults = ragSearchResults.slice(0, 8);
+
+              const retrievedChunks = ragSearchResults.map((result) => ({
+                chunkId: result.id,
+                content: result.payload.content,
                 documentId: result.payload.documentId,
-                documentNumber: result.payload.documentNumber,
                 documentName: result.payload.documentName,
-                documentType: result.payload.documentType,
-                chapterNumber: result.payload.chapterNumber,
-                chapterTitle: result.payload.chapterTitle,
-                articleNumber: result.payload.articleNumber,
-                articleTitle: result.payload.articleTitle,
-                sectionNumber: result.payload.sectionNumber,
-                chunkType: result.payload.chunkType,
-                chunkIndex: result.payload.chunkIndex,
-              },
-            }));
+                documentNumber: result.payload.documentNumber,
+                score: result.score,
+                metadata: {
+                  documentId: result.payload.documentId,
+                  documentNumber: result.payload.documentNumber,
+                  documentName: result.payload.documentName,
+                  documentType: result.payload.documentType,
+                  chapterNumber: result.payload.chapterNumber,
+                  chapterTitle: result.payload.chapterTitle,
+                  articleNumber: result.payload.articleNumber,
+                  articleTitle: result.payload.articleTitle,
+                  sectionNumber: result.payload.sectionNumber,
+                  chunkType: result.payload.chunkType,
+                  chunkIndex: result.payload.chunkIndex,
+                },
+              }));
 
-            // Use JSON format only for multiple choice questions, otherwise use prose
-            const hasOptions = !!(extractedData.optionA && extractedData.optionB);
+              // Use JSON format only for multiple choice questions, otherwise use prose
+              const hasOptions = !!(extractedData.optionA && extractedData.optionB);
 
-            const ragQuery = {
-              question: `Dựa trên câu hỏi: "${recognizedText}"
+              const ragQuery = {
+                question: `Dựa trên câu hỏi: "${recognizedText}"
                         ${hasOptions ? `\nCác đáp án: A) ${extractedData.optionA}, B) ${extractedData.optionB}, C) ${extractedData.optionC}, D) ${extractedData.optionD}` : ''}
                         
                         ${hasOptions ? `Hãy phân tích và trả về CHÍNH XÁC theo định dạng JSON:
@@ -4232,47 +4262,48 @@ QUY TẮC:
                         }
                         
                         Chỉ trả về JSON, không giải thích dài dòng.` : 'Hãy trả lời ngắn gọn, rõ ràng và chính xác.'}`,
-              topK: ragSearchResults.length,
-              format: hasOptions ? 'json' as const : 'prose' as const
-            };
+                topK: ragSearchResults.length,
+                format: hasOptions ? 'json' as const : 'prose' as const
+              };
 
-            const ragResponse = await geminiRAGService.generateRAGAnswer(ragQuery, retrievedChunks, sessionId, user.id.toString());
+              const ragResponse = await geminiRAGService.generateRAGAnswer(ragQuery, retrievedChunks, sessionId, user.id.toString());
 
-            result_data.ragResult = {
-              answer: ragResponse.answer,
-              confidence: ragResponse.confidence,
-              sources: ragResponse.sources,
-              model: ragResponse.model,
-              chunksUsed: ragSearchResults.length,
-              structured: ragResponse.structured || false
-            };
+              result_data.ragResult = {
+                answer: ragResponse.answer,
+                confidence: ragResponse.confidence,
+                sources: ragResponse.sources,
+                model: ragResponse.model,
+                chunksUsed: ragSearchResults.length,
+                structured: ragResponse.structured || false
+              };
 
-            // When RAG search is used, hide database results and only show RAG results
-            result_data.searchType = 'rag-only';
-            result_data.matchedQuestion = null; // Hide database match to show only RAG results
-            result_data.confidence = ragResponse.confidence; // Use RAG confidence
+              // When RAG search is used, hide database results and only show RAG results
+              result_data.searchType = 'rag-only';
+              result_data.matchedQuestion = null; // Hide database match to show only RAG results
+              result_data.confidence = ragResponse.confidence; // Use RAG confidence
 
-            sendEvent('progress', {
-              step: 'rag_search_completed',
-              data: result_data
-            });
-          } else {
+              sendEvent('progress', {
+                step: 'rag_search_completed',
+                data: result_data
+              });
+            } else {
+              result_data.ragResult = null;
+              sendEvent('progress', {
+                step: 'no_results_found',
+                data: result_data
+              });
+            }
+          } catch (ragError) {
+            console.error('[RAG Stream] Search failed:', ragError);
             result_data.ragResult = null;
+            result_data.ragError = 'RAG search không khả dụng';
+
             sendEvent('progress', {
-              step: 'no_results_found',
+              step: 'rag_search_failed',
               data: result_data
             });
           }
-        } catch (ragError) {
-          console.error('[RAG Stream] Search failed:', ragError);
-          result_data.ragResult = null;
-          result_data.ragError = 'RAG search không khả dụng';
-
-          sendEvent('progress', {
-            step: 'rag_search_failed',
-            data: result_data
-          });
-        }
+        } // end canUseRAGStream else block
       }
 
       // Deduct quota for non-admin users

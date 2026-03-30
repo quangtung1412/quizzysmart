@@ -164,6 +164,7 @@ const AppContent: React.FC = () => {
   const [forceLogoutMessage, setForceLogoutMessage] = useState<string | null>(null);
   const [showThankYouPopup, setShowThankYouPopup] = useState<boolean>(false);
   const [thankYouData, setThankYouData] = useState<any>(null);
+  const [showRagFeaturePopup, setShowRagFeaturePopup] = useState<boolean>(false);
 
   // Prevent browser/Android back navigation (soft back) while in app
   useEffect(() => {
@@ -355,6 +356,16 @@ const AppContent: React.FC = () => {
       navigate('/user-setup');
     } else {
       navigate('/');
+    }
+
+    // Show RAG feature promotion popup for non-Premium/MAX users
+    const userPlan = userData.premiumPlan;
+    const isAdmin = userData.role === 'admin';
+    const hasRagAccess = isAdmin || userPlan === 'premium' || userPlan === 'max';
+    const isDismissed = localStorage.getItem('ragFeaturePopupDismissed') === 'true';
+    if (!hasRagAccess && !isDismissed) {
+      // Small delay to let navigation complete first
+      setTimeout(() => setShowRagFeaturePopup(true), 500);
     }
   }, [refreshUserData, navigate]);
 
@@ -643,6 +654,118 @@ const AppContent: React.FC = () => {
     }
   }, [studyPlans, currentStudyPlan]);
 
+  // RAG Feature Promotion Popup Component
+  const RagFeaturePopup = () => {
+    if (!showRagFeaturePopup) return null;
+    const [dontShowAgain, setDontShowAgain] = React.useState(false);
+
+    const handleDismiss = () => {
+      if (dontShowAgain) {
+        localStorage.setItem('ragFeaturePopupDismissed', 'true');
+      }
+      setShowRagFeaturePopup(false);
+    };
+
+    const handleUpgrade = () => {
+      if (dontShowAgain) {
+        localStorage.setItem('ragFeaturePopupDismissed', 'true');
+      }
+      setShowRagFeaturePopup(false);
+      navigate('/premium-plans');
+    };
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50 backdrop-blur-sm animate-fadeIn overflow-y-auto">
+        <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full my-8 overflow-hidden animate-slideUp">
+          {/* Header with gradient */}
+          <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-8 text-center relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-white opacity-10 rounded-full -mr-12 -mt-12"></div>
+            <div className="absolute bottom-0 left-0 w-20 h-20 bg-white opacity-10 rounded-full -ml-10 -mb-10"></div>
+
+            <div className="relative z-10">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-full mb-3 shadow-lg">
+                <span className="text-3xl">🤖</span>
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-1">
+                Tính năng mới!
+              </h2>
+              <p className="text-white text-opacity-90">
+                Tìm kiếm AI nâng cao trong văn bản quy định
+              </p>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="px-6 py-6">
+            <div className="text-center mb-5">
+              <p className="text-slate-600 text-sm leading-relaxed">
+                Khi chụp ảnh tìm đáp án mà <strong>không tìm thấy</strong> trong ngân hàng câu hỏi,
+                người dùng <strong className="text-purple-700">Premium</strong> và <strong className="text-purple-700">MAX</strong> sẽ được AI tự động tìm câu trả lời
+                trong hàng nghìn trang văn bản quy định đã được số hóa.
+              </p>
+            </div>
+
+            <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl p-4 mb-4">
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
+                    <span className="text-lg">🔍</span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-purple-900 text-sm">Tìm kiếm thông minh</p>
+                    <p className="text-purple-700 text-xs">AI phân tích và tìm câu trả lời chính xác từ văn bản quy định</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
+                    <span className="text-lg">📚</span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-purple-900 text-sm">Trích dẫn nguồn</p>
+                    <p className="text-purple-700 text-xs">Mỗi câu trả lời kèm theo số điều, số văn bản cụ thể</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
+                    <span className="text-lg">🎯</span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-purple-900 text-sm">Độ chính xác cao</p>
+                    <p className="text-purple-700 text-xs">Công nghệ RAG tiên tiến, tra cứu nhiều nguồn tài liệu cùng lúc</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={handleUpgrade}
+              className="w-full py-3 px-6 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold rounded-xl transition-all shadow-lg hover:shadow-xl transform hover:scale-105 mb-3"
+            >
+              ⭐ Nâng cấp ngay
+            </button>
+
+            <button
+              onClick={handleDismiss}
+              className="w-full py-2.5 px-6 text-slate-500 hover:text-slate-700 font-medium rounded-xl transition-colors text-sm"
+            >
+              Để sau
+            </button>
+
+            <label className="flex items-center justify-center gap-2 mt-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={dontShowAgain}
+                onChange={(e) => setDontShowAgain(e.target.checked)}
+                className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+              />
+              <span className="text-xs text-slate-400">Không hiển thị lại</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Thank You Modal Component
   const ThankYouModal = () => {
     if (!showThankYouPopup || !thankYouData) return null;
@@ -743,6 +866,7 @@ const AppContent: React.FC = () => {
   return (
     <>
       <ThankYouModal />
+      <RagFeaturePopup />
       <Routes>
         {/* Public Routes */}
         <Route path="/login" element={
@@ -1053,7 +1177,7 @@ const AppContent: React.FC = () => {
       </Routes>
 
       {/* Chat Floating Button - Always visible when user is logged in */}
-       {/* Chat Floating Button - Always visible when user is logged in */}
+      {/* Chat Floating Button - Always visible when user is logged in */}
       {user && (user.role === 'admin') && <ChatFloatingButton />}
     </>
   );
