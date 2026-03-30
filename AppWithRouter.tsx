@@ -165,6 +165,7 @@ const AppContent: React.FC = () => {
   const [showThankYouPopup, setShowThankYouPopup] = useState<boolean>(false);
   const [thankYouData, setThankYouData] = useState<any>(null);
   const [showRagFeaturePopup, setShowRagFeaturePopup] = useState<boolean>(false);
+  const [ragPopupDontShowAgain, setRagPopupDontShowAgain] = useState<boolean>(false);
 
   // Prevent browser/Android back navigation (soft back) while in app
   useEffect(() => {
@@ -344,6 +345,17 @@ const AppContent: React.FC = () => {
     return null;
   }, []);
 
+  // Helper function to check and trigger RAG popup for non-premium users
+  const checkAndShowRagPopup = useCallback((userData: User) => {
+    const userPlan = userData.premiumPlan;
+    const isAdmin = userData.role === 'admin';
+    const hasRagAccess = isAdmin || userPlan === 'premium' || userPlan === 'max';
+    const isDismissed = localStorage.getItem('ragFeaturePopupDismissed') === 'true';
+    if (!hasRagAccess && !isDismissed) {
+      setTimeout(() => setShowRagFeaturePopup(true), 500);
+    }
+  }, []);
+
   const handleLoginSuccess = useCallback(async (loggedInUser: User) => {
     // Refresh user data to get latest quota and premium info
     const freshUserData = await refreshUserData();
@@ -359,15 +371,8 @@ const AppContent: React.FC = () => {
     }
 
     // Show RAG feature promotion popup for non-Premium/MAX users
-    const userPlan = userData.premiumPlan;
-    const isAdmin = userData.role === 'admin';
-    const hasRagAccess = isAdmin || userPlan === 'premium' || userPlan === 'max';
-    const isDismissed = localStorage.getItem('ragFeaturePopupDismissed') === 'true';
-    if (!hasRagAccess && !isDismissed) {
-      // Small delay to let navigation complete first
-      setTimeout(() => setShowRagFeaturePopup(true), 500);
-    }
-  }, [refreshUserData, navigate]);
+    checkAndShowRagPopup(userData);
+  }, [refreshUserData, navigate, checkAndShowRagPopup]);
 
   const handleUserSetupComplete = useCallback((updatedUser: User) => {
     setUser(updatedUser);
@@ -384,6 +389,8 @@ const AppContent: React.FC = () => {
         } else {
           navigate('/');
         }
+        // Show RAG feature popup for returning sessions / Google login
+        checkAndShowRagPopup(userData);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -656,8 +663,9 @@ const AppContent: React.FC = () => {
 
   // RAG Feature Promotion Popup Component
   const RagFeaturePopup = () => {
-    if (!showRagFeaturePopup) return null;
     const [dontShowAgain, setDontShowAgain] = React.useState(false);
+
+    if (!showRagFeaturePopup) return null;
 
     const handleDismiss = () => {
       if (dontShowAgain) {
