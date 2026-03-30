@@ -446,6 +446,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                     const colorScheme = getConfidenceColor(confidence);
                                     const structuredAnswer = typeof searchResult.ragResult.answer === 'object' ? searchResult.ragResult.answer : null;
                                     const correctAnswerLetter = structuredAnswer?.correctAnswer;
+                                    const isAnswerNotFound = correctAnswerLetter === 'NONE' || correctAnswerLetter === 'none';
 
                                     return (
                                         <div className={`${colorScheme.bg} border-2 ${colorScheme.border} rounded-xl p-4 sm:p-6`}>
@@ -467,8 +468,30 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                                 </div>
                                             </div>
 
-                                            {/* Show extracted options from image with AI's correct answer selection */}
-                                            {searchResult.extractedOptions ? (
+                                            {/* Show "answer not found" message when AI returns NONE */}
+                                            {isAnswerNotFound ? (
+                                                <div className="bg-orange-50 rounded-lg p-3 sm:p-4 mb-3 border-l-4 border-orange-400">
+                                                    <h5 className="font-semibold text-orange-800 mb-2">⚠️ Không tìm thấy đáp án</h5>
+                                                    <p className="text-orange-700 text-xs sm:text-sm leading-relaxed">
+                                                        AI không thể xác định đáp án đúng trong các lựa chọn có sẵn dựa trên tài liệu tham khảo.
+                                                    </p>
+                                                    {structuredAnswer?.explanation && (
+                                                        <p className="text-orange-600 text-xs mt-2 italic">
+                                                            {structuredAnswer.explanation}
+                                                        </p>
+                                                    )}
+                                                    {/* Still show extracted options without highlighting */}
+                                                    {searchResult.extractedOptions && (
+                                                        <div className="mt-3 space-y-2">
+                                                            {Object.entries(searchResult.extractedOptions).map(([key, value]) => (
+                                                                <div key={key} className="p-2 rounded-lg border bg-gray-50 border-gray-300 text-gray-700 text-xs sm:text-sm">
+                                                                    <span className="font-bold">{key}.</span> {value}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ) : searchResult.extractedOptions ? (
                                                 <div className="bg-white rounded-lg p-3 sm:p-4 mb-3">
                                                     <h5 className="font-semibold text-gray-900 mb-3">📝 Đáp án:</h5>
                                                     <div className="space-y-2">
@@ -501,7 +524,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                             )}
 
                                             {/* Source information */}
-                                            {structuredAnswer?.source && (
+                                            {structuredAnswer?.source && !isAnswerNotFound && (
                                                 <div className="bg-white rounded-lg p-2 mt-3">
                                                     <p className="text-xs text-gray-600">
                                                         <span className="font-medium">📋 Nguồn:</span> {structuredAnswer.source}
@@ -510,20 +533,17 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                             )}
 
                                             {/* Content summary from sources */}
-                                            {searchResult.ragResult.sources && searchResult.ragResult.sources.length > 0 && (
+                                            {!isAnswerNotFound && searchResult.ragResult.sources && searchResult.ragResult.sources.length > 0 && (
                                                 <div className="bg-white rounded-lg p-3 mt-3">
                                                     <h6 className="font-medium text-gray-900 mb-2">📄 Tóm tắt nội dung liên quan:</h6>
                                                     <div className="text-xs text-gray-700 leading-relaxed">
                                                         {structuredAnswer?.explanation ? (
-                                                            // Use explanation from structured answer if available
                                                             structuredAnswer.explanation
                                                         ) : (
-                                                            // Generate a short summary from sources
                                                             (() => {
                                                                 const mainSource = searchResult.ragResult.sources[0];
                                                                 if (!mainSource) return "Không có thông tin chi tiết.";
 
-                                                                // Extract key content (limit to ~200 characters for 2-3 sentences)
                                                                 const content = mainSource.content;
                                                                 const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 10);
                                                                 const summary = sentences.slice(0, 2).join('. ').trim();
@@ -536,6 +556,14 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                                     </div>
                                                 </div>
                                             )}
+
+                                            {/* AI Disclaimer */}
+                                            <div className="mt-4 pt-3 border-t border-gray-200">
+                                                <p className="text-xs text-gray-500 italic flex items-start gap-1.5">
+                                                    <span className="flex-shrink-0">⚠️</span>
+                                                    <span>AI có thể mắc sai lầm. Kết quả chỉ mang tính tham khảo, vui lòng kiểm tra lại thông tin từ nguồn gốc trước khi sử dụng.</span>
+                                                </p>
+                                            </div>
                                         </div>
                                     );
                                 })()

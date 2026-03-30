@@ -3524,14 +3524,16 @@ Ví dụ:
       matchType: match.matchType
     }));
 
+    // Build extractedOptions with only non-empty options from the image
+    const filteredExtractedOptions: Record<string, string> = {};
+    if (extractedData.optionA) filteredExtractedOptions.A = extractedData.optionA;
+    if (extractedData.optionB) filteredExtractedOptions.B = extractedData.optionB;
+    if (extractedData.optionC) filteredExtractedOptions.C = extractedData.optionC;
+    if (extractedData.optionD) filteredExtractedOptions.D = extractedData.optionD;
+
     let result_data: any = {
       recognizedText: recognizedText,
-      extractedOptions: extractedData.optionA ? {
-        A: extractedData.optionA,
-        B: extractedData.optionB,
-        C: extractedData.optionC,
-        D: extractedData.optionD
-      } : undefined,
+      extractedOptions: Object.keys(filteredExtractedOptions).length > 0 ? filteredExtractedOptions : undefined,
       matchedQuestion: bestMatch ? {
         id: bestMatch.id,
         question: bestMatch.text,
@@ -3553,10 +3555,12 @@ Ví dụ:
       // Check if user has RAG access (Premium/MAX only)
       if (!canUseRAG) {
         console.log(`[AI Search] User ${user.id} does not have RAG access (plan: ${userPlan || 'none'}). Skipping RAG search.`);
+        result_data.matchedQuestion = null; // Hide low-confidence DB match
+        result_data.confidence = 0;
         result_data.ragRestricted = true;
         result_data.ragRestrictedMessage = 'Tính năng tìm kiếm AI nâng cao trong văn bản quy định chỉ dành cho gói Premium và MAX. Nâng cấp để trải nghiệm!';
       } else {
-        console.log('=== RAG SEARCH INITIATED ===');
+        console.log('=== RAG SEARCH INITIATED ===');;
         console.log('Best DB match confidence:', Math.round(bestScore * 100) + '%');
         console.log('Switching to RAG search for better accuracy...');
 
@@ -3638,19 +3642,30 @@ Ví dụ:
             // Use JSON format only for multiple choice questions, otherwise use prose
             const hasOptions = !!(extractedData.optionA && extractedData.optionB);
 
+            // Build dynamic options list from actual extracted options
+            const availableOptions: string[] = [];
+            if (extractedData.optionA) availableOptions.push(`A) ${extractedData.optionA}`);
+            if (extractedData.optionB) availableOptions.push(`B) ${extractedData.optionB}`);
+            if (extractedData.optionC) availableOptions.push(`C) ${extractedData.optionC}`);
+            if (extractedData.optionD) availableOptions.push(`D) ${extractedData.optionD}`);
+            const optionLetters = availableOptions.map(o => o[0]).join('/');
+
             const ragQuery = {
               question: `Dựa trên câu hỏi: "${recognizedText}"
-                      ${hasOptions ? `\nCác đáp án: A) ${extractedData.optionA}, B) ${extractedData.optionB}, C) ${extractedData.optionC}, D) ${extractedData.optionD}` : ''}
+                      ${hasOptions ? `\nCác đáp án: ${availableOptions.join(', ')}` : ''}
                       
                       ${hasOptions ? `Hãy phân tích và trả về CHÍNH XÁC theo định dạng JSON:
                       {
-                        "correctAnswer": "A/B/C/D (chọn đáp án đúng)",
+                        "correctAnswer": "${optionLetters} (chọn đáp án đúng từ các đáp án có sẵn)",
                         "explanation": "Lý do ngắn gọn",
                         "source": "Số điều, số văn bản hoặc quy định cụ thể",
                         "confidence": "số từ 1-100"
                       }
                       
-                      Chỉ trả về JSON, không giải thích dài dòng.` : 'Hãy trả lời ngắn gọn, rõ ràng và chính xác.'}`,
+                      LƯU Ý QUAN TRỌNG:
+                      - CHỈ chọn đáp án từ các đáp án có sẵn (${optionLetters}).
+                      - Nếu không tìm thấy đáp án đúng trong các lựa chọn trên, trả về correctAnswer là "NONE" và giải thích lý do.
+                      - Chỉ trả về JSON, không giải thích dài dòng.` : 'Hãy trả lời ngắn gọn, rõ ràng và chính xác.'}`,
               topK: ragSearchResults.length,
               format: hasOptions ? 'json' as const : 'prose' as const
             };
@@ -4016,16 +4031,18 @@ QUY TẮC:
 
       const recognizedText = extractedData.question || responseText;
 
+      // Build extractedOptions with only non-empty options from the image
+      const filteredExtractedOptionsStream: Record<string, string> = {};
+      if (extractedData.optionA) filteredExtractedOptionsStream.A = extractedData.optionA;
+      if (extractedData.optionB) filteredExtractedOptionsStream.B = extractedData.optionB;
+      if (extractedData.optionC) filteredExtractedOptionsStream.C = extractedData.optionC;
+      if (extractedData.optionD) filteredExtractedOptionsStream.D = extractedData.optionD;
+
       sendEvent('progress', {
         step: 'extracted',
         data: {
           recognizedText,
-          extractedOptions: extractedData.optionA ? {
-            A: extractedData.optionA,
-            B: extractedData.optionB,
-            C: extractedData.optionC,
-            D: extractedData.optionD
-          } : undefined
+          extractedOptions: Object.keys(filteredExtractedOptionsStream).length > 0 ? filteredExtractedOptionsStream : undefined
         }
       });
 
@@ -4135,12 +4152,7 @@ QUY TẮC:
 
       let result_data: any = {
         recognizedText: recognizedText,
-        extractedOptions: extractedData.optionA ? {
-          A: extractedData.optionA,
-          B: extractedData.optionB,
-          C: extractedData.optionC,
-          D: extractedData.optionD
-        } : undefined,
+        extractedOptions: Object.keys(filteredExtractedOptionsStream).length > 0 ? filteredExtractedOptionsStream : undefined,
         matchedQuestion: bestMatch ? {
           id: bestMatch.id,
           question: bestMatch.text,
@@ -4166,6 +4178,8 @@ QUY TẮC:
         // Check if user has RAG access (Premium/MAX only)
         if (!canUseRAGStream) {
           console.log(`[AI Search Stream] User ${user.id} does not have RAG access (plan: ${userPlanStream || 'none'}). Skipping RAG search.`);
+          result_data.matchedQuestion = null; // Hide low-confidence DB match
+          result_data.confidence = 0;
           result_data.ragRestricted = true;
           result_data.ragRestrictedMessage = 'Tính năng tìm kiếm AI nâng cao trong văn bản quy định chỉ dành cho gói Premium và MAX. Nâng cấp để trải nghiệm!';
 
@@ -4249,19 +4263,30 @@ QUY TẮC:
               // Use JSON format only for multiple choice questions, otherwise use prose
               const hasOptions = !!(extractedData.optionA && extractedData.optionB);
 
+              // Build dynamic options list from actual extracted options
+              const availableOptionsStream: string[] = [];
+              if (extractedData.optionA) availableOptionsStream.push(`A) ${extractedData.optionA}`);
+              if (extractedData.optionB) availableOptionsStream.push(`B) ${extractedData.optionB}`);
+              if (extractedData.optionC) availableOptionsStream.push(`C) ${extractedData.optionC}`);
+              if (extractedData.optionD) availableOptionsStream.push(`D) ${extractedData.optionD}`);
+              const optionLettersStream = availableOptionsStream.map(o => o[0]).join('/');
+
               const ragQuery = {
                 question: `Dựa trên câu hỏi: "${recognizedText}"
-                        ${hasOptions ? `\nCác đáp án: A) ${extractedData.optionA}, B) ${extractedData.optionB}, C) ${extractedData.optionC}, D) ${extractedData.optionD}` : ''}
+                        ${hasOptions ? `\nCác đáp án: ${availableOptionsStream.join(', ')}` : ''}
                         
                         ${hasOptions ? `Hãy phân tích và trả về CHÍNH XÁC theo định dạng JSON:
                         {
-                          "correctAnswer": "A/B/C/D (chọn đáp án đúng)",
+                          "correctAnswer": "${optionLettersStream} (chọn đáp án đúng từ các đáp án có sẵn)",
                           "explanation": "Lý do ngắn gọn",
                           "source": "Số điều, số văn bản hoặc quy định cụ thể",
                           "confidence": "số từ 1-100"
                         }
                         
-                        Chỉ trả về JSON, không giải thích dài dòng.` : 'Hãy trả lời ngắn gọn, rõ ràng và chính xác.'}`,
+                        LƯU Ý QUAN TRỌNG:
+                        - CHỈ chọn đáp án từ các đáp án có sẵn (${optionLettersStream}).
+                        - Nếu không tìm thấy đáp án đúng trong các lựa chọn trên, trả về correctAnswer là "NONE" và giải thích lý do.
+                        - Chỉ trả về JSON, không giải thích dài dòng.` : 'Hãy trả lời ngắn gọn, rõ ràng và chính xác.'}`,
                 topK: ragSearchResults.length,
                 format: hasOptions ? 'json' as const : 'prose' as const
               };
