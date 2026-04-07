@@ -246,13 +246,13 @@ Hãy phân tích văn bản PDF và trả về ONLY JSON theo đúng cấu trúc
 
           const trackingId = await geminiTrackerService.startTracking({
             endpoint: 'generateContent',
-            modelName: 'gemini-2.5-flash',
+            modelName: 'gemini-3.1-flash-lite-preview', // Use a more cost-effective model for extraction
             requestType: 'document_extraction',
             metadata: { fileUri },
           });
 
           const response = await this.ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3.1-flash-lite-preview', // Use a more cost-effective model for extraction
             contents,
           });
 
