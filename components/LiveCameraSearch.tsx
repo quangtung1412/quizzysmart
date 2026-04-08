@@ -58,6 +58,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
     const [lastCaptureTime, setLastCaptureTime] = useState<number>(0);
     const [capturedImage, setCapturedImage] = useState<string | null>(null);
     const [remainingQuota, setRemainingQuota] = useState<number>(user?.aiSearchQuota || 0);
+    const [showGuidePopup, setShowGuidePopup] = useState(true);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -232,6 +233,26 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
 
     return (
         <div className="fixed inset-0 bg-black z-50 flex flex-col">
+            {/* Guide Popup */}
+            {showGuidePopup && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 px-6">
+                    <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full text-center">
+                        <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <span className="text-3xl">📸</span>
+                        </div>
+                        <h2 className="text-lg font-bold text-gray-800 mb-3">Hướng dẫn chụp hình</h2>
+                        <p className="text-gray-600 text-sm leading-relaxed mb-6">
+                            Bạn hãy chụp rõ nét cả câu hỏi cùng câu trả lời trong ảnh để chương trình trả lời chính xác nhất nhé!
+                        </p>
+                        <button
+                            onClick={() => setShowGuidePopup(false)}
+                            className="w-full bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-semibold py-3 rounded-xl transition-colors"
+                        >
+                            Đã hiểu
+                        </button>
+                    </div>
+                </div>
+            )}
             {/* Header */}
             <div className="bg-gradient-to-r from-amber-500 to-yellow-500 text-white p-4 flex items-center justify-between shadow-lg">
                 <div className="flex items-center gap-3">
