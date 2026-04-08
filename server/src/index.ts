@@ -667,6 +667,11 @@ app.put('/api/user/details', async (req: Request, res: Response) => {
   const { name, branchCode } = req.body;
   const userId = (req.user as any).id;
 
+  const allowedBranchCodes = ["2300", "2301", "2302", "2305", "2306", "2308", "2309", "2310", "2312", "2313"];
+  if (branchCode && !allowedBranchCodes.includes(branchCode)) {
+    return res.status(400).json({ error: 'Invalid branch code.' });
+  }
+
   try {
     const updatedUser = await prisma.user.update({
       where: { id: userId },
