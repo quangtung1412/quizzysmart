@@ -42,6 +42,8 @@ const App: React.FC = () => {
   const [forceLogoutMessage, setForceLogoutMessage] = useState<string | null>(null);
   const [showThankYouPopup, setShowThankYouPopup] = useState<boolean>(false);
   const [thankYouData, setThankYouData] = useState<any>(null);
+  const [isZaloBrowser] = useState<boolean>(() => /ZaloApp|Zalo\/[0-9]/i.test(navigator.userAgent));
+  const [dismissedZaloWarning, setDismissedZaloWarning] = useState(false);
 
   // Prevent browser/Android back navigation (soft back) while in app
   useEffect(() => {
@@ -978,6 +980,35 @@ const App: React.FC = () => {
     <div className="min-h-screen flex flex-col items-center justify-center p-1 sm:p-2 bg-slate-50 text-slate-800">{/* Thank You Modal */}
       <DomainMigrationBanner />
       <ThankYouModal />
+
+      {/* Zalo Browser Warning */}
+      {isZaloBrowser && !dismissedZaloWarning && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 px-6">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full text-center">
+            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <span className="text-3xl">🌐</span>
+            </div>
+            <h2 className="text-lg font-bold text-gray-800 mb-3">Mở bằng trình duyệt</h2>
+            <p className="text-gray-600 text-sm leading-relaxed mb-6">
+              Bạn đang truy cập qua <strong>Zalo</strong>. Để trải nghiệm tốt nhất — đặc biệt khi chụp ảnh tìm kiếm — vui lòng mở trang web bằng trình duyệt (Chrome, Safari...) nhé!
+            </p>
+            <a
+              href={window.location.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block w-full bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors mb-3"
+            >
+              Mở trình duyệt
+            </a>
+            <button
+              onClick={() => setDismissedZaloWarning(true)}
+              className="w-full bg-gray-100 hover:bg-gray-200 text-gray-600 font-medium py-3 rounded-xl transition-colors"
+            >
+              Tiếp tục dùng trong Zalo
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="w-full max-w-8xl mx-auto relative">
         <header className="mb-3 sm:mb-4">
