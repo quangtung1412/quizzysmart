@@ -33,21 +33,21 @@ const UserSetupScreen: React.FC<UserSetupScreenProps> = ({ user, onSetupComplete
             return;
         }
 
-        // if (!allowedBranchCodes.includes(branchCode.trim())) {
-        //     setError('Mã chi nhánh không hợp lệ. Bạn sẽ được đăng xuất.');
-        //     setLoading(false);
-        //     // Đăng xuất người dùng sau 2 giây để họ có thể đọc thông báo lỗi
-        //     setTimeout(async () => {
-        //         try {
-        //             await api.logout();
-        //         } catch (err) {
-        //             console.error('Logout error:', err);
-        //         } finally {
-        //             onLogout();
-        //         }
-        //     }, 2000);
-        //     return;
-        // }
+        if (!allowedBranchCodes.includes(branchCode.trim())) {
+            setError('Mã chi nhánh không hợp lệ. Bạn sẽ được đăng xuất.');
+            setLoading(false);
+            // Đăng xuất người dùng sau 2 giây để họ có thể đọc thông báo lỗi
+            setTimeout(async () => {
+                try {
+                    await api.logout();
+                } catch (err) {
+                    console.error('Logout error:', err);
+                } finally {
+                    onLogout();
+                }
+            }, 2000);
+            return;
+        }
 
         try {
             const response = await api.put('/api/user/details', { name: name.trim(), branchCode: branchCode.trim() });
