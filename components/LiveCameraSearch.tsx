@@ -242,7 +242,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                         </div>
                         <h2 className="text-lg font-bold text-gray-800 mb-3">Hướng dẫn chụp hình</h2>
                         <p className="text-gray-600 text-sm leading-relaxed mb-6">
-                            Bạn hãy chụp rõ nét cả câu hỏi cùng câu trả lời trong ảnh để chương trình trả lời chính xác nhất nhé!
+                            Bạn hãy chụp rõ nét cả CÂU HỎI cùng TẤT CẢ ĐÁP ÁN để chương trình trả lời chính xác nhất nhé!
                         </p>
                         <button
                             onClick={() => setShowGuidePopup(false)}
