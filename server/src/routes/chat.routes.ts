@@ -315,29 +315,28 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
           // Search with multiple simplified query embeddings and merge results
           const perVariantTopK = Math.ceil(topK / Math.min(allEmbeddings.length, 3));
           const allResults: any[] = [];
+          let fallbackStatusSent = false;
 
           for (let i = 0; i < Math.min(allEmbeddings.length, 3); i++) {
             const variantEmbedding = allEmbeddings[i];
             const variantQuery = queryResult.simplifiedQueries[i];
             console.log(`[Chat Stream]   Searching with variant ${i + 1}: "${variantQuery}"`);
 
-            let variantResults: any[] = [];
-            if (queryResult.collections.length > 1) {
-              variantResults = await qdrantService.searchMultipleCollections(
-                variantEmbedding,
-                queryResult.collections,
-                { topK: perVariantTopK, minScore: 0.5 }
-              );
-            } else {
-              variantResults = await qdrantService.search(
-                variantEmbedding,
-                {
-                  topK: perVariantTopK,
-                  minScore: 0.5,
-                  collectionName: queryResult.collections[0]
+            const variantResults = await qdrantService.searchWithFallback(
+              variantEmbedding,
+              queryResult.collections,
+              {
+                topK: perVariantTopK,
+                minScore: 0.5,
+                satisfyingThreshold: 0.55,
+                onFallbackTriggered: () => {
+                  if (!fallbackStatusSent) {
+                    fallbackStatusSent = true;
+                    sendEvent('status', { message: 'Đang tìm kiếm bổ sung trong tài liệu dùng chung...' });
+                  }
                 }
-              );
-            }
+              }
+            );
             allResults.push(...variantResults);
           }
 
@@ -355,25 +354,19 @@ router.post('/ask-stream', requireAuth, requireChatAccess, async (req: Request, 
           console.log(`[Chat Stream] Multi-variant search: ${allResults.length} → ${searchResults.length} unique results`);
         } else {
           // Simple query: use primary embedding only
-          console.log(`[Chat Stream] Using primary embedding for direct search`);
-          if (queryResult.collections.length > 1) {
-            console.log(`[Chat Stream] Searching across ${queryResult.collections.length} collections with topK=${topK}`);
-            searchResults = await qdrantService.searchMultipleCollections(
-              questionEmbedding,
-              queryResult.collections,
-              { topK, minScore: 0.5 }
-            );
-          } else {
-            console.log(`[Chat Stream] Searching in single collection:`, queryResult.collections[0]);
-            searchResults = await qdrantService.search(
-              questionEmbedding,
-              {
-                topK,
-                minScore: 0.5,
-                collectionName: queryResult.collections[0]
+          console.log(`[Chat Stream] Using primary embedding for direct search with fallback`);
+          searchResults = await qdrantService.searchWithFallback(
+            questionEmbedding,
+            queryResult.collections,
+            {
+              topK,
+              minScore: 0.5,
+              satisfyingThreshold: 0.55,
+              onFallbackTriggered: () => {
+                sendEvent('status', { message: 'Đang tìm kiếm bổ sung trong tài liệu dùng chung...' });
               }
-            );
-          }
+            }
+          );
         }
 
         // Detect deposit vs loan queries for smart post-filtering (keep existing logic)
@@ -780,7 +773,15 @@ router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Re
 
           console.log(`[Chat]   Searching with variant ${i + 1}: "${variantQuery}"`);
 
-          const variantResults = await qdrantService.searchSimilar(variantEmbedding, perVariantTopK, 0.5);
+          const variantResults = await qdrantService.searchWithFallback(
+            variantEmbedding,
+            queryResult.collections,
+            {
+              topK: perVariantTopK,
+              minScore: 0.5,
+              satisfyingThreshold: 0.55
+            }
+          );
           allResults.push(...variantResults);
         }
 
@@ -797,8 +798,16 @@ router.post('/ask', requireAuth, requireChatAccess, async (req: Request, res: Re
 
         console.log(`[Chat] Multi-variant search: ${allResults.length} → ${searchResults.length} unique results`);
       } else {
-        // Step 2: Standard search with primary embedding
-        searchResults = await qdrantService.searchSimilar(questionEmbedding, topK, 0.5);
+        // Step 2: Standard search with primary embedding using fallback search
+        searchResults = await qdrantService.searchWithFallback(
+          questionEmbedding,
+          queryResult.collections,
+          {
+            topK,
+            minScore: 0.5,
+            satisfyingThreshold: 0.55
+          }
+        );
       }
 
       // Apply smart post-filtering based on query intent

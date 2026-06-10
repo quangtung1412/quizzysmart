@@ -3580,28 +3580,19 @@ Ví dụ:
 
           // For image search, we do comprehensive search across all collections
           // since we don't have enough context to determine specific domain
-          let ragSearchResults: any[] = [];
-          if (collectionNames.length > 1) {
-            console.log(`[RAG Search] Searching across multiple collections`);
-            ragSearchResults = await qdrantService.searchMultipleCollections(
-              questionEmbedding,
-              collectionNames,
-              { topK: 10, minScore: 0.4 }
-            );
-          } else if (collectionNames.length === 1) {
-            console.log(`[RAG Search] Searching in single collection:`, collectionNames[0]);
-            ragSearchResults = await qdrantService.search(
-              questionEmbedding,
-              {
-                topK: 10,
-                minScore: 0.4,
-                collectionName: collectionNames[0]
-              }
-            );
-          } else {
-            console.log(`[RAG Search] No collections available`);
-            ragSearchResults = [];
-          }
+          const initialCollections = collectionNames.filter(c => c !== 'common');
+          console.log(`[RAG Search] Initial business collections:`, initialCollections);
+
+          let ragSearchResults = await qdrantService.searchWithFallback(
+            questionEmbedding,
+            initialCollections,
+            {
+              topK: 10,
+              minScore: 0.4,
+              satisfyingThreshold: 0.55,
+              commonCollectionName: 'common'
+            }
+          );
 
           console.log(`[RAG Search] Found ${ragSearchResults.length} RAG chunks`);
 
@@ -4210,23 +4201,22 @@ QUY TẮC:
             const availableCollections = await qdrantService.listCollections();
             const collectionNames = availableCollections.map(c => c.name);
 
-            let ragSearchResults: any[] = [];
-            if (collectionNames.length > 1) {
-              ragSearchResults = await qdrantService.searchMultipleCollections(
-                questionEmbedding,
-                collectionNames,
-                { topK: 10, minScore: 0.4 }
-              );
-            } else if (collectionNames.length === 1) {
-              ragSearchResults = await qdrantService.search(
-                questionEmbedding,
-                {
-                  topK: 10,
-                  minScore: 0.4,
-                  collectionName: collectionNames[0]
+            const initialCollections = collectionNames.filter(c => c !== 'common');
+            console.log(`[RAG Search Stream] Initial business collections:`, initialCollections);
+
+            let ragSearchResults = await qdrantService.searchWithFallback(
+              questionEmbedding,
+              initialCollections,
+              {
+                topK: 10,
+                minScore: 0.4,
+                satisfyingThreshold: 0.55,
+                commonCollectionName: 'common',
+                onFallbackTriggered: () => {
+                  sendEvent('status', { message: 'Đang tìm kiếm bổ sung trong tài liệu dùng chung...' });
                 }
-              );
-            }
+              }
+            );
 
             if (ragSearchResults.length > 0) {
               sendEvent('status', { message: 'Đang tạo câu trả lời từ AI...' });

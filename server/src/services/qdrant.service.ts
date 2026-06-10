@@ -699,6 +699,140 @@ class QdrantService {
       throw error;
     }
   }
+
+  /**
+   * Search across initial collections, and if results are not satisfying, fall back to the "common" collection.
+   */
+  async searchWithFallback(
+    queryVector: number[],
+    initialCollections: string[],
+    options: {
+      topK?: number;
+      minScore?: number;
+      satisfyingThreshold?: number;
+      commonCollectionName?: string;
+      documentIds?: string[];
+      chunkTypes?: string[];
+      onFallbackTriggered?: () => void;
+    } = {}
+  ): Promise<QdrantSearchResult[]> {
+    if (!this.client) throw new Error('Qdrant client not initialized');
+
+    const {
+      topK = 5,
+      minScore = 0.5,
+      satisfyingThreshold = 0.55,
+      commonCollectionName = 'common',
+      documentIds,
+      chunkTypes,
+      onFallbackTriggered,
+    } = options;
+
+    console.log(`[Qdrant Fallback Search] Initial collections checklist:`, initialCollections);
+
+    // Filter list of available collections in Qdrant to ensure we only search existing ones
+    let availableCollections: string[] = [];
+    try {
+      const qdrantCollections = await this.listCollections();
+      availableCollections = qdrantCollections.map(c => c.name);
+    } catch (err) {
+      console.warn('[Qdrant Fallback Search] Failed to list collections, using provided names as fallback:', err);
+      availableCollections = initialCollections;
+    }
+
+    // Filter target collections: must exist in Qdrant and must NOT be 'common'
+    let initialTargets = initialCollections.filter(
+      c => availableCollections.includes(c) && c !== commonCollectionName
+    );
+
+    // If no initial target collections exist, search in all available collections except "common"
+    if (initialTargets.length === 0) {
+      console.log(`[Qdrant Fallback Search] No valid business collections specified. Searching in all except "common"`);
+      initialTargets = availableCollections.filter(c => c !== commonCollectionName);
+    }
+
+    // If there's still nothing or only common exists, search common directly
+    if (initialTargets.length === 0) {
+      console.log(`[Qdrant Fallback Search] Only "common" or no collections exist. Searching in all available.`);
+      initialTargets = availableCollections;
+    }
+
+    console.log(`[Qdrant Fallback Search] Searching in initial business collections:`, initialTargets);
+
+    let results: QdrantSearchResult[] = [];
+    try {
+      if (initialTargets.length > 1) {
+        results = await this.searchMultipleCollections(queryVector, initialTargets, { topK, minScore, documentIds, chunkTypes });
+      } else if (initialTargets.length === 1) {
+        results = await this.search(queryVector, { topK, minScore, documentIds, chunkTypes, collectionName: initialTargets[0] });
+      }
+    } catch (err) {
+      console.error(`[Qdrant Fallback Search] Search in initial collections ${initialTargets.join(', ')} failed:`, err);
+    }
+
+    // Determine if results are satisfying: not empty AND max score >= satisfyingThreshold
+    const maxScore = results.length > 0 ? results[0].score : 0;
+    const isSatisfying = results.length > 0 && maxScore >= satisfyingThreshold;
+
+    console.log(`[Qdrant Fallback Search] Initial search returned ${results.length} results. Max score: ${maxScore.toFixed(4)}. Satisfying: ${isSatisfying}`);
+
+    // If results are not satisfying, search in "common"
+    const hasCommonCollection = availableCollections.some(c => c === commonCollectionName);
+    const alreadySearchedCommon = initialTargets.includes(commonCollectionName);
+
+    if (!isSatisfying && hasCommonCollection && !alreadySearchedCommon) {
+      console.log(`[Qdrant Fallback Search] Fallback triggered! Searching in "${commonCollectionName}" collection...`);
+      if (onFallbackTriggered) {
+        onFallbackTriggered();
+      }
+
+      try {
+        const commonResults = await this.search(queryVector, {
+          topK,
+          minScore,
+          documentIds,
+          chunkTypes,
+          collectionName: commonCollectionName
+        });
+
+        console.log(`[Qdrant Fallback Search] Found ${commonResults.length} docs in "${commonCollectionName}"`);
+
+        // Merge results: keep the highest score for any duplicate points, then sort and slice to topK
+        const mergedMap = new Map<string, QdrantSearchResult>();
+        
+        // Add business results
+        results.forEach(r => {
+          mergedMap.set(r.id, r);
+        });
+
+        // Add / Override with common results if score is better or not exists
+        commonResults.forEach(cr => {
+          const existing = mergedMap.get(cr.id);
+          if (!existing || existing.score < cr.score) {
+            // Tag with collection so Reranking or other parts know where it came from
+            const tagged = {
+              ...cr,
+              payload: {
+                ...cr.payload,
+                _collectionName: commonCollectionName
+              }
+            };
+            mergedMap.set(cr.id, tagged);
+          }
+        });
+
+        results = Array.from(mergedMap.values())
+          .sort((a, b) => b.score - a.score)
+          .slice(0, topK);
+
+        console.log(`[Qdrant Fallback Search] Merged results count: ${results.length}`);
+      } catch (err) {
+        console.error(`[Qdrant Fallback Search] Search in common collection failed:`, err);
+      }
+    }
+
+    return results;
+  }
 }
 
 // Export singleton instance
