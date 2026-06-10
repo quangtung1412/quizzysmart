@@ -3181,6 +3181,151 @@ app.post('/api/subscriptions/activate', async (req: Request, res: Response) => {
   }
 });
 
+// Helper to align database options to extracted visual options from image
+function alignOptions(
+  dbOptions: string[],
+  correctAnswerIdx: number,
+  extracted: { optionA?: string; optionB?: string; optionC?: string; optionD?: string }
+): { alignedOptions: string[]; alignedCorrectAnswerIdx: number } {
+  const hasExtracted = extracted.optionA || extracted.optionB || extracted.optionC || extracted.optionD;
+  if (!hasExtracted) {
+    return { alignedOptions: dbOptions, alignedCorrectAnswerIdx: correctAnswerIdx };
+  }
+
+  const normalize = (text: string) => {
+    return text.toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd')
+      .replace(/[^a-z0-9]/g, '')
+      .trim();
+  };
+
+  const dbOptsNorm = dbOptions.map(opt => normalize(opt));
+
+  const extNorm: Record<number, string> = {};
+  if (extracted.optionA) extNorm[0] = normalize(extracted.optionA);
+  if (extracted.optionB) extNorm[1] = normalize(extracted.optionB);
+  if (extracted.optionC) extNorm[2] = normalize(extracted.optionC);
+  if (extracted.optionD) extNorm[3] = normalize(extracted.optionD);
+
+  const slotToDbIndex = [-1, -1, -1, -1];
+  const dbIndexUsed = new Set<number>();
+
+  for (let slot = 0; slot < 4; slot++) {
+    const extVal = extNorm[slot];
+    if (!extVal) continue;
+
+    let bestDbIdx = -1;
+    let bestScore = 0;
+
+    for (let dbIdx = 0; dbIdx < dbOptions.length; dbIdx++) {
+      if (dbIndexUsed.has(dbIdx)) continue;
+      const dbVal = dbOptsNorm[dbIdx];
+      if (!dbVal) continue;
+
+      let score = 0;
+      if (dbVal === extVal) {
+        score = 1.0;
+      } else if (dbVal.includes(extVal) || extVal.includes(dbVal)) {
+        score = Math.min(dbVal.length, extVal.length) / Math.max(dbVal.length, extVal.length) * 0.9;
+      } else {
+        const normalizeWithSpaces = (t: string) => {
+          return t.toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/đ/g, 'd')
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        };
+        const dbTokens = normalizeWithSpaces(dbOptions[dbIdx]).split(' ').filter(w => w.length > 0);
+        
+        let extString = '';
+        if (slot === 0 && extracted.optionA) extString = extracted.optionA;
+        else if (slot === 1 && extracted.optionB) extString = extracted.optionB;
+        else if (slot === 2 && extracted.optionC) extString = extracted.optionC;
+        else if (slot === 3 && extracted.optionD) extString = extracted.optionD;
+
+        const extTokens = normalizeWithSpaces(extString).split(' ').filter(w => w.length > 0);
+
+        if (dbTokens.length > 0 && extTokens.length > 0) {
+          const common = dbTokens.filter(t => extTokens.includes(t));
+          score = common.length / Math.max(dbTokens.length, extTokens.length) * 0.8;
+        }
+      }
+
+      if (score > bestScore && score > 0.3) {
+        bestScore = score;
+        bestDbIdx = dbIdx;
+      }
+    }
+
+    if (bestDbIdx !== -1) {
+      slotToDbIndex[slot] = bestDbIdx;
+      dbIndexUsed.add(bestDbIdx);
+    }
+  }
+
+  const unusedDbIndices: number[] = [];
+  for (let dbIdx = 0; dbIdx < dbOptions.length; dbIdx++) {
+    if (!dbIndexUsed.has(dbIdx)) {
+      unusedDbIndices.push(dbIdx);
+    }
+  }
+
+  const alignedOptions: string[] = [];
+  const dbIdxToNewIdx = new Map<number, number>();
+
+  let unusedPtr = 0;
+  for (let slot = 0; slot < Math.max(4, dbOptions.length); slot++) {
+    const dbIdx = slotToDbIndex[slot];
+    if (dbIdx !== undefined && dbIdx !== -1) {
+      const newIdx = alignedOptions.length;
+      alignedOptions.push(dbOptions[dbIdx]);
+      dbIdxToNewIdx.set(dbIdx, newIdx);
+    } else {
+      if (unusedPtr < unusedDbIndices.length) {
+        const unusedDbIdx = unusedDbIndices[unusedPtr++];
+        const newIdx = alignedOptions.length;
+        alignedOptions.push(dbOptions[unusedDbIdx]);
+        dbIdxToNewIdx.set(unusedDbIdx, newIdx);
+      }
+    }
+  }
+
+  while (unusedPtr < unusedDbIndices.length) {
+    const unusedDbIdx = unusedDbIndices[unusedPtr++];
+    const newIdx = alignedOptions.length;
+    alignedOptions.push(dbOptions[unusedDbIdx]);
+    dbIdxToNewIdx.set(unusedDbIdx, newIdx);
+  }
+
+  if (alignedOptions.length > dbOptions.length) {
+    alignedOptions.splice(dbOptions.length);
+  }
+
+  let alignedCorrectAnswerIdx = correctAnswerIdx;
+  if (correctAnswerIdx < 0) {
+    const origMask = Math.abs(correctAnswerIdx);
+    let newMask = 0;
+    for (let i = 0; i < dbOptions.length; i++) {
+      if ((origMask & (1 << i)) !== 0) {
+        const newIdx = dbIdxToNewIdx.get(i);
+        if (newIdx !== undefined) {
+          newMask |= (1 << newIdx);
+        }
+      }
+    }
+    alignedCorrectAnswerIdx = -newMask;
+  } else {
+    const newIdx = dbIdxToNewIdx.get(correctAnswerIdx);
+    if (newIdx !== undefined) {
+      alignedCorrectAnswerIdx = newIdx;
+    }
+  }
+
+  return { alignedOptions, alignedCorrectAnswerIdx };
+}
+
 // Premium API - Image Search with Gemini
 app.post('/api/premium/search-by-image', async (req: Request, res: Response) => {
   // Variables for error logging
@@ -3512,17 +3657,23 @@ Ví dụ:
     console.log('========================');
 
     // Prepare alternative matches (top 3)
-    const alternativeMatches = allMatches.slice(1, 4).map(match => ({
-      id: match.question.id,
-      question: match.question.text,
-      options: JSON.parse(match.question.options),
-      correctAnswerIndex: match.question.correctAnswerIdx,
-      source: match.question.source || '',
-      category: match.question.category || '',
-      knowledgeBaseName: match.question.base.name,
-      confidence: Math.round(match.score * 100),
-      matchType: match.matchType
-    }));
+    const alternativeMatches = allMatches.slice(1, 4).map(match => {
+      const opts = JSON.parse(match.question.options);
+      const { alignedOptions, alignedCorrectAnswerIdx } = alignOptions(opts, match.question.correctAnswerIdx, extractedData);
+      return {
+        id: match.question.id,
+        question: match.question.text,
+        options: alignedOptions,
+        answers: alignedOptions,
+        correctAnswerIndex: alignedCorrectAnswerIdx,
+        source: match.question.source || '',
+        category: match.question.category || '',
+        knowledgeBaseName: match.question.base.name,
+        confidence: Math.round(match.score * 100),
+        accuracy: Math.round(match.score * 100),
+        matchType: match.matchType
+      };
+    });
 
     // Build extractedOptions with only non-empty options from the image
     const filteredExtractedOptions: Record<string, string> = {};
@@ -3531,14 +3682,24 @@ Ví dụ:
     if (extractedData.optionC) filteredExtractedOptions.C = extractedData.optionC;
     if (extractedData.optionD) filteredExtractedOptions.D = extractedData.optionD;
 
+    let alignedOptions = bestMatch ? JSON.parse(bestMatch.options) : [];
+    let alignedCorrectAnswerIdx = bestMatch ? bestMatch.correctAnswerIdx : -1;
+    if (bestMatch) {
+      const alignment = alignOptions(alignedOptions, bestMatch.correctAnswerIdx, extractedData);
+      alignedOptions = alignment.alignedOptions;
+      alignedCorrectAnswerIdx = alignment.alignedCorrectAnswerIdx;
+    }
+
     let result_data: any = {
       recognizedText: recognizedText,
       extractedOptions: Object.keys(filteredExtractedOptions).length > 0 ? filteredExtractedOptions : undefined,
       matchedQuestion: bestMatch ? {
         id: bestMatch.id,
         question: bestMatch.text,
-        options: JSON.parse(bestMatch.options),
-        correctAnswerIndex: bestMatch.correctAnswerIdx,
+        options: alignedOptions,
+        answers: alignedOptions,
+        correctAnswerIndex: alignedCorrectAnswerIdx,
+        accuracy: Math.round(bestScore * 100),
         source: bestMatch.source || '',
         category: bestMatch.category || '',
         knowledgeBaseName: bestMatch.base.name
@@ -3726,8 +3887,9 @@ Ví dụ:
       const enhancedMatchedQuestion = bestMatch ? {
         id: bestMatch.id,
         question: bestMatch.text,
-        options: JSON.parse(bestMatch.options),
-        correctAnswerIndex: bestMatch.correctAnswerIdx,
+        options: alignedOptions,
+        answers: alignedOptions,
+        correctAnswerIndex: alignedCorrectAnswerIdx,
         source: bestMatch.source || '',
         category: bestMatch.category || '',
         knowledgeBaseName: bestMatch.base.name,
@@ -4141,14 +4303,24 @@ QUY TẮC:
       const bestMatch = allMatches.length > 0 ? allMatches[0].question : null;
       const bestScore = allMatches.length > 0 ? allMatches[0].score : 0;
 
+      let alignedOptions = bestMatch ? JSON.parse(bestMatch.options) : [];
+      let alignedCorrectAnswerIdx = bestMatch ? bestMatch.correctAnswerIdx : -1;
+      if (bestMatch) {
+        const alignment = alignOptions(alignedOptions, bestMatch.correctAnswerIdx, extractedData);
+        alignedOptions = alignment.alignedOptions;
+        alignedCorrectAnswerIdx = alignment.alignedCorrectAnswerIdx;
+      }
+
       let result_data: any = {
         recognizedText: recognizedText,
         extractedOptions: Object.keys(filteredExtractedOptionsStream).length > 0 ? filteredExtractedOptionsStream : undefined,
         matchedQuestion: bestMatch ? {
           id: bestMatch.id,
           question: bestMatch.text,
-          options: JSON.parse(bestMatch.options),
-          correctAnswerIndex: bestMatch.correctAnswerIdx,
+          options: alignedOptions,
+          answers: alignedOptions,
+          correctAnswerIndex: alignedCorrectAnswerIdx,
+          accuracy: Math.round(bestScore * 100),
           source: bestMatch.source || '',
           category: bestMatch.category || '',
           knowledgeBaseName: bestMatch.base.name
@@ -4337,8 +4509,9 @@ QUY TẮC:
         const enhancedMatchedQuestion = bestMatch ? {
           id: bestMatch.id,
           question: bestMatch.text,
-          options: JSON.parse(bestMatch.options),
-          correctAnswerIndex: bestMatch.correctAnswerIdx,
+          options: alignedOptions,
+          answers: alignedOptions,
+          correctAnswerIndex: alignedCorrectAnswerIdx,
           source: bestMatch.source || '',
           category: bestMatch.category || '',
           knowledgeBaseName: bestMatch.base.name,

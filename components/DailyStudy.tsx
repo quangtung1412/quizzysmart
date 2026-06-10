@@ -44,8 +44,21 @@ const DailyStudy: React.FC<DailyStudyProps> = ({ studyPlan: initialPlan, current
   const q = questions[index];
   const isCorrect = q && selected !== null && parseInt(selected, 10) === q.correctAnswerIndex;
 
-  const handleSelect = (idx: string) => {
-    if (!revealed) setSelected(idx);
+  const handleSelect = (idxStr: string) => {
+    if (revealed) return;
+    const idx = parseInt(idxStr, 10);
+    const isMultiSelect = q.correctAnswerIndex < 0;
+    if (isMultiSelect) {
+      let currentMask = 0;
+      if (selected !== null) {
+        const val = parseInt(selected, 10);
+        currentMask = val < 0 ? Math.abs(val) : (1 << val);
+      }
+      currentMask ^= (1 << idx);
+      setSelected(currentMask === 0 ? null : String(-currentMask));
+    } else {
+      setSelected(idxStr);
+    }
   };
 
   const handleCheck = () => {
@@ -155,12 +168,27 @@ const DailyStudy: React.FC<DailyStudyProps> = ({ studyPlan: initialPlan, current
 
         {/* Question - Mobile optimized */}
         <div className="space-y-2 sm:space-y-3">
-          <h2 className="font-semibold text-base sm:text-lg leading-relaxed">{q.question}</h2>
+          <h2 className="font-semibold text-base sm:text-lg leading-relaxed flex flex-wrap items-center gap-2">
+            <span>{q.question}</span>
+            {q.correctAnswerIndex < 0 && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+                Chọn nhiều đáp án
+              </span>
+            )}
+          </h2>
           <div className="space-y-1.5 sm:space-y-2">
             {q.options.map((opt: string, optIdx: number) => {
               const idStr = String(optIdx);
-              const sel = selected === idStr;
-              const correct = revealed && optIdx === q.correctAnswerIndex;
+              const sel = selected !== null && (
+                parseInt(selected, 10) < 0 
+                  ? (Math.abs(parseInt(selected, 10)) & (1 << optIdx)) !== 0
+                  : selected === idStr
+              );
+              const correct = revealed && (
+                q.correctAnswerIndex < 0
+                  ? (Math.abs(q.correctAnswerIndex) & (1 << optIdx)) !== 0
+                  : optIdx === q.correctAnswerIndex
+              );
               const wrongSel = revealed && sel && !correct;
               return (
                 <button

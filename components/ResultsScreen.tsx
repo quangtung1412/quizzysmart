@@ -183,11 +183,24 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({ questions, userAnswers, a
 
               return (
                 <div key={q.id} className="p-3 sm:p-4 bg-white rounded-lg border border-slate-200">
-                  <p className="font-semibold text-slate-800 text-sm sm:text-base">{`Câu ${index + 1}: ${q.question}`}</p>
+                  <p className="font-semibold text-slate-800 text-sm sm:text-base flex flex-wrap items-center gap-2">
+                    <span>{`Câu ${index + 1}: ${q.question}`}</span>
+                    {q.correctAnswerIndex < 0 && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+                        Chọn nhiều đáp án
+                      </span>
+                    )}
+                  </p>
                   <div className="mt-2 space-y-1.5 text-sm">
                     {q.options.map((option, optIndex) => {
-                      const isSelected = optIndex === selectedOption;
-                      const isCorrect = optIndex === correctOption;
+                      const isSelected = selectedOption !== null && selectedOption !== undefined && (
+                        selectedOption < 0 
+                          ? (Math.abs(selectedOption) & (1 << optIndex)) !== 0
+                          : selectedOption === optIndex
+                      );
+                      const isCorrect = correctOption < 0 
+                        ? (Math.abs(correctOption) & (1 << optIndex)) !== 0
+                        : correctOption === optIndex;
 
                       let optionClass = "flex items-center justify-between p-2 rounded border-2";
                       let statusText = "";

@@ -552,16 +552,23 @@ const QuickSearchScreen: React.FC<QuickSearchScreenProps> = ({ knowledgeBases, o
                     </div>
 
                     {/* Question Text */}
-                    <div className="mb-3">
+                    <div className="mb-3 flex flex-wrap items-center gap-2">
                       <p className="text-slate-800 leading-relaxed">
                         {highlightText(result.question.question, debouncedSearchKeyword)}
                       </p>
+                      {result.question.correctAnswerIndex < 0 && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+                          Chọn nhiều đáp án
+                        </span>
+                      )}
                     </div>
 
                     {/* Answer Options - Compact */}
                     <div className="space-y-1.5">
                       {result.question.options.map((option, optionIndex) => {
-                        const isCorrect = optionIndex === result.question.correctAnswerIndex;
+                        const isCorrect = result.question.correctAnswerIndex < 0
+                          ? (Math.abs(result.question.correctAnswerIndex) & (1 << optionIndex)) !== 0
+                          : optionIndex === result.question.correctAnswerIndex;
 
                         return (
                           <div

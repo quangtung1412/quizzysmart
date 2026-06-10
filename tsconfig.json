@@ -25,5 +25,20 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "include": [
+    "App.tsx",
+    "AppWithRouter.tsx",
+    "index.tsx",
+    "types.ts",
+    "components/**/*",
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "server",
+    "backups",
+    "TestManagement_backup.tsx"
+  ]
 }

@@ -134,3 +134,12 @@ export interface ProgressStats {
   hard: number;
   unrated: number;
 }
+
+export function isCorrectAnswerIndex(correctAnswerIndex: number | undefined | null, optionIndex: number): boolean {
+  if (correctAnswerIndex === undefined || correctAnswerIndex === null) return false;
+  if (correctAnswerIndex < 0) {
+    const mask = Math.abs(correctAnswerIndex);
+    return (mask & (1 << optionIndex)) !== 0;
+  }
+  return correctAnswerIndex === optionIndex;
+}

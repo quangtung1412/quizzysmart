@@ -427,30 +427,40 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
 
                                     {/* Question */}
                                     <div className="bg-white rounded-lg p-3 sm:p-4 mb-3">
-                                        <p className="text-gray-800 font-medium text-xs sm:text-sm leading-relaxed">
-                                            {searchResult.matchedQuestion.question}
+                                        <p className="text-gray-800 font-medium text-xs sm:text-sm leading-relaxed flex flex-wrap items-center gap-2">
+                                            <span>{searchResult.matchedQuestion.question}</span>
+                                            {searchResult.matchedQuestion.correctAnswerIndex < 0 && (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+                                                    Chọn nhiều đáp án
+                                                </span>
+                                            )}
                                         </p>
                                     </div>
 
                                     {/* Answers */}
                                     <div className="space-y-2">
-                                        {searchResult.matchedQuestion.options.map((option, index) => (
-                                            <div
-                                                key={index}
-                                                className={`rounded-lg p-3 text-xs sm:text-sm ${index === searchResult.matchedQuestion!.correctAnswerIndex
-                                                    ? 'bg-green-100 border-2 border-green-400 font-semibold'
-                                                    : 'bg-gray-50 border border-gray-200'
-                                                    }`}
-                                            >
-                                                <span className="flex items-start gap-2">
-                                                    <span className="inline-block w-6 font-bold">{String.fromCharCode(65 + index)}.</span>
-                                                    {option}
-                                                    {index === searchResult.matchedQuestion!.correctAnswerIndex && (
-                                                        <span className="ml-2 text-green-600 font-bold">✓</span>
-                                                    )}
-                                                </span>
-                                            </div>
-                                        ))}
+                                        {searchResult.matchedQuestion.options.map((option, index) => {
+                                            const isCorrect = searchResult.matchedQuestion!.correctAnswerIndex < 0
+                                                ? (Math.abs(searchResult.matchedQuestion!.correctAnswerIndex) & (1 << index)) !== 0
+                                                : index === searchResult.matchedQuestion!.correctAnswerIndex;
+                                            return (
+                                                <div
+                                                    key={index}
+                                                    className={`rounded-lg p-3 text-xs sm:text-sm ${isCorrect
+                                                        ? 'bg-green-100 border-2 border-green-400 font-semibold'
+                                                        : 'bg-gray-50 border border-gray-200'
+                                                        }`}
+                                                >
+                                                    <span className="flex items-start gap-2">
+                                                        <span className="inline-block w-6 font-bold">{String.fromCharCode(65 + index)}.</span>
+                                                        {option}
+                                                        {isCorrect && (
+                                                            <span className="ml-2 text-green-600 font-bold">✓</span>
+                                                        )}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
 
                                     {searchResult.matchedQuestion.source && (

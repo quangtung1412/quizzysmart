@@ -61,18 +61,32 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
   const handleAnswerSelect = (optionIndex: number) => {
     if (mode === QuizMode.Study && showFeedback) return;
 
-    // For test mode, don't validate on client side - let server validate
-    const isCorrect = mode === QuizMode.Test ? null : optionIndex === currentQuestion.correctAnswerIndex;
+    const isMultiSelect = currentQuestion.correctAnswerIndex < 0;
+    let newSelectedIdx: number | null = null;
+
+    if (isMultiSelect) {
+      const currentSelected = currentAnswer?.selectedOptionIndex ?? null;
+      let currentMask = 0;
+      if (currentSelected !== null) {
+        currentMask = currentSelected < 0 ? Math.abs(currentSelected) : (1 << currentSelected);
+      }
+      currentMask ^= (1 << optionIndex);
+      newSelectedIdx = currentMask === 0 ? null : -currentMask;
+    } else {
+      newSelectedIdx = optionIndex;
+    }
+
+    const isCorrect = mode === QuizMode.Test ? null : (newSelectedIdx === currentQuestion.correctAnswerIndex);
     const updatedAnswers = answers.map(a =>
       a.questionId === currentQuestion.id
-        ? { ...a, selectedOptionIndex: optionIndex, isCorrect }
+        ? { ...a, selectedOptionIndex: newSelectedIdx, isCorrect }
         : a
     );
 
     setAnswers(updatedAnswers);
     onAnswerUpdate(updatedAnswers);
 
-    if (mode === QuizMode.Study) {
+    if (mode === QuizMode.Study && !isMultiSelect) {
       setShowFeedback(true);
     }
   };
@@ -158,10 +172,21 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
 
   const getOptionClasses = (optionIndex: number) => {
     const base = "w-full text-left p-3 my-1.5 border rounded-lg transition-all duration-200 cursor-pointer flex items-center";
-    const selected = currentAnswer?.selectedOptionIndex === optionIndex;
+    
+    const isSelected = (selectedIndex: number | null | undefined, index: number) => {
+      if (selectedIndex === null || selectedIndex === undefined) return false;
+      if (selectedIndex < 0) {
+        return (Math.abs(selectedIndex) & (1 << index)) !== 0;
+      }
+      return selectedIndex === index;
+    };
+
+    const selected = isSelected(currentAnswer?.selectedOptionIndex, optionIndex);
 
     if (mode === QuizMode.Study && showFeedback) {
-      const isCorrect = optionIndex === currentQuestion.correctAnswerIndex;
+      const isCorrect = currentQuestion.correctAnswerIndex < 0
+        ? (Math.abs(currentQuestion.correctAnswerIndex) & (1 << optionIndex)) !== 0
+        : optionIndex === currentQuestion.correctAnswerIndex;
       if (isCorrect) return `${base} bg-green-100 border-green-500 text-green-800 ring-2 ring-green-500`;
       if (selected && !isCorrect) return `${base} bg-red-100 border-red-500 text-red-800`;
       return `${base} bg-white border-slate-300 text-slate-700 cursor-not-allowed`;
@@ -175,6 +200,19 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
 
   const renderRightButton = () => {
     if (mode === QuizMode.Study) {
+      const isMultiSelect = currentQuestion.correctAnswerIndex < 0;
+      if (isMultiSelect && !showFeedback) {
+        const hasSelection = currentAnswer?.selectedOptionIndex !== null && currentAnswer?.selectedOptionIndex !== undefined;
+        return (
+          <button
+            onClick={() => setShowFeedback(true)}
+            disabled={!hasSelection}
+            className="flex-1 sm:flex-initial px-4 sm:px-8 py-2.5 sm:py-2 text-sm font-medium text-white bg-purple-600 border border-transparent rounded-md shadow-sm hover:bg-purple-700 disabled:bg-slate-400 disabled:cursor-not-allowed min-h-[44px]"
+          >
+            Kiểm tra đáp án
+          </button>
+        );
+      }
       if (isLastQuestion) {
         return (
           <button
@@ -241,8 +279,13 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
       </div>
 
       <div className="mb-3 sm:mb-4">
-        <p className="text-base sm:text-lg font-semibold text-slate-800 mb-3 sm:mb-4 leading-relaxed">
-          {`Câu ${currentIndex + 1}: ${currentQuestion.question}`}
+        <p className="text-base sm:text-lg font-semibold text-slate-800 mb-3 sm:mb-4 leading-relaxed flex flex-wrap items-center gap-2">
+          <span>{`Câu ${currentIndex + 1}: ${currentQuestion.question}`}</span>
+          {currentQuestion.correctAnswerIndex < 0 && (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+              Chọn nhiều đáp án
+            </span>
+          )}
         </p>
         <div className="space-y-1.5 sm:space-y-2">
           {currentQuestion.options.map((option, index) => (

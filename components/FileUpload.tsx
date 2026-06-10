@@ -66,19 +66,66 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
         const strValue = String(value).trim().toUpperCase();
         if (strValue.length === 0) return NaN;
 
-        const numericValue = parseInt(strValue, 10);
-        if (!isNaN(numericValue) && numericValue >= 1 && numericValue <= 4) {
-          return numericValue - 1;
+        const normalizedStr = strValue.replace(/\bVÀ\b/g, ',').replace(/\bAND\b/g, ',');
+        const parts = normalizedStr.split(/[\s,;&|/]+/).map(p => p.trim()).filter(Boolean);
+
+        if (parts.length === 0) return NaN;
+
+        const parseSingle = (part: string): number => {
+          const numericValue = parseInt(part, 10);
+          if (!isNaN(numericValue) && numericValue >= 1 && numericValue <= 4) {
+            return numericValue - 1;
+          }
+          if (part.length === 1) {
+            const charCode = part.charCodeAt(0);
+            if (charCode >= 65 && charCode <= 68) { // 'A' to 'D'
+              return charCode - 65;
+            }
+          }
+          return NaN;
+        };
+
+        if (parts.length === 1) {
+          return parseSingle(parts[0]);
         }
 
-        if (strValue.length === 1) {
-          const charCode = strValue.charCodeAt(0);
-          if (charCode >= 65 && charCode <= 68) { // 'A' to 'D'
-            return charCode - 65;
+        let bitmask = 0;
+        let validCount = 0;
+        for (const part of parts) {
+          const idx = parseSingle(part);
+          if (!isNaN(idx) && idx >= 0 && idx <= 3) {
+            bitmask |= (1 << idx);
+            validCount++;
+          } else {
+            return NaN;
+          }
+        }
+
+        if (validCount > 1) {
+          return -bitmask;
+        } else if (validCount === 1) {
+          for (let i = 0; i < 4; i++) {
+            if ((bitmask & (1 << i)) !== 0) return i;
           }
         }
 
         return NaN;
+      };
+
+      const isValidCorrectAnswer = (val: number, numOptions: number): boolean => {
+        if (isNaN(val)) return false;
+        if (val >= 0) {
+          return val < numOptions;
+        } else {
+          const bitmask = Math.abs(val);
+          if (bitmask === 0) return false;
+          for (let i = 0; i < 32; i++) {
+            if ((bitmask & (1 << i)) !== 0) {
+              if (i >= numOptions) return false;
+            }
+          }
+          return true;
+        }
       };
 
       const questions: Question[] = tableData.slice(1).map((row: any[], index: number) => {
@@ -102,15 +149,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
         const correctIdxRaw = getCorrectAnswerIndex(row[6]);
         console.log('Correct index for row', index + 2, 'is', correctIdxRaw);
 
-        // Kiểm tra đáp án đúng có hợp lệ không (0-3 cho A-D hoặc 1-4 cho số)
-        if (isNaN(correctIdxRaw) || correctIdxRaw < 0 || correctIdxRaw > 3) {
-          console.warn(`Bỏ qua dòng ${index + 2} vì đáp án đúng "${row[6]}" không hợp lệ (phải là A-D hoặc 1-4).`);
-          return null;
-        }
-
-        // Kiểm tra đáp án đúng có tồn tại trong danh sách options không
-        if (correctIdxRaw >= options.length) {
-          console.warn(`Bỏ qua dòng ${index + 2} vì đáp án đúng "${String.fromCharCode(65 + correctIdxRaw)}" không có trong ${options.length} đáp án có sẵn.`);
+        if (!isValidCorrectAnswer(correctIdxRaw, options.length)) {
+          console.warn(`Bỏ qua dòng ${index + 2} vì đáp án đúng "${row[6]}" không hợp lệ (phải là các đáp án A-D hoặc 1-4 có trong các đáp án có sẵn).`);
           return null;
         }
 

@@ -217,10 +217,16 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
 
   const getOptionClasses = (optionIndex: number) => {
     const base = "w-full text-left p-4 my-2 border rounded-lg transition-all duration-200 cursor-pointer flex items-center";
-    const isSelected = selected !== null && parseInt(selected, 10) === optionIndex;
+    const isSelected = selected !== null && (
+      parseInt(selected, 10) < 0 
+        ? (Math.abs(parseInt(selected, 10)) & (1 << optionIndex)) !== 0
+        : parseInt(selected, 10) === optionIndex
+    );
 
     if (revealed) {
-      const isCorrectAnswer = optionIndex === currentQuestion.correctAnswerIndex;
+      const isCorrectAnswer = currentQuestion.correctAnswerIndex < 0
+        ? (Math.abs(currentQuestion.correctAnswerIndex) & (1 << optionIndex)) !== 0
+        : optionIndex === currentQuestion.correctAnswerIndex;
       if (isCorrectAnswer) return `${base} bg-green-100 border-green-500 text-green-800 ring-2 ring-green-500`;
       if (isSelected && !isCorrectAnswer) return `${base} bg-red-100 border-red-500 text-red-800`;
       return `${base} bg-white border-slate-300 text-slate-700 cursor-not-allowed`;
@@ -230,10 +236,20 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
     return `${base} bg-white border-slate-300 hover:bg-slate-50 hover:border-sky-400`;
   };
 
-  const handleSelect = (idx: string) => {
-    if (!revealed) {
-      setSelected(idx);
-      // Auto reveal answer and show rating buttons immediately after selection
+  const handleSelect = (idxStr: string) => {
+    if (revealed) return;
+    const idx = parseInt(idxStr, 10);
+    const isMultiSelect = currentQuestion.correctAnswerIndex < 0;
+    if (isMultiSelect) {
+      let currentMask = 0;
+      if (selected !== null) {
+        const val = parseInt(selected, 10);
+        currentMask = val < 0 ? Math.abs(val) : (1 << val);
+      }
+      currentMask ^= (1 << idx);
+      setSelected(currentMask === 0 ? null : String(-currentMask));
+    } else {
+      setSelected(idxStr);
       setRevealed(true);
       setRatingMode(true);
     }
@@ -590,8 +606,13 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
 
         {/* Question Area - Direct like QuizScreen */}
         <div className="mb-6">
-          <p className="text-base sm:text-lg font-semibold text-slate-800 mb-4 sm:mb-6 leading-relaxed">
-            {`Câu hỏi: ${currentQuestion.question}`}
+          <p className="text-base sm:text-lg font-semibold text-slate-800 mb-4 sm:mb-6 leading-relaxed flex flex-wrap items-center gap-2">
+            <span>{`Câu hỏi: ${currentQuestion.question}`}</span>
+            {currentQuestion.correctAnswerIndex < 0 && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+                Chọn nhiều đáp án
+              </span>
+            )}
           </p>
 
           <div className="space-y-2 sm:space-y-3">
@@ -621,6 +642,17 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
 
         {/* Action Buttons */}
         <div className="mt-6 sm:mt-8 pt-4 border-t flex justify-center space-x-4">
+          {!revealed && currentQuestion.correctAnswerIndex < 0 && (
+            <button
+              onClick={handleReveal}
+              disabled={selected === null}
+              className={`px-6 py-3 rounded-xl text-white font-medium text-sm sm:text-base shadow-lg ${selected === null ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+                }`}
+            >
+              Kiểm tra
+            </button>
+          )}
+
           {ratingMode === true && (
             <div className="flex flex-wrap justify-center gap-3">
               <button
