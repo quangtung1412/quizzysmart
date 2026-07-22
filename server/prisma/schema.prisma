@@ -29,6 +29,32 @@ model User {
   aiSearchHistory AiSearchHistory[]
   chatMessages ChatMessage[]  // RAG chat history
   geminiApiCalls GeminiApiCall[] // API calls tracking
+  groupMemberships UserGroupMember[]
+}
+
+model UserGroup {
+  id          String            @id @default(cuid())
+  name        String            @unique
+  description String?           @db.Text
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  members     UserGroupMember[]
+
+  @@map("user_groups")
+}
+
+model UserGroupMember {
+  id        String    @id @default(cuid())
+  group     UserGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  groupId   String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  createdAt DateTime  @default(now())
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+  @@map("user_group_members")
 }
 
 model KnowledgeBase {

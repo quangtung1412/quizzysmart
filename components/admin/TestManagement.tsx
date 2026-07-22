@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../../src/api';
 import TestDetail from './TestDetail';
+import { exportTestRankingsToExcel } from '../../src/utils/exportTestRankings';
 
 // Utility function to generate random background colors for capsules
 const getRandomColor = () => {
@@ -92,10 +93,19 @@ interface User {
   role?: string;
 }
 
+interface UserGroup {
+  id: string;
+  name: string;
+  description?: string | null;
+  memberCount: number;
+  members: User[];
+}
+
 const TestManagement: React.FC = () => {
   const [tests, setTests] = useState<Test[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [groups, setGroups] = useState<UserGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -103,6 +113,9 @@ const TestManagement: React.FC = () => {
   const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
   const [userSearch, setUserSearch] = useState('');
   const [adminGroupAssigned, setAdminGroupAssigned] = useState(true); // Default admin group assigned
+  const [assignedGroupIds, setAssignedGroupIds] = useState<string[]>([]);
+  const [selectedExportIds, setSelectedExportIds] = useState<string[]>([]);
+  const [exporting, setExporting] = useState(false);
   
   // Form state
   const [formData, setFormData] = useState({
@@ -117,17 +130,24 @@ const TestManagement: React.FC = () => {
     assignedUsers: [] as string[]
   });
 
+  const adminUserIds = useMemo(
+    () => users.filter(u => u.role === 'admin').map(u => u.id),
+    [users]
+  );
+
   const loadData = async () => {
     setLoading(true);
     try {
-      const [testsData, basesData, usersData] = await Promise.all([
+      const [testsData, basesData, usersData, groupsData] = await Promise.all([
         api.adminListTests(),
         api.adminListKnowledgeBases(),
-        api.adminListUsers()
+        api.adminListUsers(),
+        api.adminListGroups().catch(() => [])
       ]);
       setTests(testsData);
       setKnowledgeBases(basesData);
-      setUsers(usersData); // Include all users including admin
+      setUsers(usersData);
+      setGroups(groupsData);
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
@@ -149,9 +169,23 @@ const TestManagement: React.FC = () => {
       startTime: '',
       endTime: '',
       knowledgeSources: [{ knowledgeBaseId: '', percentage: 100 }],
-      assignedUsers: users.map(u => u.id) // Default select all users including admin
+      assignedUsers: []
     });
-    setAdminGroupAssigned(true); // Default admin group assigned
+    setAdminGroupAssigned(true);
+    setAssignedGroupIds([]);
+  };
+
+  /** Merge individual users + selected groups + admin group into final assignment IDs */
+  const resolveAssignedUserIds = (): string[] => {
+    const ids = new Set<string>(formData.assignedUsers);
+    for (const groupId of assignedGroupIds) {
+      const group = groups.find(g => g.id === groupId);
+      group?.members.forEach(m => ids.add(m.id));
+    }
+    if (adminGroupAssigned) {
+      adminUserIds.forEach(id => ids.add(id));
+    }
+    return [...ids];
   };
 
   const addKnowledgeSource = () => {
@@ -214,11 +248,18 @@ const TestManagement: React.FC = () => {
     );
   });
 
+  const toggleGroupAssignment = (groupId: string) => {
+    setAssignedGroupIds(prev =>
+      prev.includes(groupId) ? prev.filter(id => id !== groupId) : [...prev, groupId]
+    );
+  };
+
   const getTotalPercentage = () => {
     return formData.knowledgeSources.reduce((sum, ks) => sum + (ks.percentage || 0), 0);
   };
 
   const canSubmit = () => {
+    const assignedCount = resolveAssignedUserIds().length;
     return (
       formData.name.trim() &&
       formData.questionCount > 0 &&
@@ -226,7 +267,7 @@ const TestManagement: React.FC = () => {
       formData.knowledgeSources.length > 0 &&
       formData.knowledgeSources.every(ks => ks.knowledgeBaseId && ks.percentage > 0) &&
       Math.abs(getTotalPercentage() - 100) < 0.01 &&
-      formData.assignedUsers.length > 0
+      assignedCount > 0
     );
   };
 
@@ -244,7 +285,7 @@ const TestManagement: React.FC = () => {
         startTime: formData.startTime || undefined,
         endTime: formData.endTime || undefined,
         knowledgeSources: formData.knowledgeSources,
-        assignedUsers: formData.assignedUsers
+        assignedUsers: resolveAssignedUserIds()
       });
       
       setShowCreateModal(false);
@@ -271,9 +312,12 @@ const TestManagement: React.FC = () => {
       knowledgeSources: test.knowledgeSources,
       assignedUsers: test.assignedUsers.map(u => u.id)
     });
-    // Check if admin group was assigned (we'll assume it was assigned if any admin is in the list)
-    const hasAdminInAssignment = test.assignedUsers.some(u => users.find(user => user.id === u.id && user.role === 'admin'));
-    setAdminGroupAssigned(hasAdminInAssignment);
+    // Admin group is considered assigned if every current admin is in the assignment
+    const allAdminsAssigned =
+      adminUserIds.length > 0 &&
+      adminUserIds.every(id => test.assignedUsers.some(u => u.id === id));
+    setAdminGroupAssigned(allAdminsAssigned);
+    setAssignedGroupIds([]);
     setSelectedTestId(test.id);
     setShowEditModal(true);
   };
@@ -283,7 +327,6 @@ const TestManagement: React.FC = () => {
     
     setLoading(true);
     try {
-      // This would need a new API endpoint for updating tests
       await api.adminUpdateTest(selectedTestId, {
         name: formData.name,
         description: formData.description,
@@ -293,7 +336,7 @@ const TestManagement: React.FC = () => {
         startTime: formData.startTime || undefined,
         endTime: formData.endTime || undefined,
         knowledgeSources: formData.knowledgeSources,
-        assignedUsers: formData.assignedUsers
+        assignedUsers: resolveAssignedUserIds()
       });
       
       setShowEditModal(false);
@@ -306,6 +349,33 @@ const TestManagement: React.FC = () => {
       alert('Có lỗi xảy ra khi cập nhật bài thi. Vui lòng thử lại.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const toggleExportSelection = (testId: string) => {
+    setSelectedExportIds(prev =>
+      prev.includes(testId) ? prev.filter(id => id !== testId) : [...prev, testId]
+    );
+  };
+
+  const handleExportSelected = async () => {
+    if (selectedExportIds.length === 0) {
+      alert('Hãy chọn ít nhất một bài thi để xuất.');
+      return;
+    }
+    setExporting(true);
+    try {
+      const { rows } = await api.adminExportTestRankings(selectedExportIds);
+      if (!rows.length) {
+        alert('Không có kết quả nào để xuất.');
+        return;
+      }
+      exportTestRankingsToExcel(rows, `ket-qua-nhieu-bai-thi-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (e) {
+      console.error(e);
+      alert('Xuất Excel thất bại.');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -334,17 +404,26 @@ const TestManagement: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center flex-wrap gap-3">
         <h3 className="text-xl font-semibold text-slate-800">Quản lý bài thi</h3>
-        <button 
-          onClick={() => {
-            resetForm();
-            setShowCreateModal(true);
-          }}
-          className="px-4 py-2 bg-sky-600 text-white rounded-md hover:bg-sky-700 transition-colors"
-        >
-          Tạo bài thi mới
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={handleExportSelected}
+            disabled={exporting || selectedExportIds.length === 0}
+            className="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+          >
+            {exporting ? 'Đang xuất...' : `Xuất Excel (${selectedExportIds.length})`}
+          </button>
+          <button 
+            onClick={() => {
+              resetForm();
+              setShowCreateModal(true);
+            }}
+            className="px-4 py-2 bg-sky-600 text-white rounded-md hover:bg-sky-700 transition-colors"
+          >
+            Tạo bài thi mới
+          </button>
+        </div>
       </div>
 
       {/* Test Statistics */}
@@ -382,6 +461,16 @@ const TestManagement: React.FC = () => {
             <table className="w-full text-sm text-left">
               <thead className="bg-slate-50 border-b">
                 <tr>
+                  <th className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={tests.length > 0 && selectedExportIds.length === tests.length}
+                      onChange={(e) => {
+                        setSelectedExportIds(e.target.checked ? tests.map(t => t.id) : []);
+                      }}
+                      title="Chọn tất cả để xuất Excel"
+                    />
+                  </th>
                   <th className="px-6 py-3 font-medium text-slate-600">Tên bài thi</th>
                   <th className="px-6 py-3 font-medium text-slate-600">Số câu hỏi</th>
                   <th className="px-6 py-3 font-medium text-slate-600">Thời gian</th>
@@ -395,6 +484,13 @@ const TestManagement: React.FC = () => {
               <tbody className="divide-y divide-slate-200">
                 {tests.map(test => (
                   <tr key={test.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedExportIds.includes(test.id)}
+                        onChange={() => toggleExportSelection(test.id)}
+                      />
+                    </td>
                     <td className="px-6 py-4">
                       <div className="font-medium text-slate-900">{test.name}</div>
                       {test.description && (
@@ -634,7 +730,7 @@ const TestManagement: React.FC = () => {
                 <div>
                   <div className="flex justify-between items-center mb-2">
                     <label className="block text-sm font-medium text-slate-700">
-                      Gán cho người dùng * ({formData.assignedUsers.length + (adminGroupAssigned ? 1 : 0)} đã chọn)
+                      Gán cho người dùng * ({resolveAssignedUserIds().length} người sẽ được gán)
                     </label>
                     <div className="flex space-x-2">
                       <button
@@ -657,17 +753,27 @@ const TestManagement: React.FC = () => {
                   {/* Selected Users/Groups Display */}
                   <div className="mb-3 min-h-[2rem] p-2 border border-slate-200 rounded-md bg-slate-50">
                     <div className="flex flex-wrap gap-2">
-                      {/* Admin Group Capsule */}
                       {adminGroupAssigned && (
                         <Capsule 
-                          text="Admin Group" 
+                          text={`Admin Group (${adminUserIds.length})`}
                           onRemove={() => setAdminGroupAssigned(false)}
                           color="bg-blue-100 text-blue-800"
                           isGroup={true}
                         />
                       )}
-                      
-                      {/* Individual User Capsules */}
+                      {assignedGroupIds.map(groupId => {
+                        const group = groups.find(g => g.id === groupId);
+                        if (!group) return null;
+                        return (
+                          <Capsule
+                            key={groupId}
+                            text={`${group.name} (${group.memberCount})`}
+                            onRemove={() => toggleGroupAssignment(groupId)}
+                            color="bg-indigo-100 text-indigo-800"
+                            isGroup={true}
+                          />
+                        );
+                      })}
                       {formData.assignedUsers.map(userId => {
                         const user = users.find(u => u.id === userId);
                         if (!user) return null;
@@ -679,12 +785,33 @@ const TestManagement: React.FC = () => {
                           />
                         );
                       })}
-                      
-                      {!adminGroupAssigned && formData.assignedUsers.length === 0 && (
+                      {resolveAssignedUserIds().length === 0 && (
                         <span className="text-slate-400 text-sm">Chưa có ai được gán</span>
                       )}
                     </div>
                   </div>
+
+                  {/* Groups */}
+                  {groups.length > 0 && (
+                    <div className="mb-3">
+                      <div className="text-xs font-semibold text-slate-600 mb-1">Chọn theo nhóm</div>
+                      <div className="border border-slate-300 rounded-md max-h-32 overflow-y-auto p-2 space-y-1">
+                        {groups.map(group => (
+                          <label key={group.id} className="flex items-center space-x-2 cursor-pointer p-2 hover:bg-slate-50 rounded">
+                            <input
+                              type="checkbox"
+                              checked={assignedGroupIds.includes(group.id)}
+                              onChange={() => toggleGroupAssignment(group.id)}
+                            />
+                            <div>
+                              <div className="text-sm font-medium text-indigo-700">{group.name}</div>
+                              <div className="text-xs text-slate-500">{group.memberCount} thành viên</div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   
                   {/* Search Users */}
                   <div className="mb-2">
@@ -711,7 +838,7 @@ const TestManagement: React.FC = () => {
                         </svg>
                         <div className="flex-1">
                           <div className="text-sm font-medium text-blue-700">Admin Group</div>
-                          <div className="text-xs text-slate-500">Tất cả admin có thể truy cập bài thi này</div>
+                          <div className="text-xs text-slate-500">Gán cho tất cả tài khoản admin ({adminUserIds.length})</div>
                         </div>
                       </div>
                     </label>
@@ -936,7 +1063,7 @@ const TestManagement: React.FC = () => {
                 <div>
                   <div className="flex justify-between items-center mb-2">
                     <label className="block text-sm font-medium text-slate-700">
-                      Gán cho người dùng * ({formData.assignedUsers.length + (adminGroupAssigned ? 1 : 0)} đã chọn)
+                      Gán cho người dùng * ({resolveAssignedUserIds().length} người sẽ được gán)
                     </label>
                     <div className="flex space-x-2">
                       <button
@@ -956,20 +1083,29 @@ const TestManagement: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Selected Users/Groups Display */}
                   <div className="mb-3 min-h-[2rem] p-2 border border-slate-200 rounded-md bg-slate-50">
                     <div className="flex flex-wrap gap-2">
-                      {/* Admin Group Capsule */}
                       {adminGroupAssigned && (
                         <Capsule 
-                          text="Admin Group" 
+                          text={`Admin Group (${adminUserIds.length})`}
                           onRemove={() => setAdminGroupAssigned(false)}
                           color="bg-blue-100 text-blue-800"
                           isGroup={true}
                         />
                       )}
-                      
-                      {/* Individual User Capsules */}
+                      {assignedGroupIds.map(groupId => {
+                        const group = groups.find(g => g.id === groupId);
+                        if (!group) return null;
+                        return (
+                          <Capsule
+                            key={groupId}
+                            text={`${group.name} (${group.memberCount})`}
+                            onRemove={() => toggleGroupAssignment(groupId)}
+                            color="bg-indigo-100 text-indigo-800"
+                            isGroup={true}
+                          />
+                        );
+                      })}
                       {formData.assignedUsers.map(userId => {
                         const user = users.find(u => u.id === userId);
                         if (!user) return null;
@@ -981,14 +1117,33 @@ const TestManagement: React.FC = () => {
                           />
                         );
                       })}
-                      
-                      {!adminGroupAssigned && formData.assignedUsers.length === 0 && (
+                      {resolveAssignedUserIds().length === 0 && (
                         <span className="text-slate-400 text-sm">Chưa có ai được gán</span>
                       )}
                     </div>
                   </div>
-                  
-                  {/* Add Admin Group Option */}
+
+                  {groups.length > 0 && (
+                    <div className="mb-3">
+                      <div className="text-xs font-semibold text-slate-600 mb-1">Chọn theo nhóm</div>
+                      <div className="border border-slate-300 rounded-md max-h-32 overflow-y-auto p-2 space-y-1">
+                        {groups.map(group => (
+                          <label key={group.id} className="flex items-center space-x-2 cursor-pointer p-2 hover:bg-slate-50 rounded">
+                            <input
+                              type="checkbox"
+                              checked={assignedGroupIds.includes(group.id)}
+                              onChange={() => toggleGroupAssignment(group.id)}
+                            />
+                            <div>
+                              <div className="text-sm font-medium text-indigo-700">{group.name}</div>
+                              <div className="text-xs text-slate-500">{group.memberCount} thành viên</div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="mb-2">
                     <label className="flex items-center space-x-2 cursor-pointer p-2 hover:bg-slate-50 rounded">
                       <input
@@ -1002,7 +1157,7 @@ const TestManagement: React.FC = () => {
                         </svg>
                         <div className="flex-1">
                           <div className="text-sm font-medium text-blue-700">Admin Group</div>
-                          <div className="text-xs text-slate-500">Tất cả admin có thể truy cập bài thi này</div>
+                          <div className="text-xs text-slate-500">Gán cho tất cả tài khoản admin ({adminUserIds.length})</div>
                         </div>
                       </div>
                     </label>

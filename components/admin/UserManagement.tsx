@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../src/api';
+import GroupManagement from './GroupManagement';
 
 interface User {
   id: string;
@@ -32,6 +33,7 @@ interface UserFormData {
 }
 
 const UserManagement: React.FC = () => {
+  const [viewMode, setViewMode] = useState<'users' | 'groups'>('users');
   const [users, setUsers] = useState<User[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -296,19 +298,43 @@ const UserManagement: React.FC = () => {
     <div className="space-y-4 md:space-y-6 p-4 md:p-0">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
         <h3 className="text-lg md:text-xl font-semibold text-slate-800">Quản lý người dùng</h3>
+        {viewMode === 'users' && (
+          <button
+            onClick={() => { resetForm(); setShowCreateModal(true); }}
+            className="px-4 py-2 bg-sky-600 text-white rounded-md hover:bg-sky-700 transition-colors w-full sm:w-auto"
+          >
+            <span className="flex items-center justify-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+              </svg>
+              <span className="hidden sm:inline">Thêm người dùng</span>
+              <span className="sm:hidden">Thêm</span>
+            </span>
+          </button>
+        )}
+      </div>
+
+      <div className="flex gap-2 border-b border-slate-200 pb-2">
         <button
-          onClick={() => { resetForm(); setShowCreateModal(true); }}
-          className="px-4 py-2 bg-sky-600 text-white rounded-md hover:bg-sky-700 transition-colors w-full sm:w-auto"
+          type="button"
+          onClick={() => setViewMode('users')}
+          className={`px-4 py-2 text-sm font-medium rounded-t-md ${viewMode === 'users' ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
         >
-          <span className="flex items-center justify-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
-            </svg>
-            <span className="hidden sm:inline">Thêm người dùng</span>
-            <span className="sm:hidden">Thêm</span>
-          </span>
+          Người dùng
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode('groups')}
+          className={`px-4 py-2 text-sm font-medium rounded-t-md ${viewMode === 'groups' ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+        >
+          Nhóm người dùng
         </button>
       </div>
+
+      {viewMode === 'groups' ? (
+        <GroupManagement />
+      ) : (
+      <>
 
       {/* Filters */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -926,6 +952,8 @@ const UserManagement: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

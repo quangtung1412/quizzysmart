@@ -149,9 +149,23 @@ export const api = {
   adminDeleteTest: (testId: string) => request<{ ok: boolean }>(`/api/admin/tests/${testId}`, { method: 'DELETE' }),
   adminAssignTest: (testId: string, userIds: string[]) => request<{ ok: boolean }>(`/api/admin/tests/${testId}/assign`, { method: 'POST', body: JSON.stringify({ userIds }) }),
   adminTestRanking: (testId: string) => request<any[]>(`/api/admin/tests/${testId}/ranking`),
+  adminExportTestRankings: (testIds: string[]) =>
+    request<{ rows: any[] }>(`/api/admin/tests/export-rankings`, {
+      method: 'POST',
+      body: JSON.stringify({ testIds })
+    }),
   adminListKnowledgeBases: () => request<any[]>(`/api/admin/knowledge-bases`),
   adminDeleteKnowledgeBase: (baseId: string) => request<{ ok: boolean }>(`/api/admin/knowledge-bases/${baseId}`, { method: 'DELETE' }),
   adminCreateKnowledgeBase: (payload: { name: string; questions: any[]; creatorEmail?: string }) => request<{ id: string }>(`/api/admin/knowledge-bases`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  // User groups
+  adminListGroups: () => request<any[]>(`/api/admin/groups`),
+  adminCreateGroup: (payload: { name: string; description?: string; memberIds?: string[] }) =>
+    request<{ id: string }>(`/api/admin/groups`, { method: 'POST', body: JSON.stringify(payload) }),
+  adminUpdateGroup: (groupId: string, payload: { name?: string; description?: string; memberIds?: string[] }) =>
+    request<{ ok: boolean }>(`/api/admin/groups/${groupId}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  adminDeleteGroup: (groupId: string) =>
+    request<{ ok: boolean }>(`/api/admin/groups/${groupId}`, { method: 'DELETE' }),
 
   // Study Plans
   getStudyPlans: () => request<any[]>(`/api/study-plans`),

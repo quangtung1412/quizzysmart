@@ -1651,6 +1651,116 @@ app.delete('/api/admin/users/:id', async (req: Request, res: Response) => {
   }
 });
 
+// --- User Groups ---
+app.get('/api/admin/groups', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  try {
+    const groups = await (prisma as any).userGroup.findMany({
+      include: {
+        members: {
+          include: {
+            user: {
+              select: { id: true, name: true, email: true, username: true, role: true }
+            }
+          }
+        }
+      },
+      orderBy: { name: 'asc' }
+    });
+    res.json(groups.map((g: any) => ({
+      id: g.id,
+      name: g.name,
+      description: g.description,
+      createdAt: g.createdAt,
+      memberCount: g.members.length,
+      members: g.members.map((m: any) => ({
+        id: m.user.id,
+        name: m.user.name,
+        email: m.user.email,
+        username: m.user.username,
+        role: m.user.role
+      }))
+    })));
+  } catch (error: any) {
+    console.error('Failed to list groups:', error);
+    res.status(500).json({ error: error.message || 'Failed to list groups' });
+  }
+});
+
+app.post('/api/admin/groups', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const { name, description, memberIds = [] } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'Name required' });
+
+  try {
+    const group = await (prisma as any).userGroup.create({
+      data: {
+        name: String(name).trim(),
+        description: description || null,
+        members: {
+          create: (Array.isArray(memberIds) ? memberIds : [])
+            .filter(Boolean)
+            .map((userId: string) => ({ userId }))
+        }
+      },
+      include: { members: true }
+    });
+    res.json({ id: group.id, name: group.name, memberCount: group.members.length });
+  } catch (error: any) {
+    if (error?.code === 'P2002') return res.status(400).json({ error: 'Tên nhóm đã tồn tại' });
+    console.error('Failed to create group:', error);
+    res.status(500).json({ error: error.message || 'Failed to create group' });
+  }
+});
+
+app.put('/api/admin/groups/:id', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const groupId = req.params.id;
+  const { name, description, memberIds } = req.body || {};
+
+  try {
+    const existing = await (prisma as any).userGroup.findUnique({ where: { id: groupId } });
+    if (!existing) return res.status(404).json({ error: 'Group not found' });
+
+    await (prisma as any).userGroup.update({
+      where: { id: groupId },
+      data: {
+        ...(name !== undefined ? { name: String(name).trim() } : {}),
+        ...(description !== undefined ? { description: description || null } : {})
+      }
+    });
+
+    if (Array.isArray(memberIds)) {
+      await (prisma as any).userGroupMember.deleteMany({ where: { groupId } });
+      const uniqueIds = [...new Set(memberIds.filter(Boolean))] as string[];
+      if (uniqueIds.length > 0) {
+        await (prisma as any).userGroupMember.createMany({
+          data: uniqueIds.map((userId: string) => ({ groupId, userId })),
+          skipDuplicates: true
+        });
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (error: any) {
+    if (error?.code === 'P2002') return res.status(400).json({ error: 'Tên nhóm đã tồn tại' });
+    console.error('Failed to update group:', error);
+    res.status(500).json({ error: error.message || 'Failed to update group' });
+  }
+});
+
+app.delete('/api/admin/groups/:id', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const groupId = req.params.id;
+  try {
+    await (prisma as any).userGroup.delete({ where: { id: groupId } });
+    res.json({ ok: true });
+  } catch (error: any) {
+    console.error('Failed to delete group:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete group' });
+  }
+});
+
 // Admin knowledge base management endpoints
 app.get('/api/admin/knowledge-bases', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
@@ -2014,11 +2124,88 @@ app.patch('/api/admin/tests/:testId/increase-attempts', async (req: Request, res
 app.get('/api/admin/tests/:id/ranking', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   const id = req.params.id;
-  const attempts = await prisma.attempt.findMany({ where: { testId: id as any, NOT: { completedAt: null } }, include: { user: true } } as any);
+  const attempts = await prisma.attempt.findMany({
+    where: { testId: id as any, NOT: { completedAt: null } },
+    include: { user: true, answers: true }
+  } as any);
+
   const ranked = (attempts as any[])
-    .map((a: any) => ({ attemptId: a.id, userEmail: a.user.email, score: a.score ?? 0, completedAt: a.completedAt }))
-    .sort((a, b) => b.score - a.score);
+    .map((a: any) => {
+      const totalQuestions = a.answers?.length || 0;
+      const correctAnswers = (a.answers || []).filter((ans: any) => ans.isCorrect).length;
+      const durationSeconds = a.startedAt && a.completedAt
+        ? Math.max(0, Math.round((new Date(a.completedAt).getTime() - new Date(a.startedAt).getTime()) / 1000))
+        : null;
+      return {
+        attemptId: a.id,
+        userId: a.user?.id,
+        userName: a.user?.name || '',
+        userEmail: a.user?.email || a.user?.username || '',
+        username: a.user?.username || '',
+        score: a.score ?? 0,
+        startedAt: a.startedAt,
+        completedAt: a.completedAt,
+        durationSeconds,
+        correctAnswers,
+        totalQuestions
+      };
+    })
+    .sort((a, b) => b.score - a.score || (a.durationSeconds ?? Infinity) - (b.durationSeconds ?? Infinity));
   res.json(ranked);
+});
+
+// Export rankings for multiple tests (admin)
+app.post('/api/admin/tests/export-rankings', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const { testIds } = req.body || {};
+  if (!Array.isArray(testIds) || testIds.length === 0) {
+    return res.status(400).json({ error: 'testIds required' });
+  }
+
+  try {
+    const tests = await (prisma as any).test.findMany({
+      where: { id: { in: testIds } },
+      select: { id: true, name: true }
+    });
+    const testNameById = new Map(tests.map((t: any) => [t.id, t.name]));
+
+    const attempts = await prisma.attempt.findMany({
+      where: { testId: { in: testIds } as any, NOT: { completedAt: null } },
+      include: { user: true, answers: true, test: { select: { id: true, name: true } } }
+    } as any);
+
+    const rows = (attempts as any[]).map((a: any) => {
+      const totalQuestions = a.answers?.length || 0;
+      const correctAnswers = (a.answers || []).filter((ans: any) => ans.isCorrect).length;
+      const durationSeconds = a.startedAt && a.completedAt
+        ? Math.max(0, Math.round((new Date(a.completedAt).getTime() - new Date(a.startedAt).getTime()) / 1000))
+        : null;
+      return {
+        testId: a.testId,
+        testName: a.test?.name || testNameById.get(a.testId) || '',
+        attemptId: a.id,
+        userId: a.user?.id,
+        userName: a.user?.name || '',
+        userEmail: a.user?.email || a.user?.username || '',
+        username: a.user?.username || '',
+        score: a.score ?? 0,
+        startedAt: a.startedAt,
+        completedAt: a.completedAt,
+        durationSeconds,
+        correctAnswers,
+        totalQuestions
+      };
+    }).sort((a, b) => {
+      const nameCmp = String(a.testName).localeCompare(String(b.testName));
+      if (nameCmp !== 0) return nameCmp;
+      return b.score - a.score || (a.durationSeconds ?? Infinity) - (b.durationSeconds ?? Infinity);
+    });
+
+    res.json({ rows });
+  } catch (error) {
+    console.error('Failed to export rankings:', error);
+    res.status(500).json({ error: 'Failed to export rankings' });
+  }
 });
 
 // Get Gemini model usage statistics (Admin only)
