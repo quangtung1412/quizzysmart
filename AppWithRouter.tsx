@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { Question, QuizMode, QuizSettings, UserAnswer, KnowledgeBase, QuizAttempt, User, StudyPlan, DifficultyLevel } from './types';
 import { useKnowledgeBaseStore, useAttemptStore } from './src/hooks/usePersistentStores';
 import { useStudyPlanStore } from './src/hooks/useStudyPlanStore';
@@ -33,10 +33,25 @@ import LiveCameraSearch from './components/LiveCameraSearch';
 import PremiumPlansScreen from './components/PremiumPlansScreen';
 import ChatFloatingButton from './components/ChatFloatingButton';
 
-// Protected Route Component
-const ProtectedRoute: React.FC<{ children: React.ReactElement; user: User | null }> = ({ children, user }) => {
+// Protected Route Component — wait for session check before redirecting to login
+const ProtectedRoute: React.FC<{
+  children: React.ReactElement;
+  user: User | null;
+  authLoading: boolean;
+}> = ({ children, user, authLoading }) => {
+  const location = useLocation();
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-slate-50">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-sky-600 mb-3" />
+        <p className="text-slate-600 text-sm">Đang xác thực phiên đăng nhập...</p>
+      </div>
+    );
+  }
+
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   }
   return children;
 };
@@ -160,7 +175,9 @@ const AppLayout: React.FC<{
 
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [forceLogoutMessage, setForceLogoutMessage] = useState<string | null>(null);
   const [showThankYouPopup, setShowThankYouPopup] = useState<boolean>(false);
   const [thankYouData, setThankYouData] = useState<any>(null);
@@ -367,12 +384,14 @@ const AppContent: React.FC = () => {
     if (!userData.branchCode) {
       navigate('/user-setup');
     } else {
-      navigate('/');
+      // Return to the page that sent them to login, if any
+      const from = (location.state as { from?: string } | null)?.from;
+      navigate(from && from !== '/login' && from !== '/register' ? from : '/');
     }
 
     // Show RAG feature promotion popup for non-Premium/MAX users
     checkAndShowRagPopup(userData);
-  }, [refreshUserData, navigate, checkAndShowRagPopup]);
+  }, [refreshUserData, navigate, checkAndShowRagPopup, location.state]);
 
   const handleUserSetupComplete = useCallback((updatedUser: User) => {
     setUser(updatedUser);
@@ -381,18 +400,23 @@ const AppContent: React.FC = () => {
 
   // Initial user data refresh on app start (only once)
   useEffect(() => {
-    refreshUserData().then(userData => {
-      if (userData) {
-        // Check if user needs to complete setup
-        if (!userData.branchCode) {
-          navigate('/user-setup');
-        } else {
-          navigate('/');
+    let cancelled = false;
+    (async () => {
+      try {
+        const userData = await refreshUserData();
+        if (cancelled) return;
+        if (userData && !userData.branchCode) {
+          // Incomplete profile — force setup; otherwise stay on the current URL
+          navigate('/user-setup', { replace: true });
         }
-        // Show RAG feature popup for returning sessions / Google login
-        checkAndShowRagPopup(userData);
+        if (userData) {
+          checkAndShowRagPopup(userData);
+        }
+      } finally {
+        if (!cancelled) setAuthLoading(false);
       }
-    });
+    })();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run only once on mount
 
@@ -893,13 +917,13 @@ const AppContent: React.FC = () => {
 
         {/* Protected Routes */}
         <Route path="/user-setup" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <UserSetupScreen user={user!} onSetupComplete={handleUserSetupComplete} onLogout={handleLogout} />
           </ProtectedRoute>
         } />
 
         <Route path="/" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <ModeSelectionScreen
                 userName={user?.name || ''}
@@ -923,7 +947,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/tests" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <TestListScreen
                 user={user!}
@@ -938,7 +962,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/tests/:testId" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <TestDetailWrapper user={user!} onBack={() => navigate('/tests')} />
             </AppLayout>
@@ -946,7 +970,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/tests/:testId/attempt/:attemptId" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <AttemptDetailWrapper user={user!} />
             </AppLayout>
@@ -954,7 +978,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/knowledge-base" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <KnowledgeBaseScreen
                 bases={knowledgeBases}
@@ -972,7 +996,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/upload" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <FileUpload onSaveNewBase={handleSaveNewBase} onBack={() => navigate('/knowledge-base')} />
             </AppLayout>
@@ -980,7 +1004,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/menu" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <MainMenu onModeSelect={handleModeSelect} onReset={() => navigate('/knowledge-base')} />
             </AppLayout>
@@ -988,7 +1012,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/setup" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               {quizMode ? (
                 <SetupScreen mode={quizMode} allQuestions={allQuestions} onStartQuiz={handleStartQuiz} onBack={() => navigate('/')} />
@@ -998,7 +1022,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/quiz" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               {quizSettings && activeQuizQuestions.length > 0 && quizMode ? (
                 <QuizScreen
@@ -1017,7 +1041,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/results" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <ResultsScreen
                 questions={activeQuizQuestions}
@@ -1031,7 +1055,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/history" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <QuizHistoryScreen attempts={quizAttempts} onBack={() => navigate('/')} />
             </AppLayout>
@@ -1039,7 +1063,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/admin" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <AdminDashboard userEmail={user?.email || user?.username || ''} onBack={() => navigate('/')} knowledgeBases={knowledgeBases} />
             </AppLayout>
@@ -1047,7 +1071,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/study-plan/setup" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               {selectedKnowledgeBase ? (
                 <StudyPlanSetupScreen
@@ -1061,7 +1085,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/study-plan/list" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               {selectedKnowledgeBase ? (
                 <StudyPlanListScreen
@@ -1079,7 +1103,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/study-plan/overview" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               {currentStudyPlan ? (
                 <StudyPlanOverviewScreen
@@ -1097,7 +1121,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/study-plan/daily" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               {currentStudyPlan ? (
                 <DailyStudy
@@ -1114,7 +1138,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/study-plan/review" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               {currentStudyPlan ? (
                 <SmartReview
@@ -1131,7 +1155,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/quick-search" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <QuickSearchScreen
                 knowledgeBases={knowledgeBases}
@@ -1145,7 +1169,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/premium-intro" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <PremiumIntroScreen
                 onLiveCameraStart={() => navigate('/live-camera')}
@@ -1156,7 +1180,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/live-camera" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <LiveCameraSearch
                 knowledgeBases={knowledgeBases}
@@ -1169,7 +1193,7 @@ const AppContent: React.FC = () => {
         } />
 
         <Route path="/premium-plans" element={
-          <ProtectedRoute user={user}>
+          <ProtectedRoute user={user} authLoading={authLoading}>
             <AppLayout user={user} onLogout={handleLogout} onGoToPremiumPlans={() => navigate('/premium-plans')}>
               <PremiumPlansScreen
                 user={user}
