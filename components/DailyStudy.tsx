@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { CheckCircle, XCircle, Star, X } from 'lucide-react';
 import { StudyPlan, DifficultyLevel } from '../types';
 import { useStudyPlanStore } from '../src/hooks/useStudyPlanStore';
+import OptionSelectIndicator from './OptionSelectIndicator';
 
 export interface DailyStudyProps {
   studyPlan: StudyPlan;
@@ -179,6 +180,7 @@ const DailyStudy: React.FC<DailyStudyProps> = ({ studyPlan: initialPlan, current
           <div className="space-y-1.5 sm:space-y-2">
             {q.options.map((opt: string, optIdx: number) => {
               const idStr = String(optIdx);
+              const isMulti = q.correctAnswerIndex < 0;
               const sel = selected !== null && (
                 parseInt(selected, 10) < 0 
                   ? (Math.abs(parseInt(selected, 10)) & (1 << optIdx)) !== 0
@@ -193,13 +195,17 @@ const DailyStudy: React.FC<DailyStudyProps> = ({ studyPlan: initialPlan, current
               return (
                 <button
                   key={idStr}
+                  type="button"
+                  role={isMulti ? 'checkbox' : 'radio'}
+                  aria-checked={sel}
                   onClick={() => handleSelect(idStr)}
                   disabled={revealed}
-                  className={`w-full text-left border rounded-lg px-2.5 sm:px-3 py-2.5 flex justify-between items-center transition text-sm sm:text-base ${correct ? 'border-green-500 bg-green-50' : ''
+                  className={`w-full text-left border rounded-lg px-2.5 sm:px-3 py-2.5 flex items-center transition text-sm sm:text-base ${correct ? 'border-green-500 bg-green-50' : ''
                     }${wrongSel ? 'border-red-500 bg-red-50' : ''}${!revealed && sel ? 'border-blue-500 bg-blue-50' : ''
                     }${!revealed && !sel ? 'border-gray-200 hover:bg-gray-50' : ''}`}
                 >
-                  <span className="leading-relaxed">{opt}</span>
+                  <OptionSelectIndicator index={optIdx} isMulti={isMulti} selected={sel} />
+                  <span className="leading-relaxed flex-1">{opt}</span>
                   {correct && <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5 text-green-600 flex-shrink-0 ml-2" />}
                   {wrongSel && <XCircle className="w-4 h-4 sm:w-5 sm:h-5 text-red-600 flex-shrink-0 ml-2" />}
                 </button>
@@ -225,7 +231,7 @@ const DailyStudy: React.FC<DailyStudyProps> = ({ studyPlan: initialPlan, current
                 <span className="text-red-600 font-medium">❌ Chưa đúng</span>
               )
             ) : (
-              'Chọn đáp án của bạn'
+              q.correctAnswerIndex < 0 ? 'Chọn tất cả đáp án đúng (checkbox)' : 'Chọn đáp án của bạn'
             )}
           </div>
           {!ratingMode && (

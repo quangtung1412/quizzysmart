@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Question, UserAnswer } from '../types';
 import { api, getUserIdentifier } from '../src/api';
+import OptionSelectIndicator from './OptionSelectIndicator';
 
 interface ResultsScreenProps {
   questions: Question[];
@@ -224,9 +225,16 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({ questions, userAnswers, a
 
                       return (
                         <div key={optIndex} className={optionClass}>
-                          <span>{String.fromCharCode(65 + optIndex)}. {option}</span>
+                          <span className="flex items-center min-w-0">
+                            <OptionSelectIndicator
+                              index={optIndex}
+                              isMulti={q.correctAnswerIndex < 0}
+                              selected={isSelected || isCorrect}
+                            />
+                            <span>{option}</span>
+                          </span>
                           {statusText && (
-                            <span className="text-xs font-bold">{statusText}</span>
+                            <span className="text-xs font-bold flex-shrink-0 ml-2">{statusText}</span>
                           )}
                         </div>
                       )

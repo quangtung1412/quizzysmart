@@ -150,7 +150,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
         console.log('Correct index for row', index + 2, 'is', correctIdxRaw);
 
         if (!isValidCorrectAnswer(correctIdxRaw, options.length)) {
-          console.warn(`Bỏ qua dòng ${index + 2} vì đáp án đúng "${row[6]}" không hợp lệ (phải là các đáp án A-D hoặc 1-4 có trong các đáp án có sẵn).`);
+          console.warn(`Bỏ qua dòng ${index + 2} vì đáp án đúng "${row[6]}" không hợp lệ (một đáp án: A-D/1-4; nhiều đáp án: 1,2,4 hoặc A,B,D).`);
           return null;
         }
 
@@ -235,7 +235,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
       </button>
       <h2 className="text-2xl font-semibold text-slate-700 mb-4">Tạo cơ sở kiến thức mới</h2>
       <p className="text-slate-500 mb-6 max-w-md">
-        Tải lên file Excel (.xlsx, .xls). Cấu trúc 8 cột: STT, Câu hỏi, Đáp án 1, Đáp án 2, Đáp án 3, Đáp án 4, Đáp án đúng (1-4 hoặc A-D), Trích dẫn.
+        Tải lên file Excel (.xlsx, .xls). Cấu trúc 8 cột: STT, Câu hỏi, Đáp án 1, Đáp án 2, Đáp án 3, Đáp án 4, Đáp án đúng (một đáp án: 1–4 hoặc A–D; nhiều đáp án: 1,2,4 hoặc A,B,D), Trích dẫn.
       </p>
 
       <label htmlFor="file-upload" className="w-full max-w-sm cursor-pointer bg-slate-50 border-2 border-dashed border-slate-300 rounded-lg p-8 hover:border-sky-500 hover:bg-sky-50 transition-colors">

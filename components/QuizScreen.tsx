@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Question, QuizSettings, QuizMode, UserAnswer } from '../types';
+import OptionSelectIndicator from './OptionSelectIndicator';
 
 interface QuizScreenProps {
   questions: Question[];
@@ -288,19 +289,31 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
           )}
         </p>
         <div className="space-y-1.5 sm:space-y-2">
-          {currentQuestion.options.map((option, index) => (
-            <button
-              key={index}
-              onClick={() => handleAnswerSelect(index)}
-              className={getOptionClasses(index)}
-              disabled={mode === QuizMode.Study && showFeedback}
-            >
-              <span className="flex-shrink-0 h-5 w-5 sm:h-6 sm:w-6 rounded-full border-2 border-slate-400 flex items-center justify-center mr-2 sm:mr-3 font-bold text-xs sm:text-sm">
-                {String.fromCharCode(65 + index)}
-              </span>
-              <span className="text-sm sm:text-base text-left leading-relaxed">{option}</span>
-            </button>
-          ))}
+          {currentQuestion.options.map((option, index) => {
+            const isMulti = currentQuestion.correctAnswerIndex < 0;
+            const selectedIndex = currentAnswer?.selectedOptionIndex;
+            const isSelected =
+              selectedIndex !== null &&
+              selectedIndex !== undefined &&
+              (selectedIndex < 0
+                ? (Math.abs(selectedIndex) & (1 << index)) !== 0
+                : selectedIndex === index);
+
+            return (
+              <button
+                key={index}
+                type="button"
+                role={isMulti ? 'checkbox' : 'radio'}
+                aria-checked={isSelected}
+                onClick={() => handleAnswerSelect(index)}
+                className={getOptionClasses(index)}
+                disabled={mode === QuizMode.Study && showFeedback}
+              >
+                <OptionSelectIndicator index={index} isMulti={isMulti} selected={isSelected} />
+                <span className="text-sm sm:text-base text-left leading-relaxed">{option}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 

@@ -30,7 +30,7 @@ Columns (row 1 header optional):
 4. Đáp án B
 5. (Tùy chọn) Đáp án C
 6. (Tùy chọn) Đáp án D
-7. Đáp án đúng (1-4 hoặc A-D) — số/letter phải nằm trong phạm vi số đáp án thực tế (2–4)
+7. Đáp án đúng — một đáp án: `1-4` hoặc `A-D`; nhiều đáp án đúng: `1,2,4` hoặc `A,B,D` (phải nằm trong phạm vi số đáp án thực tế)
 8. Nguồn (optional)
 9. Phân loại (optional)
 

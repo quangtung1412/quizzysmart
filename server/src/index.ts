@@ -1699,7 +1699,7 @@ app.post('/api/admin/knowledge-bases', async (req: Request, res: Response) => {
         create: questions.map((q: any) => ({
           text: q.question,
           options: JSON.stringify(q.options || []),
-          correctAnswerIdx: q.correctAnswerIndex || 0,
+          correctAnswerIdx: q.correctAnswerIndex ?? 0,
           source: q.source || '',
           category: q.category || ''
         }))

@@ -2,7 +2,8 @@ export interface Question {
   id: string; // use string (uuid) to avoid collisions
   question: string;
   options: string[];
-  correctAnswerIndex: number; // 0..options.length-1
+  /** Single: 0..n-1. Multi-correct: negative bitmask of 0-based option indices (e.g. Excel "1,2,4" → -11). */
+  correctAnswerIndex: number;
   source: string;
   category: string;
 }

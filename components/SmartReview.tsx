@@ -5,6 +5,7 @@ import { useStudyPlanStore } from '../src/hooks/useStudyPlanStore';
 import { api } from '../src/api';
 import ProgressBars from './ProgressBars';
 import { calculateStudyProgress } from '../src/utils/progress';
+import OptionSelectIndicator from './OptionSelectIndicator';
 
 export interface SmartReviewProps {
   studyPlan: StudyPlan;
@@ -616,19 +617,30 @@ const SmartReview: React.FC<SmartReviewProps> = ({ studyPlan: initialPlan, curre
           </p>
 
           <div className="space-y-2 sm:space-y-3">
-            {currentQuestion.options.map((option, idx) => (
-              <button
-                key={idx}
-                onClick={() => handleSelect(idx.toString())}
-                disabled={revealed}
-                className={getOptionClasses(idx)}
-              >
-                <span className="flex-shrink-0 h-6 w-6 sm:h-7 sm:w-7 rounded-full border-2 border-slate-400 flex items-center justify-center mr-3 sm:mr-4 font-bold text-xs sm:text-sm">
-                  {String.fromCharCode(65 + idx)}
-                </span>
-                <span className="text-sm sm:text-base text-left leading-relaxed">{option}</span>
-              </button>
-            ))}
+            {currentQuestion.options.map((option, idx) => {
+              const isMulti = currentQuestion.correctAnswerIndex < 0;
+              const selectedVal = selected !== null ? parseInt(selected, 10) : null;
+              const isSelected =
+                selectedVal !== null &&
+                (selectedVal < 0
+                  ? (Math.abs(selectedVal) & (1 << idx)) !== 0
+                  : selectedVal === idx);
+
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  role={isMulti ? 'checkbox' : 'radio'}
+                  aria-checked={isSelected}
+                  onClick={() => handleSelect(idx.toString())}
+                  disabled={revealed}
+                  className={getOptionClasses(idx)}
+                >
+                  <OptionSelectIndicator index={idx} isMulti={isMulti} selected={isSelected} size="md" />
+                  <span className="text-sm sm:text-base text-left leading-relaxed">{option}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
