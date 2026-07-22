@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { api } from '../src/api';
+import React, { useState, useEffect, useCallback } from 'react';
+import { api, getUserIdentifier } from '../src/api';
 import { AppUser } from '../types';
 
 interface Test {
@@ -38,15 +38,63 @@ const TestListScreen: React.FC<TestListScreenProps> = ({
   onViewTestDetails,
   onBack
 }) => {
-  console.log(user);
   const [tests, setTests] = useState<Test[]>([]);
   const [filteredTests, setFilteredTests] = useState<Test[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const userIdentifier = getUserIdentifier(user);
+
+  const loadTests = useCallback(async (showSpinner = true) => {
+    try {
+      if (showSpinner) setLoading(true);
+      // Session auth preferred; identifier supports username-only accounts
+      const assignedTests = await api.getUserTests(userIdentifier || undefined);
+      const activeTests = assignedTests.filter((test: Test) => test.isActive);
+
+      const testsWithStats = await Promise.all(
+        activeTests.map(async (test: Test) => {
+          try {
+            const stats = await api.getTestStatistics(test.id, userIdentifier);
+            return {
+              ...test,
+              bestScore: stats.bestScore,
+              fastestTime: stats.fastestTime,
+              averageScore: stats.averageScore
+            };
+          } catch (error) {
+            console.error(`Failed to load stats for test ${test.id}:`, error);
+            return test;
+          }
+        })
+      );
+
+      setTests(testsWithStats);
+    } catch (error) {
+      console.error('Failed to load tests:', error);
+    } finally {
+      if (showSpinner) setLoading(false);
+    }
+  }, [userIdentifier]);
 
   useEffect(() => {
-    loadTests();
-  }, []);
+    loadTests(true);
+  }, [loadTests]);
+
+  // Refetch when user returns to the tab so newly assigned tests appear without hard reload
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        loadTests(false);
+      }
+    };
+    const onFocus = () => loadTests(false);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [loadTests]);
 
   useEffect(() => {
     // Filter tests based on search query
@@ -60,40 +108,6 @@ const TestListScreen: React.FC<TestListScreenProps> = ({
       setFilteredTests(filtered);
     }
   }, [tests, searchQuery]);
-
-  const loadTests = async () => {
-    try {
-      setLoading(true);
-      // Get assigned tests for the user
-      const assignedTests = await api.getUserTests(user.email);
-      // Filter only active tests
-      const activeTests = assignedTests.filter((test: Test) => test.isActive);
-
-      // Load statistics for each test
-      const testsWithStats = await Promise.all(
-        activeTests.map(async (test: Test) => {
-          try {
-            const stats = await api.getTestStatistics(test.id, user.email);
-            return {
-              ...test,
-              bestScore: stats.bestScore,
-              fastestTime: stats.fastestTime,
-              averageScore: stats.averageScore
-            };
-          } catch (error) {
-            console.error(`Failed to load stats for test ${test.id}:`, error);
-            return test; // Return test without stats if stats fail to load
-          }
-        })
-      );
-
-      setTests(testsWithStats);
-    } catch (error) {
-      console.error('Failed to load tests:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const isTestAvailable = (test: Test) => {
     const now = new Date();

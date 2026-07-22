@@ -36,8 +36,9 @@ export interface User {
 export interface AppUser {
   id?: string;
   name: string;
-  email: string;
-  picture: string;
+  email?: string;
+  username?: string;
+  picture?: string;
   role?: UserRole;
 }
 

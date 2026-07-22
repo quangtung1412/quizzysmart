@@ -205,8 +205,43 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Prevent browsers/proxies from caching API responses (stale lists after create/assign)
+app.use('/api', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  next();
+});
+
 // Add request logging middleware
 app.use(requestLogger);
+
+/** Resolve user by email or username (admin-created accounts may have null email). */
+async function findUserByEmailOrUsername(identifier: string) {
+  const value = String(identifier || '').trim();
+  if (!value || value === 'null' || value === 'undefined') return null;
+
+  let user = await prisma.user.findUnique({ where: { email: value } });
+  if (!user) {
+    user = await prisma.user.findUnique({ where: { username: value } });
+  }
+  return user;
+}
+
+/** Prefer session user, then email/username identifier from query/body. */
+async function resolveRequestUser(req: Request, identifier?: string | null) {
+  if (req.user && (req.user as any).id) {
+    return prisma.user.findUnique({ where: { id: (req.user as any).id } });
+  }
+  if (identifier) {
+    return findUserByEmailOrUsername(identifier);
+  }
+  return null;
+}
+
+function requireAuth(req: Request, res: Response) {
+  if (!req.user) { res.status(401).json({ error: 'Unauthenticated' }); return null; }
+  return req.user as any;
+}
 
 // Add LocalStrategy for username/password
 passport.use(new LocalStrategy(
@@ -926,10 +961,33 @@ app.post('/api/users/decrement-quick-search-quota', async (req: Request, res: Re
   }
 });
 
+// Assigned tests for normal user (session based) — must be before /api/tests/:id
+app.get('/api/tests/assigned', async (req: Request, res: Response) => {
+  const u = requireAuth(req, res); if (!u) return;
+  const assignments = await (prisma as any).testAssignment.findMany({ where: { userId: u.id }, include: { test: true } });
+  const result: any[] = [];
+  for (const a of assignments) {
+    const test = a.test;
+    const questionOrder: string[] = JSON.parse(test.questionOrder);
+    const questions = await prisma.question.findMany({ where: { id: { in: questionOrder } } });
+    const map = new Map(questions.map(q => [q.id, q]));
+    const ordered = questionOrder.map(qid => map.get(qid)).filter(Boolean).map(q => ({
+      id: q!.id,
+      question: q!.text,
+      options: JSON.parse(q!.options),
+      correctAnswerIndex: q!.correctAnswerIdx,
+      source: q!.source || '',
+      category: q!.category || ''
+    }));
+    result.push({ id: test.id, name: test.name, knowledgeBaseId: test.knowledgeBaseId, questionCount: ordered.length, questions: ordered });
+  }
+  res.json(result);
+});
+
 // Tests assigned to user
 app.get('/api/tests', async (req: Request, res: Response) => {
-  const email = String(req.query.email || '');
-  const user = await prisma.user.findUnique({ where: { email } });
+  const identifier = String(req.query.email || req.query.username || '');
+  const user = await resolveRequestUser(req, identifier);
   if (!user) return res.json([]);
 
   // Get tests assigned to this user
@@ -984,7 +1042,8 @@ app.get('/api/tests', async (req: Request, res: Response) => {
       assignedUsers: test.assignments.map(a => ({
         id: a.user.id,
         name: a.user.name,
-        email: a.user.email
+        email: a.user.email,
+        username: a.user.username
       }))
     };
   });
@@ -995,12 +1054,12 @@ app.get('/api/tests', async (req: Request, res: Response) => {
 // Get specific test for taking
 app.get('/api/tests/:id', async (req: Request, res: Response) => {
   const testId = req.params.id;
-  const email = String(req.query.email || '');
+  const email = String(req.query.email || req.query.username || '');
   const viewOnly = req.query.viewOnly === 'true'; // Check if this is for viewing only
 
   console.log(`[DEBUG] GET /api/tests/${testId} for email: ${email}, viewOnly: ${viewOnly}`);
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await resolveRequestUser(req, email);
   if (!user) {
     console.log(`[DEBUG] User not found: ${email}`);
     return res.status(404).json({ error: 'User not found' });
@@ -1103,9 +1162,9 @@ app.get('/api/tests/:id', async (req: Request, res: Response) => {
 // Get test statistics for a specific user
 app.get('/api/tests/:id/statistics', async (req: Request, res: Response) => {
   const testId = req.params.id;
-  const email = String(req.query.email || '');
+  const email = String(req.query.email || req.query.username || '');
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await resolveRequestUser(req, email);
   if (!user) {
     return res.status(404).json({ error: 'User not found' });
   }
@@ -1184,9 +1243,9 @@ app.get('/api/tests/:id/statistics', async (req: Request, res: Response) => {
 // Get detailed attempts for a specific test and user
 app.get('/api/tests/:id/attempts', async (req: Request, res: Response) => {
   const testId = req.params.id;
-  const email = String(req.query.email || '');
+  const email = String(req.query.email || req.query.username || '');
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await resolveRequestUser(req, email);
   if (!user) {
     return res.status(404).json({ error: 'User not found' });
   }
@@ -1228,10 +1287,14 @@ app.get('/api/tests/:id/attempts', async (req: Request, res: Response) => {
   res.json(formattedAttempts);
 });
 
-// Assigned tests for normal user (session based)
 app.get('/api/attempts', async (req: Request, res: Response) => {
-  const email = String(req.query.email || '');
-  const user = await prisma.user.findUnique({ where: { email }, include: { attempts: { include: { answers: true, knowledgeBase: true } } } });
+  const email = String(req.query.email || req.query.username || '');
+  const resolved = await resolveRequestUser(req, email);
+  if (!resolved) return res.json([]);
+  const user = await prisma.user.findUnique({
+    where: { id: resolved.id },
+    include: { attempts: { include: { answers: true, knowledgeBase: true } } }
+  });
   if (!user) return res.json([]);
   res.json(user.attempts.map(a => ({
     id: a.id,
@@ -1248,8 +1311,8 @@ app.get('/api/attempts', async (req: Request, res: Response) => {
 
 app.post('/api/attempts', async (req: Request, res: Response) => {
   const { email, attempt } = req.body;
-  if (!email || !attempt) return res.status(400).json({ error: 'Invalid' });
-  let user = await prisma.user.findUnique({ where: { email } });
+  if (!attempt) return res.status(400).json({ error: 'Invalid' });
+  let user = await resolveRequestUser(req, email);
   if (!user) return res.status(400).json({ error: 'User not found' });
 
   let kb = null;
@@ -1351,9 +1414,9 @@ app.patch('/api/attempts/:id', async (req: Request, res: Response) => {
 // Get quiz results with correct answers (after completion)
 app.get('/api/attempts/:id/results', async (req: Request, res: Response) => {
   const attemptId = req.params.id;
-  const email = String(req.query.email || '');
+  const email = String(req.query.email || req.query.username || '');
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await resolveRequestUser(req, email);
   if (!user) {
     return res.status(404).json({ error: 'User not found' });
   }
@@ -1410,34 +1473,6 @@ app.get('/api/attempts/:id/results', async (req: Request, res: Response) => {
     startedAt: attempt.startedAt, // Include start time for duration calculation
     results
   });
-});
-
-// Assigned tests for normal user (session based)
-function requireAuth(req: Request, res: Response) {
-  if (!req.user) { res.status(401).json({ error: 'Unauthenticated' }); return null; }
-  return req.user as any;
-}
-
-app.get('/api/tests/assigned', async (req: Request, res: Response) => {
-  const u = requireAuth(req, res); if (!u) return;
-  const assignments = await (prisma as any).testAssignment.findMany({ where: { userId: u.id }, include: { test: true } });
-  const result: any[] = [];
-  for (const a of assignments) {
-    const test = a.test;
-    const questionOrder: string[] = JSON.parse(test.questionOrder);
-    const questions = await prisma.question.findMany({ where: { id: { in: questionOrder } } });
-    const map = new Map(questions.map(q => [q.id, q]));
-    const ordered = questionOrder.map(qid => map.get(qid)).filter(Boolean).map(q => ({
-      id: q!.id,
-      question: q!.text,
-      options: JSON.parse(q!.options),
-      correctAnswerIndex: q!.correctAnswerIdx,
-      source: q!.source || '',
-      category: q!.category || ''
-    }));
-    result.push({ id: test.id, name: test.name, knowledgeBaseId: test.knowledgeBaseId, questionCount: ordered.length, questions: ordered });
-  }
-  res.json(result);
 });
 
 // --- Admin utilities (very light auth check via role) ---
@@ -1766,18 +1801,26 @@ app.post('/api/admin/tests', async (req: Request, res: Response) => {
 
     // Assign test to users if specified
     if (assignedUsers.length > 0) {
-      const assignments = assignedUsers.map((userId: string) => ({
-        testId: test.id,
-        userId
-      }));
+      const uniqueUserIds = [...new Set(assignedUsers.filter(Boolean))] as string[];
+      const existingUsers = await prisma.user.findMany({
+        where: { id: { in: uniqueUserIds } },
+        select: { id: true }
+      });
+      const validUserIds = new Set(existingUsers.map(u => u.id));
+      const assignments = uniqueUserIds
+        .filter(userId => validUserIds.has(userId))
+        .map((userId: string) => ({ testId: test.id, userId }));
 
-      for (const assignment of assignments) {
-        try {
-          await (prisma as any).testAssignment.create({ data: assignment });
-        } catch (error) {
-          // Ignore duplicate assignments
-          console.log('Duplicate assignment ignored:', assignment);
-        }
+      if (assignments.length > 0) {
+        await (prisma as any).testAssignment.createMany({
+          data: assignments,
+          skipDuplicates: true
+        });
+      }
+
+      const skipped = uniqueUserIds.length - assignments.length;
+      if (skipped > 0) {
+        console.warn(`[Create Test] Skipped ${skipped} invalid user id(s) when assigning test ${test.id}`);
       }
     }
 
@@ -1826,7 +1869,8 @@ app.get('/api/admin/tests', async (req: Request, res: Response) => {
     assignedUsers: t.assignments.map((a: any) => ({
       id: a.user.id,
       name: a.user.name,
-      email: a.user.email
+      email: a.user.email,
+      username: a.user.username
     }))
   })));
 });
@@ -1870,17 +1914,21 @@ app.put('/api/admin/tests/:id', async (req: Request, res: Response) => {
     await (prisma as any).testAssignment.deleteMany({ where: { testId } });
 
     if (assignedUsers.length > 0) {
-      const assignments = assignedUsers.map((userId: string) => ({
-        testId,
-        userId
-      }));
+      const uniqueUserIds = [...new Set(assignedUsers.filter(Boolean))] as string[];
+      const existingUsers = await prisma.user.findMany({
+        where: { id: { in: uniqueUserIds } },
+        select: { id: true }
+      });
+      const validUserIds = new Set(existingUsers.map(u => u.id));
+      const assignments = uniqueUserIds
+        .filter(userId => validUserIds.has(userId))
+        .map((userId: string) => ({ testId, userId }));
 
-      for (const assignment of assignments) {
-        try {
-          await (prisma as any).testAssignment.create({ data: assignment });
-        } catch (error) {
-          console.log('Duplicate assignment ignored:', assignment);
-        }
+      if (assignments.length > 0) {
+        await (prisma as any).testAssignment.createMany({
+          data: assignments,
+          skipDuplicates: true
+        });
       }
     }
 

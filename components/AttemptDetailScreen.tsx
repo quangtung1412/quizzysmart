@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../src/api';
+import { api, getUserIdentifier } from '../src/api';
 import { AppUser, Question, UserAnswer } from '../types';
 
 interface AttemptDetailScreenProps {
@@ -32,7 +32,7 @@ const AttemptDetailScreen: React.FC<AttemptDetailScreenProps> = ({
       setLoading(true);
       setError(null);
       
-      const apiResults = await api.getQuizResults(attemptId, user.email);
+      const apiResults = await api.getQuizResults(attemptId, getUserIdentifier(user));
       setResults(apiResults.results);
       setAttemptInfo({
         id: apiResults.attemptId,

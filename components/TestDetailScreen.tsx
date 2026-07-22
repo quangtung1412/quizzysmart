@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../src/api';
+import { api, getUserIdentifier } from '../src/api';
 import { AppUser, UserAnswer, Question } from '../types';
 
 interface TestAttempt {
@@ -45,12 +45,13 @@ const TestDetailScreen: React.FC<TestDetailScreenProps> = ({
       setLoading(true);
       setError(null);
       
+      const identifier = getUserIdentifier(user);
       // Load test attempts
-      const attemptsData = await api.getTestAttempts(testId, user.email);
+      const attemptsData = await api.getTestAttempts(testId, identifier);
       setAttempts(attemptsData);
       
       // Load basic test info (view only, skip attempt limits)
-      const testData = await api.getTestById(testId, user.email, true);
+      const testData = await api.getTestById(testId, identifier, true);
       setTestInfo(testData);
       
     } catch (err: any) {

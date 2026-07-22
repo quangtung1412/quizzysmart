@@ -146,14 +146,14 @@ const TestDetail: React.FC<TestDetailProps> = ({ testId, onBack }) => {
             <div key={user.id} className="flex items-center space-x-3 p-3 bg-slate-50 rounded">
               <div className="w-8 h-8 bg-sky-100 rounded-full flex items-center justify-center">
                 <span className="text-sm font-medium text-sky-600">
-                  {user.name ? user.name.charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()}
+                  {(user.name || user.email || user.username || '?').charAt(0).toUpperCase()}
                 </span>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-slate-900 truncate">
-                  {user.name || user.email}
+                  {user.name || user.email || user.username || 'Unknown'}
                 </div>
-                <div className="text-xs text-slate-500 truncate">{user.email}</div>
+                <div className="text-xs text-slate-500 truncate">{user.email || user.username || '-'}</div>
               </div>
             </div>
           ))}

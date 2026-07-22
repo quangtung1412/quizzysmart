@@ -1,12 +1,12 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Question, UserAnswer } from '../types';
-import { api } from '../src/api';
+import { api, getUserIdentifier } from '../src/api';
 
 interface ResultsScreenProps {
   questions: Question[];
   userAnswers: UserAnswer[];
   attemptId?: string;
-  user?: { email: string; name: string };
+  user?: { email?: string; username?: string; name: string };
   onRestart: () => void;
 }
 
@@ -44,7 +44,7 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({ questions, userAnswers, a
       setError(null);
 
       try {
-        const apiResults = await api.getQuizResults(attemptId, user.email);
+        const apiResults = await api.getQuizResults(attemptId, getUserIdentifier(user));
         setResultsWithCorrectAnswers(apiResults.results);
         setServerScore(apiResults.score); // Use server-calculated score
         setCompletedAt(apiResults.completedAt); // Get completion time

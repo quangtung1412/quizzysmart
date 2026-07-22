@@ -73,7 +73,8 @@ interface KnowledgeSource {
 interface AssignedUser {
   id: string;
   name: string;
-  email: string;
+  email?: string | null;
+  username?: string | null;
 }
 
 interface KnowledgeBase {
@@ -86,7 +87,9 @@ interface KnowledgeBase {
 interface User {
   id: string;
   name: string;
-  email: string;
+  email?: string | null;
+  username?: string | null;
+  role?: string;
 }
 
 const TestManagement: React.FC = () => {
@@ -198,10 +201,18 @@ const TestManagement: React.FC = () => {
     }));
   };
 
-  const filteredUsers = users.filter(user =>
-    user.name?.toLowerCase().includes(userSearch.toLowerCase()) ||
-    user.email.toLowerCase().includes(userSearch.toLowerCase())
-  );
+  const getUserLabel = (user: { name?: string | null; email?: string | null; username?: string | null }) =>
+    user.name || user.email || user.username || 'Unknown';
+
+  const filteredUsers = users.filter(user => {
+    const q = userSearch.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      (user.name?.toLowerCase().includes(q) ?? false) ||
+      (user.email?.toLowerCase().includes(q) ?? false) ||
+      (user.username?.toLowerCase().includes(q) ?? false)
+    );
+  });
 
   const getTotalPercentage = () => {
     return formData.knowledgeSources.reduce((sum, ks) => sum + (ks.percentage || 0), 0);
@@ -663,7 +674,7 @@ const TestManagement: React.FC = () => {
                         return (
                           <Capsule 
                             key={userId}
-                            text={user.name || user.email}
+                            text={getUserLabel(user)}
                             onRemove={() => toggleUserAssignment(userId)}
                           />
                         );
@@ -720,8 +731,8 @@ const TestManagement: React.FC = () => {
                             onChange={() => toggleUserAssignment(user.id)}
                           />
                           <div className="flex-1">
-                            <div className="text-sm font-medium">{user.name || user.email}</div>
-                            <div className="text-xs text-slate-500">{user.email}</div>
+                            <div className="text-sm font-medium">{getUserLabel(user)}</div>
+                            <div className="text-xs text-slate-500">{user.email || user.username || '-'}</div>
                             {user.role === 'admin' && (
                               <span className="inline-block px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded-full">Admin</span>
                             )}
@@ -965,7 +976,7 @@ const TestManagement: React.FC = () => {
                         return (
                           <Capsule 
                             key={userId}
-                            text={user.name || user.email}
+                            text={getUserLabel(user)}
                             onRemove={() => toggleUserAssignment(userId)}
                           />
                         );
@@ -1021,8 +1032,8 @@ const TestManagement: React.FC = () => {
                             onChange={() => toggleUserAssignment(user.id)}
                           />
                           <div className="flex-1">
-                            <div className="text-sm font-medium">{user.name || user.email}</div>
-                            <div className="text-xs text-slate-500">{user.email}</div>
+                            <div className="text-sm font-medium">{getUserLabel(user)}</div>
+                            <div className="text-xs text-slate-500">{user.email || user.username || '-'}</div>
                             {user.role === 'admin' && (
                               <span className="inline-block px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded-full">Admin</span>
                             )}

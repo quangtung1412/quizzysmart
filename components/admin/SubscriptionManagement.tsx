@@ -3,7 +3,7 @@ import { api } from '../../src/api';
 
 interface User {
     id: string;
-    email: string;
+    email?: string | null;
     username?: string;
     name: string;
     role: string;
@@ -181,10 +181,12 @@ const SubscriptionManagement: React.FC = () => {
 
     // Filter subscriptions
     const filteredSubscriptions = subscriptions.filter(sub => {
-        const matchesSearch = searchQuery.trim() === '' ||
-            sub.user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            sub.user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            sub.plan.name.toLowerCase().includes(searchQuery.toLowerCase());
+        const q = searchQuery.toLowerCase().trim();
+        const matchesSearch = q === '' ||
+            (sub.user.email?.toLowerCase().includes(q) ?? false) ||
+            (sub.user.username?.toLowerCase().includes(q) ?? false) ||
+            (sub.user.name?.toLowerCase().includes(q) ?? false) ||
+            (sub.plan.name?.toLowerCase().includes(q) ?? false);
 
         return matchesSearch;
     });
@@ -379,7 +381,7 @@ const SubscriptionManagement: React.FC = () => {
                                             <td className="px-4 py-3">
                                                 <div>
                                                     <div className="font-medium text-slate-900">{sub.user.name}</div>
-                                                    <div className="text-sm text-slate-500">{sub.user.email}</div>
+                                                    <div className="text-sm text-slate-500">{sub.user.email || sub.user.username || '-'}</div>
                                                 </div>
                                             </td>
                                             <td className="px-4 py-3">
@@ -471,7 +473,7 @@ const SubscriptionManagement: React.FC = () => {
                                     <option value="">Select user...</option>
                                     {users.map(user => (
                                         <option key={user.id} value={user.id}>
-                                            {user.name} ({user.email})
+                                            {user.name} ({user.email || user.username || user.id})
                                         </option>
                                     ))}
                                 </select>

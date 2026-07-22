@@ -35,10 +35,20 @@ declare global {
   }
 }
 
+/** Prefer email, fall back to username for accounts without email. */
+export function getUserIdentifier(user?: { email?: string | null; username?: string | null } | null): string {
+  return (user?.email || user?.username || '').trim();
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(API_BASE + path, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    cache: 'no-store',
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      ...(options.headers || {})
+    },
     ...options,
   });
   
@@ -84,25 +94,28 @@ export const api = {
   getBases: (email: string) => request<any[]>(`/api/bases?email=${encodeURIComponent(email)}`),
   createBase: (email: string, base: any) => request<any>('/api/bases', { method: 'POST', body: JSON.stringify({ email, base }) }),
   deleteBase: (id: string) => request<{ ok: boolean }>(`/api/bases/${id}`, { method: 'DELETE' }),
-  getUserTests: (email: string) => request<any[]>(`/api/tests?email=${encodeURIComponent(email)}`),
-  getTestById: (testId: string, email: string, viewOnly?: boolean) => {
-    const params = new URLSearchParams({ email });
+  getUserTests: (identifier?: string) => {
+    const params = identifier ? `?email=${encodeURIComponent(identifier)}` : '';
+    return request<any[]>(`/api/tests${params}`);
+  },
+  getTestById: (testId: string, identifier: string, viewOnly?: boolean) => {
+    const params = new URLSearchParams({ email: identifier });
     if (viewOnly) {
       params.append('viewOnly', 'true');
     }
     return request<any>(`/api/tests/${testId}?${params.toString()}`);
   },
-  getTestStatistics: (testId: string, email: string) => request<{
+  getTestStatistics: (testId: string, identifier: string) => request<{
     attempts: any[];
     bestScore: number | null;
     fastestTime: number | null; // in seconds
     averageScore: number | null;
-  }>(`/api/tests/${testId}/statistics?email=${encodeURIComponent(email)}`),
-  getTestAttempts: (testId: string, email: string) => request<any[]>(`/api/tests/${testId}/attempts?email=${encodeURIComponent(email)}`),
-  getAttempts: (email: string) => request<any[]>(`/api/attempts?email=${encodeURIComponent(email)}`),
-  createAttempt: (email: string, attempt: any) => request<{ id: string }>('/api/attempts', { method: 'POST', body: JSON.stringify({ email, attempt }) }),
+  }>(`/api/tests/${testId}/statistics?email=${encodeURIComponent(identifier)}`),
+  getTestAttempts: (testId: string, identifier: string) => request<any[]>(`/api/tests/${testId}/attempts?email=${encodeURIComponent(identifier)}`),
+  getAttempts: (identifier: string) => request<any[]>(`/api/attempts?email=${encodeURIComponent(identifier)}`),
+  createAttempt: (identifier: string, attempt: any) => request<{ id: string }>('/api/attempts', { method: 'POST', body: JSON.stringify({ email: identifier, attempt }) }),
   updateAttempt: (id: string, data: any) => request<{ id: string }>(`/api/attempts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  getQuizResults: (attemptId: string, email: string) => request<{ attemptId: string; score: number; completedAt: string; results: any[] }>(`/api/attempts/${attemptId}/results?email=${encodeURIComponent(email)}`),
+  getQuizResults: (attemptId: string, identifier: string) => request<{ attemptId: string; score: number; completedAt: string; results: any[] }>(`/api/attempts/${attemptId}/results?email=${encodeURIComponent(identifier)}`),
   // admin
   adminListUsers: () => request<any[]>(`/api/admin/users`),
   adminCreateUser: (userData: any) => request<any>(`/api/admin/users`, { method: 'POST', body: JSON.stringify(userData) }),
