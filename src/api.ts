@@ -41,15 +41,17 @@ export function getUserIdentifier(user?: { email?: string | null; username?: str
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const { headers: optionHeaders, ...restOptions } = options;
   const res = await fetch(API_BASE + path, {
+    ...restOptions,
+    // Always win over caller options — prevents cache/credentials bypass
     credentials: 'include',
     cache: 'no-store',
     headers: {
+      ...(optionHeaders || {}),
       'Content-Type': 'application/json',
       'Cache-Control': 'no-cache',
-      ...(options.headers || {})
     },
-    ...options,
   });
   
   if (!res.ok) {
