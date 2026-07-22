@@ -4,6 +4,8 @@ export interface Question {
   options: string[];
   /** Single: 0..n-1. Multi-correct: negative bitmask of 0-based option indices (e.g. Excel "1,2,4" → -11). */
   correctAnswerIndex: number;
+  /** Explicit multi flag for test mode when correctAnswerIndex is hidden from the client. */
+  isMultiSelect?: boolean;
   source: string;
   category: string;
 }
@@ -144,4 +146,13 @@ export function isCorrectAnswerIndex(correctAnswerIndex: number | undefined | nu
     return (mask & (1 << optionIndex)) !== 0;
   }
   return correctAnswerIndex === optionIndex;
+}
+
+/** True when the question allows selecting multiple options. Prefers explicit flag (test mode). */
+export function isMultiSelectQuestion(q: {
+  correctAnswerIndex?: number | null;
+  isMultiSelect?: boolean;
+}): boolean {
+  if (typeof q.isMultiSelect === 'boolean') return q.isMultiSelect;
+  return typeof q.correctAnswerIndex === 'number' && q.correctAnswerIndex < 0;
 }

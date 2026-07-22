@@ -456,11 +456,13 @@ const AppContent: React.FC = () => {
       const testData = await api.getTestById(testId, userEmail);
 
       // Convert test questions to our Question format
+      // correctAnswerIndex is hidden during the test; use isMultiSelect from server for UI
       const testQuestions: Question[] = testData.questions.map((q: any) => ({
         id: q.id,
         question: q.question,
         options: q.options,
-        correctAnswerIndex: -1, // We don't know the correct answer on client side
+        correctAnswerIndex: 0, // Placeholder — real answer is graded server-side
+        isMultiSelect: !!q.isMultiSelect,
         source: q.source || '',
         category: q.category || ''
       }));

@@ -1151,8 +1151,9 @@ app.get('/api/tests/:id', async (req: Request, res: Response) => {
       question: q!.text,
       options: JSON.parse(q!.options),
       source: q!.source || '',
-      category: q!.category || ''
-      // Note: We don't include correctAnswerIdx for security
+      category: q!.category || '',
+      // Do not send correctAnswerIdx. Expose only whether multi-select is allowed.
+      isMultiSelect: typeof q!.correctAnswerIdx === 'number' && q!.correctAnswerIdx < 0
     }))
   };
 

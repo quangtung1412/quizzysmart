@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Question, QuizSettings, QuizMode, UserAnswer } from '../types';
+import { Question, QuizSettings, QuizMode, UserAnswer, isMultiSelectQuestion } from '../types';
 import OptionSelectIndicator from './OptionSelectIndicator';
 
 interface QuizScreenProps {
@@ -62,7 +62,7 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
   const handleAnswerSelect = (optionIndex: number) => {
     if (mode === QuizMode.Study && showFeedback) return;
 
-    const isMultiSelect = currentQuestion.correctAnswerIndex < 0;
+    const isMultiSelect = isMultiSelectQuestion(currentQuestion);
     let newSelectedIdx: number | null = null;
 
     if (isMultiSelect) {
@@ -201,7 +201,7 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
 
   const renderRightButton = () => {
     if (mode === QuizMode.Study) {
-      const isMultiSelect = currentQuestion.correctAnswerIndex < 0;
+      const isMultiSelect = isMultiSelectQuestion(currentQuestion);
       if (isMultiSelect && !showFeedback) {
         const hasSelection = currentAnswer?.selectedOptionIndex !== null && currentAnswer?.selectedOptionIndex !== undefined;
         return (
@@ -282,7 +282,7 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
       <div className="mb-3 sm:mb-4">
         <p className="text-base sm:text-lg font-semibold text-slate-800 mb-3 sm:mb-4 leading-relaxed flex flex-wrap items-center gap-2">
           <span>{`Câu ${currentIndex + 1}: ${currentQuestion.question}`}</span>
-          {currentQuestion.correctAnswerIndex < 0 && (
+          {isMultiSelectQuestion(currentQuestion) && (
             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
               Chọn nhiều đáp án
             </span>
@@ -290,7 +290,7 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
         </p>
         <div className="space-y-1.5 sm:space-y-2">
           {currentQuestion.options.map((option, index) => {
-            const isMulti = currentQuestion.correctAnswerIndex < 0;
+            const isMulti = isMultiSelectQuestion(currentQuestion);
             const selectedIndex = currentAnswer?.selectedOptionIndex;
             const isSelected =
               selectedIndex !== null &&
