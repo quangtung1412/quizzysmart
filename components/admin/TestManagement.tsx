@@ -293,10 +293,23 @@ const TestManagement: React.FC = () => {
     return formData.knowledgeSources.reduce((sum, ks) => sum + (ks.percentage || 0), 0);
   };
 
+  const canSubmit = () => {
+    const assignedCount = resolveAssignedUserIds().length;
+    return (
+      formData.name.trim() !== '' &&
+      formData.questionCount > 0 &&
+      formData.timeLimit > 0 &&
+      formData.knowledgeSources.length > 0 &&
+      formData.knowledgeSources.every(ks => ks.knowledgeBaseId && (ks.percentage || 0) > 0) &&
+      Math.abs(getTotalPercentage() - 100) < 0.01 &&
+      assignedCount > 0
+    );
+  };
+
   const canSubmitBatch = () => {
     const assignedCount = resolveAssignedUserIds().length;
     return (
-      formData.name.trim() &&
+      formData.name.trim() !== '' &&
       formData.questionCount > 0 &&
       formData.timeLimit > 0 &&
       selectedBatchKbIds.length > 0 &&

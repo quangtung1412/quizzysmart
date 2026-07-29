@@ -93,3 +93,20 @@
 
 ### Ghi chu
 - Không có rủi ro phát sinh.
+
+## 2026-07-29 09:33:00 +07:00
+
+### Yeu cau
+- Sửa lỗi runtime `ReferenceError: canSubmit is not defined` tại `TestManagement.tsx:1053`.
+
+### Ket qua
+- Khôi phục hàm kiểm tra `canSubmit` (dành cho kiểm tra tính hợp lệ ở chế độ tạo/sửa đề thi đơn lẻ) song song với hàm `canSubmitBatch` trong `components/admin/TestManagement.tsx`.
+
+### Files tac dong
+- `components/admin/TestManagement.tsx`
+
+### Validation
+- Biên dịch lại ứng dụng (`npm run build`) thành công.
+
+### Ghi chu
+- Không có rủi ro phát sinh.
