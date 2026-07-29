@@ -33,3 +33,21 @@
 
 ### Ghi chu
 - Không có rủi ro phát sinh.
+
+## 2026-07-29 08:41:55 +07:00
+
+### Yeu cau
+- Fix lỗi API 500 khi xóa Cơ sở kiến thức (Knowledge Base) và Bài thi (Test) ở trang Quản trị.
+
+### Ket qua
+- Bổ sung hàm helper `deleteKnowledgeBaseCascade` và `deleteTestCascade` trong `server/src/index.ts`.
+- Xử lý xóa tuần tự các bảng phụ liên quan (`AttemptAnswer`, `QuestionProgress`, `StudyPlan`, `Attempt`, `TestAssignment`) trước khi xóa bản ghi chính (`KnowledgeBase`, `Test`) để tránh vi phạm rào cản Khóa ngoại (Foreign Key Constraint) của MySQL làm phát sinh lỗi HTTP 500.
+
+### Files tac dong
+- `server/src/index.ts`
+
+### Validation
+- Biên dịch thành công server (`npm run build` trong folder `server`).
+
+### Ghi chu
+- Không có rủi ro phát sinh.

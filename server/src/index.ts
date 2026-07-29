@@ -780,10 +780,102 @@ app.post('/api/bases', async (req: Request, res: Response) => {
   });
 });
 
+// Helper to cascade delete a KnowledgeBase and all its dependent records safely
+async function deleteKnowledgeBaseCascade(baseId: string) {
+  // 1. Find all question IDs belonging to this base
+  const questions = await prisma.question.findMany({
+    where: { baseId },
+    select: { id: true }
+  });
+  const questionIds = questions.map(q => q.id);
+
+  if (questionIds.length > 0) {
+    // Delete AttemptAnswer records referencing these questions
+    await prisma.attemptAnswer.deleteMany({
+      where: { questionId: { in: questionIds } }
+    });
+    // Delete QuestionProgress records referencing these questions
+    await (prisma as any).questionProgress.deleteMany({
+      where: { questionId: { in: questionIds } }
+    });
+  }
+
+  // 2. Delete StudyPlan records referencing this base
+  await (prisma as any).studyPlan.deleteMany({
+    where: { knowledgeBaseId: baseId }
+  });
+
+  // 3. Find all attempts referencing this base
+  const attempts = await prisma.attempt.findMany({
+    where: { knowledgeBaseId: baseId },
+    select: { id: true }
+  });
+  const attemptIds = attempts.map(a => a.id);
+
+  if (attemptIds.length > 0) {
+    // Delete AttemptAnswer records referencing these attempts
+    await prisma.attemptAnswer.deleteMany({
+      where: { attemptId: { in: attemptIds } }
+    });
+  }
+
+  // 4. Delete Attempt records referencing this base
+  await prisma.attempt.deleteMany({
+    where: { knowledgeBaseId: baseId }
+  });
+
+  // 5. Delete Question records for this base
+  await prisma.question.deleteMany({
+    where: { baseId }
+  });
+
+  // 6. Delete KnowledgeBase itself
+  await prisma.knowledgeBase.delete({
+    where: { id: baseId }
+  });
+}
+
+// Helper to cascade delete a Test and all its dependent records safely
+async function deleteTestCascade(testId: string) {
+  // 1. Delete test assignments
+  await (prisma as any).testAssignment.deleteMany({
+    where: { testId }
+  });
+
+  // 2. Find all attempts referencing this test
+  const attempts = await prisma.attempt.findMany({
+    where: { testId },
+    select: { id: true }
+  });
+  const attemptIds = attempts.map(a => a.id);
+
+  if (attemptIds.length > 0) {
+    // Delete AttemptAnswer records referencing these attempts
+    await prisma.attemptAnswer.deleteMany({
+      where: { attemptId: { in: attemptIds } }
+    });
+  }
+
+  // 3. Delete Attempt records referencing this test
+  await prisma.attempt.deleteMany({
+    where: { testId }
+  });
+
+  // 4. Delete Test itself
+  await (prisma as any).test.delete({
+    where: { id: testId }
+  });
+}
+
 app.delete('/api/bases/:id', async (req: Request, res: Response) => {
   const id = req.params.id;
-  await prisma.knowledgeBase.delete({ where: { id } });
-  res.json({ ok: true });
+  try {
+    await deleteKnowledgeBaseCascade(id);
+    res.json({ ok: true });
+  } catch (error: any) {
+    console.error('Failed to delete knowledge base:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete knowledge base' });
+  }
 });
 
 // Quick Search - Get questions from multiple knowledge bases
@@ -1826,16 +1918,11 @@ app.delete('/api/admin/knowledge-bases/:id', async (req: Request, res: Response)
   const baseId = req.params.id;
 
   try {
-    // Delete all questions first (cascade should handle this but being explicit)
-    await prisma.question.deleteMany({ where: { baseId } });
-
-    // Delete the knowledge base
-    await prisma.knowledgeBase.delete({ where: { id: baseId } });
-
+    await deleteKnowledgeBaseCascade(baseId);
     res.json({ ok: true });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to delete knowledge base:', error);
-    res.status(500).json({ error: 'Failed to delete knowledge base' });
+    res.status(500).json({ error: error.message || 'Failed to delete knowledge base' });
   }
 });
 
@@ -2055,19 +2142,11 @@ app.delete('/api/admin/tests/:id', async (req: Request, res: Response) => {
   const testId = req.params.id;
 
   try {
-    // Delete assignments first
-    await (prisma as any).testAssignment.deleteMany({ where: { testId } });
-
-    // Delete attempts if any
-    await prisma.attempt.deleteMany({ where: { testId } as any });
-
-    // Delete the test
-    await (prisma as any).test.delete({ where: { id: testId } });
-
+    await deleteTestCascade(testId);
     res.json({ ok: true });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to delete test:', error);
-    res.status(500).json({ error: 'Failed to delete test' });
+    res.status(500).json({ error: error.message || 'Failed to delete test' });
   }
 });
 
