@@ -2029,6 +2029,195 @@ app.post('/api/admin/tests', async (req: Request, res: Response) => {
   }
 });
 
+app.post('/api/admin/tests/batch', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const {
+    name,
+    description,
+    questionCountPerTest,
+    timeLimit,
+    maxAttempts,
+    startTime,
+    endTime,
+    knowledgeBaseIds,
+    assignedUsers = []
+  } = req.body;
+
+  if (!name || !questionCountPerTest || questionCountPerTest <= 0 || !timeLimit || timeLimit <= 0 || !Array.isArray(knowledgeBaseIds) || knowledgeBaseIds.length === 0) {
+    return res.status(400).json({ error: 'Missing required fields or invalid parameters' });
+  }
+
+  try {
+    // 1. Fetch selected KnowledgeBases with questions
+    const kbs = await prisma.knowledgeBase.findMany({
+      where: { id: { in: knowledgeBaseIds } },
+      include: { questions: true }
+    });
+
+    if (kbs.length === 0) {
+      return res.status(400).json({ error: 'No knowledge bases found' });
+    }
+
+    // 2. Prepare question pools for each topic (shuffled)
+    const topicPools: { id: string; name: string; questions: string[] }[] = [];
+    let totalQuestions = 0;
+
+    for (const kb of kbs) {
+      const qIds = kb.questions.map(q => q.id).sort(() => 0.5 - Math.random());
+      topicPools.push({
+        id: kb.id,
+        name: kb.name,
+        questions: qIds
+      });
+      totalQuestions += qIds.length;
+    }
+
+    if (totalQuestions === 0) {
+      return res.status(400).json({ error: 'Không có câu hỏi nào trong các chủ đề đã chọn' });
+    }
+
+    // 3. Calculate batch test parameters
+    const K = Math.floor(questionCountPerTest);
+    const numFullTests = Math.floor(totalQuestions / K);
+    const remainder = totalQuestions % K;
+    const totalTests = numFullTests + (remainder > 0 ? 1 : 0);
+
+    const createdTestIds: string[] = [];
+
+    // Helper to shuffle array
+    const shuffleArray = <T>(arr: T[]): T[] => [...arr].sort(() => 0.5 - Math.random());
+
+    // 4. Generate each test
+    for (let testIdx = 0; testIdx < totalTests; testIdx++) {
+      const isLastTest = (testIdx === totalTests - 1);
+      const targetSize = (isLastTest && remainder > 0) ? remainder : K;
+      const testQuestionIds: string[] = [];
+
+      if (isLastTest && remainder > 0) {
+        // Last test gets all remaining questions from all pools
+        for (const pool of topicPools) {
+          testQuestionIds.push(...pool.questions);
+          pool.questions = [];
+        }
+      } else {
+        // Proportional distribution for full tests
+        const desiredCounts: number[] = [];
+        let allocatedCount = 0;
+
+        for (let i = 0; i < topicPools.length; i++) {
+          const pool = topicPools[i];
+          const poolTotal = kbs.find(k => k.id === pool.id)?.questions.length || 0;
+          const proportion = poolTotal / totalQuestions;
+          let desired = Math.round(targetSize * proportion);
+          desired = Math.min(desired, pool.questions.length);
+          desiredCounts.push(desired);
+          allocatedCount += desired;
+        }
+
+        // Adjust if sum doesn't match targetSize
+        while (allocatedCount < targetSize) {
+          let bestPoolIdx = -1;
+          let maxRemaining = -1;
+          for (let i = 0; i < topicPools.length; i++) {
+            const avail = topicPools[i].questions.length - desiredCounts[i];
+            if (avail > 0 && avail > maxRemaining) {
+              maxRemaining = avail;
+              bestPoolIdx = i;
+            }
+          }
+          if (bestPoolIdx === -1) break;
+          desiredCounts[bestPoolIdx]++;
+          allocatedCount++;
+        }
+
+        while (allocatedCount > targetSize) {
+          let maxAllocIdx = -1;
+          let maxAlloc = 0;
+          for (let i = 0; i < desiredCounts.length; i++) {
+            if (desiredCounts[i] > maxAlloc) {
+              maxAlloc = desiredCounts[i];
+              maxAllocIdx = i;
+            }
+          }
+          if (maxAllocIdx === -1 || maxAlloc <= 0) break;
+          desiredCounts[maxAllocIdx]--;
+          allocatedCount--;
+        }
+
+        // Extract questions from each pool
+        for (let i = 0; i < topicPools.length; i++) {
+          const countToTake = desiredCounts[i];
+          if (countToTake > 0) {
+            const picked = topicPools[i].questions.splice(0, countToTake);
+            testQuestionIds.push(...picked);
+          }
+        }
+      }
+
+      // Shuffle question order inside the test
+      const finalQuestionOrder = shuffleArray(testQuestionIds);
+
+      // Name of the test
+      const testName = totalTests === 1
+        ? name
+        : `${name} - Mã đề ${String(testIdx + 1).padStart(2, '0')}`;
+
+      // Knowledge sources summary for metadata
+      const knowledgeSourcesSummary = kbs.map(kb => ({
+        knowledgeBaseId: kb.id,
+        percentage: Math.round((kb.questions.length / totalQuestions) * 100)
+      }));
+
+      // Create test record
+      const test = await (prisma as any).test.create({
+        data: {
+          name: testName,
+          description: description || '',
+          questionCount: finalQuestionOrder.length,
+          timeLimit,
+          maxAttempts: maxAttempts || 0,
+          startTime: startTime ? new Date(startTime) : null,
+          endTime: endTime ? new Date(endTime) : null,
+          knowledgeSources: JSON.stringify(knowledgeSourcesSummary),
+          questionOrder: JSON.stringify(finalQuestionOrder)
+        }
+      });
+
+      // Assign users if specified
+      if (assignedUsers.length > 0) {
+        const uniqueUserIds = [...new Set(assignedUsers.filter(Boolean))] as string[];
+        const existingUsers = await prisma.user.findMany({
+          where: { id: { in: uniqueUserIds } },
+          select: { id: true }
+        });
+        const validUserIds = new Set(existingUsers.map(u => u.id));
+        const assignments = uniqueUserIds
+          .filter(userId => validUserIds.has(userId))
+          .map((userId: string) => ({ testId: test.id, userId }));
+
+        if (assignments.length > 0) {
+          await (prisma as any).testAssignment.createMany({
+            data: assignments,
+            skipDuplicates: true
+          });
+        }
+      }
+
+      createdTestIds.push(test.id);
+    }
+
+    res.json({
+      success: true,
+      createdCount: createdTestIds.length,
+      totalQuestions,
+      testIds: createdTestIds
+    });
+  } catch (error: any) {
+    console.error('Failed to create test batch:', error);
+    res.status(500).json({ error: error.message || 'Failed to create test batch' });
+  }
+});
+
 app.post('/api/admin/tests/:id/assign', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   const testId = req.params.id;

@@ -116,7 +116,40 @@ const TestManagement: React.FC = () => {
   const [assignedGroupIds, setAssignedGroupIds] = useState<string[]>([]);
   const [selectedExportIds, setSelectedExportIds] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
-  
+  const [creationMode, setCreationMode] = useState<'single' | 'batch'>('single');
+  const [selectedBatchKbIds, setSelectedBatchKbIds] = useState<string[]>([]);
+
+  // Batch creation helpers & calculations
+  const batchTotalQuestions = useMemo(() => {
+    return selectedBatchKbIds.reduce((sum, kbId) => {
+      const kb = knowledgeBases.find(k => k.id === kbId);
+      return sum + (kb?.questions?.length || 0);
+    }, 0);
+  }, [selectedBatchKbIds, knowledgeBases]);
+
+  const batchTestPreview = useMemo(() => {
+    const K = formData.questionCount;
+    if (K <= 0 || batchTotalQuestions <= 0) return { fullTests: 0, remainder: 0, totalTests: 0, K };
+    const fullTests = Math.floor(batchTotalQuestions / K);
+    const remainder = batchTotalQuestions % K;
+    const totalTests = fullTests + (remainder > 0 ? 1 : 0);
+    return { fullTests, remainder, totalTests, K };
+  }, [batchTotalQuestions, formData.questionCount]);
+
+  const toggleBatchKbSelection = (kbId: string) => {
+    setSelectedBatchKbIds(prev =>
+      prev.includes(kbId) ? prev.filter(id => id !== kbId) : [...prev, kbId]
+    );
+  };
+
+  const selectAllBatchKbs = () => {
+    setSelectedBatchKbIds(knowledgeBases.map(kb => kb.id));
+  };
+
+  const unselectAllBatchKbs = () => {
+    setSelectedBatchKbIds([]);
+  };
+
   // Form state
   const [formData, setFormData] = useState({
     name: '',
@@ -173,6 +206,8 @@ const TestManagement: React.FC = () => {
     });
     setAdminGroupAssigned(true);
     setAssignedGroupIds([]);
+    setCreationMode('single');
+    setSelectedBatchKbIds([]);
   };
 
   /** Merge individual users + selected groups + admin group into final assignment IDs */
@@ -258,45 +293,73 @@ const TestManagement: React.FC = () => {
     return formData.knowledgeSources.reduce((sum, ks) => sum + (ks.percentage || 0), 0);
   };
 
-  const canSubmit = () => {
+  const canSubmitBatch = () => {
     const assignedCount = resolveAssignedUserIds().length;
     return (
       formData.name.trim() &&
       formData.questionCount > 0 &&
       formData.timeLimit > 0 &&
-      formData.knowledgeSources.length > 0 &&
-      formData.knowledgeSources.every(ks => ks.knowledgeBaseId && ks.percentage > 0) &&
-      Math.abs(getTotalPercentage() - 100) < 0.01 &&
+      selectedBatchKbIds.length > 0 &&
+      batchTotalQuestions > 0 &&
       assignedCount > 0
     );
   };
 
   const handleCreateTest = async () => {
-    if (!canSubmit()) return;
-    
-    setLoading(true);
-    try {
-      await api.adminCreateTest({
-        name: formData.name,
-        description: formData.description,
-        questionCount: formData.questionCount,
-        timeLimit: formData.timeLimit,
-        maxAttempts: formData.maxAttempts,
-        startTime: formData.startTime || undefined,
-        endTime: formData.endTime || undefined,
-        knowledgeSources: formData.knowledgeSources,
-        assignedUsers: resolveAssignedUserIds()
-      });
+    if (creationMode === 'batch') {
+      if (!canSubmitBatch()) return;
       
-      setShowCreateModal(false);
-      resetForm();
-      await loadData();
-      alert('Tạo bài thi thành công!');
-    } catch (error) {
-      console.error('Failed to create test:', error);
-      alert('Có lỗi xảy ra khi tạo bài thi. Vui lòng thử lại.');
-    } finally {
-      setLoading(false);
+      setLoading(true);
+      try {
+        const res = await api.adminCreateTestBatch({
+          name: formData.name,
+          description: formData.description,
+          questionCountPerTest: formData.questionCount,
+          timeLimit: formData.timeLimit,
+          maxAttempts: formData.maxAttempts,
+          startTime: formData.startTime || undefined,
+          endTime: formData.endTime || undefined,
+          knowledgeBaseIds: selectedBatchKbIds,
+          assignedUsers: resolveAssignedUserIds()
+        });
+        
+        setShowCreateModal(false);
+        resetForm();
+        await loadData();
+        alert(`Tạo bộ đề thi thành công! Đã tạo ${res.createdCount} đề thi từ ${res.totalQuestions} câu hỏi.`);
+      } catch (error: any) {
+        console.error('Failed to create test batch:', error);
+        alert(error?.message || 'Có lỗi xảy ra khi tạo bộ đề thi. Vui lòng thử lại.');
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      if (!canSubmit()) return;
+      
+      setLoading(true);
+      try {
+        await api.adminCreateTest({
+          name: formData.name,
+          description: formData.description,
+          questionCount: formData.questionCount,
+          timeLimit: formData.timeLimit,
+          maxAttempts: formData.maxAttempts,
+          startTime: formData.startTime || undefined,
+          endTime: formData.endTime || undefined,
+          knowledgeSources: formData.knowledgeSources,
+          assignedUsers: resolveAssignedUserIds()
+        });
+        
+        setShowCreateModal(false);
+        resetForm();
+        await loadData();
+        alert('Tạo bài thi thành công!');
+      } catch (error) {
+        console.error('Failed to create test:', error);
+        alert('Có lỗi xảy ra khi tạo bài thi. Vui lòng thử lại.');
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -575,19 +638,47 @@ const TestManagement: React.FC = () => {
               </button>
             </div>
             
+            {/* Mode selection tab */}
+            <div className="flex border-b mb-6 border-slate-200">
+              <button
+                type="button"
+                className={`pb-3 px-4 text-sm font-semibold border-b-2 transition-colors ${
+                  creationMode === 'single'
+                    ? 'border-sky-600 text-sky-600'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+                onClick={() => setCreationMode('single')}
+              >
+                1. Tạo 1 đề thi đơn lẻ
+              </button>
+              <button
+                type="button"
+                className={`pb-3 px-4 text-sm font-semibold border-b-2 transition-colors ${
+                  creationMode === 'batch'
+                    ? 'border-sky-600 text-sky-600'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+                onClick={() => setCreationMode('batch')}
+              >
+                2. Tạo bộ đề thi tự động (Chia theo tỷ lệ chủ đề)
+              </button>
+            </div>
+            
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Left Column - Basic Info */}
               <div className="space-y-4">
                 <h5 className="font-medium text-slate-800 border-b pb-2">Thông tin cơ bản</h5>
                 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Tên bài thi *</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    {creationMode === 'batch' ? 'Tên bộ đề thi *' : 'Tên bài thi *'}
+                  </label>
                   <input
                     type="text"
                     value={formData.name}
                     onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
                     className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-sky-500 focus:border-transparent"
-                    placeholder="Nhập tên bài thi..."
+                    placeholder={creationMode === 'batch' ? 'Ví dụ: Đề thi Giữa kỳ Q3...' : 'Nhập tên bài thi...'}
                   />
                 </div>
                 
@@ -604,7 +695,9 @@ const TestManagement: React.FC = () => {
                 
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Số câu hỏi *</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      {creationMode === 'batch' ? 'Số câu / 1 đề *' : 'Số câu hỏi *'}
+                    </label>
                     <input
                       type="number"
                       min="1"
@@ -669,62 +762,137 @@ const TestManagement: React.FC = () => {
                 <h5 className="font-medium text-slate-800 border-b pb-2">Cấu hình nâng cao</h5>
                 
                 {/* Knowledge Sources */}
-                <div>
-                  <div className="flex justify-between items-center mb-2">
-                    <label className="block text-sm font-medium text-slate-700">
-                      Cơ sở kiến thức * 
-                      <span className={`ml-2 text-xs ${getTotalPercentage() === 100 ? 'text-green-600' : 'text-red-600'}`}>
-                        (Tổng: {getTotalPercentage()}%)
-                      </span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={addKnowledgeSource}
-                      className="text-sm text-sky-600 hover:text-sky-800"
-                    >
-                      + Thêm
-                    </button>
-                  </div>
-                  
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {formData.knowledgeSources.map((source, index) => (
-                      <div key={index} className="flex gap-2 items-center p-2 bg-slate-50 rounded">
-                        <select
-                          value={source.knowledgeBaseId}
-                          onChange={e => updateKnowledgeSource(index, 'knowledgeBaseId', e.target.value)}
-                          className="flex-1 px-2 py-1 border border-slate-300 rounded text-sm"
+                {creationMode === 'batch' ? (
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="block text-sm font-medium text-slate-700">
+                        Chọn các chủ đề (Cơ sở kiến thức) *
+                      </label>
+                      <div className="flex space-x-2">
+                        <button
+                          type="button"
+                          onClick={selectAllBatchKbs}
+                          className="text-xs text-sky-600 hover:text-sky-800 font-medium"
                         >
-                          <option value="">-- Chọn cơ sở kiến thức --</option>
-                          {knowledgeBases.map(kb => (
-                            <option key={kb.id} value={kb.id}>
-                              {kb.name} ({kb.questions.length} câu)
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={source.percentage}
-                          onChange={e => updateKnowledgeSource(index, 'percentage', parseInt(e.target.value) || 0)}
-                          className="w-16 px-2 py-1 border border-slate-300 rounded text-sm"
-                          placeholder="%"
-                        />
-                        {formData.knowledgeSources.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeKnowledgeSource(index)}
-                            className="text-red-600 hover:text-red-800 p-1"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                        )}
+                          Chọn tất cả
+                        </button>
+                        <button
+                          type="button"
+                          onClick={unselectAllBatchKbs}
+                          className="text-xs text-red-600 hover:text-red-800 font-medium"
+                        >
+                          Bỏ chọn tất cả
+                        </button>
                       </div>
-                    ))}
+                    </div>
+
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto border border-slate-200 rounded-md p-2 bg-slate-50">
+                      {knowledgeBases.map(kb => {
+                        const count = kb.questions?.length || 0;
+                        const isSelected = selectedBatchKbIds.includes(kb.id);
+                        const pct = batchTotalQuestions > 0 && isSelected
+                          ? ((count / batchTotalQuestions) * 100).toFixed(1)
+                          : '0';
+                        return (
+                          <label key={kb.id} className="flex items-center justify-between p-2 hover:bg-white rounded border border-transparent hover:border-slate-200 cursor-pointer text-sm">
+                            <div className="flex items-center space-x-2">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleBatchKbSelection(kb.id)}
+                              />
+                              <span className="font-medium text-slate-800">{kb.name}</span>
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              <span className="font-semibold text-slate-700">{count} câu</span>
+                              {isSelected && (
+                                <span className="ml-2 text-sky-600 font-semibold">({pct}%)</span>
+                              )}
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+
+                    {/* Batch Summary Box */}
+                    {selectedBatchKbIds.length > 0 && (
+                      <div className="mt-3 p-3 bg-sky-50 border border-sky-200 rounded-md text-xs text-sky-900 space-y-1">
+                        <div className="font-bold text-sky-800">Dự kiến tạo bộ đề thi:</div>
+                        <div>• Tổng số câu hỏi khả dụng: <span className="font-bold">{batchTotalQuestions} câu</span></div>
+                        <div>• Số câu hỏi mỗi đề: <span className="font-bold">{formData.questionCount} câu</span></div>
+                        <div>
+                          • Số lượng đề sẽ tạo: <span className="font-bold text-sky-700">{batchTestPreview.totalTests} đề thi</span>
+                          {batchTestPreview.totalTests > 0 && (
+                            <span className="ml-1 text-slate-600">
+                              ({batchTestPreview.fullTests} đề {batchTestPreview.K} câu
+                              {batchTestPreview.remainder > 0 ? ` + 1 đề dư ${batchTestPreview.remainder} câu` : ''})
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-emerald-700 font-medium pt-1 border-t border-sky-200">
+                          ✓ Các đề sẽ được tạo ngẫu nhiên theo tỷ lệ chủ đề và đảm bảo không lặp câu hỏi giữa các đề thi.
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
+                ) : (
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="block text-sm font-medium text-slate-700">
+                        Cơ sở kiến thức * 
+                        <span className={`ml-2 text-xs ${getTotalPercentage() === 100 ? 'text-green-600' : 'text-red-600'}`}>
+                          (Tổng: {getTotalPercentage()}%)
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={addKnowledgeSource}
+                        className="text-sm text-sky-600 hover:text-sky-800"
+                      >
+                        + Thêm
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {formData.knowledgeSources.map((source, index) => (
+                        <div key={index} className="flex gap-2 items-center p-2 bg-slate-50 rounded">
+                          <select
+                            value={source.knowledgeBaseId}
+                            onChange={e => updateKnowledgeSource(index, 'knowledgeBaseId', e.target.value)}
+                            className="flex-1 px-2 py-1 border border-slate-300 rounded text-sm"
+                          >
+                            <option value="">-- Chọn cơ sở kiến thức --</option>
+                            {knowledgeBases.map(kb => (
+                              <option key={kb.id} value={kb.id}>
+                                {kb.name} ({kb.questions.length} câu)
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={source.percentage}
+                            onChange={e => updateKnowledgeSource(index, 'percentage', parseInt(e.target.value) || 0)}
+                            className="w-16 px-2 py-1 border border-slate-300 rounded text-sm"
+                            placeholder="%"
+                          />
+                          {formData.knowledgeSources.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeKnowledgeSource(index)}
+                              className="text-red-600 hover:text-red-800 p-1"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 
                 {/* User Assignment */}
                 <div>
@@ -882,10 +1050,12 @@ const TestManagement: React.FC = () => {
               </button>
               <button 
                 onClick={handleCreateTest}
-                disabled={!canSubmit() || loading}
+                disabled={creationMode === 'batch' ? (!canSubmitBatch() || loading) : (!canSubmit() || loading)}
                 className="px-4 py-2 text-sm font-medium text-white bg-sky-600 rounded-md hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {loading ? 'Đang tạo...' : 'Tạo bài thi'}
+                {loading
+                  ? (creationMode === 'batch' ? 'Đang tạo bộ đề...' : 'Đang tạo...')
+                  : (creationMode === 'batch' ? `Tạo bộ ${batchTestPreview.totalTests || ''} đề thi` : 'Tạo bài thi')}
               </button>
             </div>
           </div>

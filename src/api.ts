@@ -135,6 +135,17 @@ export const api = {
     knowledgeSources: Array<{ knowledgeBaseId: string; percentage: number }>;
     assignedUsers: string[];
   }) => request<{ id: string }>(`/api/admin/tests`, { method: 'POST', body: JSON.stringify(payload) }),
+  adminCreateTestBatch: (payload: {
+    name: string;
+    description?: string;
+    questionCountPerTest: number;
+    timeLimit: number;
+    maxAttempts?: number;
+    startTime?: string;
+    endTime?: string;
+    knowledgeBaseIds: string[];
+    assignedUsers: string[];
+  }) => request<{ success: boolean; createdCount: number; totalQuestions: number; testIds: string[] }>(`/api/admin/tests/batch`, { method: 'POST', body: JSON.stringify(payload) }),
   adminUpdateTest: (testId: string, payload: {
     name: string;
     description?: string;

@@ -51,3 +51,28 @@
 
 ### Ghi chu
 - Không có rủi ro phát sinh.
+
+## 2026-07-29 09:16:15 +07:00
+
+### Yeu cau
+- Phát triển tính năng Tạo bộ đề thi tự động từ nhiều chủ đề (Cơ sở kiến thức) khác nhau:
+  - Mỗi đề thi có tỷ lệ các câu hỏi trong từng chủ đề tương ứng với số lượng câu hỏi thực tế của chủ đề đó.
+  - Tự động chia toàn bộ kho câu hỏi của các chủ đề được chọn thành các đề thi ($N_{total} / K$), đảm bảo các câu hỏi không trùng lặp giữa các đề.
+  - Đề thi cuối cùng chứa toàn bộ số câu hỏi còn dư ($N_{total} \bmod K$).
+
+### Ket qua
+- Bổ sung endpoint `POST /api/admin/tests/batch` trong `server/src/index.ts`: thực hiện trích xuất, xáo trộn, tính toán tỷ lệ chủ đề và phân bổ ngẫu nhiên câu hỏi thành các đề thi độc lập không lặp lại.
+- Thêm hàm client `adminCreateTestBatch` trong `src/api.ts`.
+- Cập nhật giao diện Modal Tạo bài thi trong `components/admin/TestManagement.tsx`: bổ sung tab chuyển đổi chế độ "Tạo 1 đề thi đơn lẻ" và "Tạo bộ đề thi tự động (Chia theo tỷ lệ chủ đề)", cho phép chọn nhiều chủ đề, hiển thị xem trước tổng số câu hỏi khả dụng, số lượng đề thi và đề dư dự kiến.
+
+### Files tac dong
+- `server/src/index.ts`
+- `src/api.ts`
+- `components/admin/TestManagement.tsx`
+
+### Validation
+- Build thành công `server` (`npm run build` trong `server`).
+- Kiểm tra tính toán phân chia đề thi và gán quyền người dùng/nhóm người dùng.
+
+### Ghi chu
+- Không có rủi ro phát sinh.
