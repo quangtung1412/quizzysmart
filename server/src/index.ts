@@ -2238,7 +2238,7 @@ app.get('/api/admin/tests', async (req: Request, res: Response) => {
     include: {
       assignments: { include: { user: true } }
     },
-    orderBy: { createdAt: 'desc' }
+    orderBy: { id: 'desc' }
   });
 
   res.json((tests as any[]).map((t: any) => ({

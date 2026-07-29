@@ -168,6 +168,10 @@ const TestManagement: React.FC = () => {
     [users]
   );
 
+  const sortedTests = useMemo(() => {
+    return [...tests].sort((a, b) => b.id.localeCompare(a.id));
+  }, [tests]);
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -558,7 +562,7 @@ const TestManagement: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {tests.map(test => (
+                {sortedTests.map(test => (
                   <tr key={test.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-4">
                       <input

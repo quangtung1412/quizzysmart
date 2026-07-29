@@ -110,3 +110,22 @@
 
 ### Ghi chu
 - Không có rủi ro phát sinh.
+
+## 2026-07-29 09:44:35 +07:00
+
+### Yeu cau
+- Sắp xếp màn hình danh sách bài thi theo thứ tự ID giảm dần (từ ID lớn đến ID nhỏ).
+
+### Ket qua
+- Cập nhật endpoint `GET /api/admin/tests` trong `server/src/index.ts`: thay đổi `orderBy` từ `createdAt: 'desc'` thành `id: 'desc'`.
+- Cập nhật giao diện trong `components/admin/TestManagement.tsx`: bổ sung `sortedTests` sử dụng `b.id.localeCompare(a.id)` để đảm bảo bảng danh sách bài thi ở client luôn hiển thị xếp theo ID giảm dần.
+
+### Files tac dong
+- `server/src/index.ts`
+- `components/admin/TestManagement.tsx`
+
+### Validation
+- Build thành công cả client và server (`npm run build`).
+
+### Ghi chu
+- Không có rủi ro phát sinh.
