@@ -76,3 +76,20 @@
 
 ### Ghi chu
 - Không có rủi ro phát sinh.
+
+## 2026-07-29 09:22:50 +07:00
+
+### Yeu cau
+- Sửa lỗi runtime `ReferenceError: Cannot access 'formData' before initialization` tại `TestManagement.tsx:137`.
+
+### Ket qua
+- Khắc phục vi phạm Temporal Dead Zone (TDZ) trong React component `TestManagement.tsx`: chuyển khai báo state `formData` lên trước việc truy cập trong `useMemo` tính toán `batchTestPreview`.
+
+### Files tac dong
+- `components/admin/TestManagement.tsx`
+
+### Validation
+- Biên dịch lại ứng dụng (`npm run build`) thành công.
+
+### Ghi chu
+- Không có rủi ro phát sinh.

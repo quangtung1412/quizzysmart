@@ -119,6 +119,19 @@ const TestManagement: React.FC = () => {
   const [creationMode, setCreationMode] = useState<'single' | 'batch'>('single');
   const [selectedBatchKbIds, setSelectedBatchKbIds] = useState<string[]>([]);
 
+  // Form state
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    questionCount: 20,
+    timeLimit: 60, // minutes
+    maxAttempts: 0, // default unlimited attempts
+    startTime: '',
+    endTime: '',
+    knowledgeSources: [{ knowledgeBaseId: '', percentage: 100 }] as KnowledgeSource[],
+    assignedUsers: [] as string[]
+  });
+
   // Batch creation helpers & calculations
   const batchTotalQuestions = useMemo(() => {
     return selectedBatchKbIds.reduce((sum, kbId) => {
@@ -149,19 +162,6 @@ const TestManagement: React.FC = () => {
   const unselectAllBatchKbs = () => {
     setSelectedBatchKbIds([]);
   };
-
-  // Form state
-  const [formData, setFormData] = useState({
-    name: '',
-    description: '',
-    questionCount: 20,
-    timeLimit: 60, // minutes
-    maxAttempts: 0, // default unlimited attempts
-    startTime: '',
-    endTime: '',
-    knowledgeSources: [{ knowledgeBaseId: '', percentage: 100 }] as KnowledgeSource[],
-    assignedUsers: [] as string[]
-  });
 
   const adminUserIds = useMemo(
     () => users.filter(u => u.role === 'admin').map(u => u.id),
