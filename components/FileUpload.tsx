@@ -44,39 +44,59 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
         throw new Error("File Excel không có dữ liệu hoặc định dạng không đúng.");
       }
 
-      // Hàm hỗ trợ trích xuất giá trị ô Excel đúng định dạng (bao gồm ngày tháng năm)
+      // Hàm hỗ trợ trích xuất giá trị ô Excel và ép định dạng ngày tháng về dạng dd/mm/yyyy
       const getCellValue = (cell: XLSX.CellObject | undefined): any => {
         if (!cell) return undefined;
 
-        // 1. Nếu ô có định dạng ngày (Date object do cellDates: true)
+        const pad2 = (n: number) => String(n).padStart(2, '0');
+
+        const formatDateParts = (day: number, month: number, year: number): string => {
+          return `${pad2(day)}/${pad2(month)}/${year}`;
+        };
+
+        // 1. Nếu ô là Date object (do cellDates: true)
         if (cell.v instanceof Date) {
-          if (cell.w && !/^\d{4}-\d{2}-\d{2}T/.test(cell.w)) {
-            return cell.w;
-          }
           const d = cell.v;
-          const day = String(d.getDate()).padStart(2, '0');
-          const month = String(d.getMonth() + 1).padStart(2, '0');
-          const year = d.getFullYear();
-          return `${day}/${month}/${year}`;
+          return formatDateParts(d.getDate(), d.getMonth() + 1, d.getFullYear());
         }
 
-        // 2. Nếu ô có văn bản đã format (cell.w - ví dụ ngày tháng hiển thị theo định dạng Excel)
-        if (cell.w !== undefined && cell.w !== null && cell.w !== '') {
-          return cell.w;
-        }
-
-        // 3. Nếu là số nguyên đại diện cho chuỗi ngày trong Excel (Excel serial date number: 25569 ~ 73050)
+        // 2. Nếu ô là số nguyên đại diện cho chuỗi ngày sê-ri trong Excel (25569 = 01/01/1970 đến 73050 = 31/12/2099)
         if (cell.t === 'n' && typeof cell.v === 'number') {
           const isDateFormat = cell.z && XLSX.SSF && XLSX.SSF.is_date ? XLSX.SSF.is_date(cell.z) : false;
-          if (isDateFormat || (cell.v > 25569 && cell.v < 73050 && cell.z && /[dmy]/i.test(cell.z))) {
+          const hasDateSymbol = cell.z && /[dmy]/i.test(cell.z);
+          
+          if (isDateFormat || hasDateSymbol || (cell.v >= 25569 && cell.v <= 73050)) {
             const dateObj = XLSX.SSF ? XLSX.SSF.parse_date_code(cell.v) : null;
-            if (dateObj) {
-              const day = String(dateObj.d).padStart(2, '0');
-              const month = String(dateObj.m).padStart(2, '0');
-              const year = dateObj.y;
-              return `${day}/${month}/${year}`;
+            if (dateObj && dateObj.y && dateObj.m && dateObj.d) {
+              return formatDateParts(dateObj.d, dateObj.m, dateObj.y);
             }
           }
+        }
+
+        // 3. Nếu là chuỗi văn bản (cell.w hoặc cell.v dạng string), kiểm tra và chuẩn hóa dạng ISO/MDY về dd/mm/yyyy
+        const rawStr = cell.w !== undefined && cell.w !== null && cell.w !== '' ? String(cell.w).trim() : (cell.v !== undefined && cell.v !== null ? String(cell.v).trim() : '');
+        if (rawStr) {
+          // Kiểm tra định dạng YYYY-MM-DD hoặc YYYY/MM/DD
+          const isoMatch = rawStr.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+          if (isoMatch) {
+            return formatDateParts(parseInt(isoMatch[3], 10), parseInt(isoMatch[2], 10), parseInt(isoMatch[1], 10));
+          }
+
+          // Kiểm tra định dạng MM/DD/YYYY hoặc D/M/YYYY
+          const mdyMatch = rawStr.match(/^(\d{1,2})[/](\d{1,2})[/](\d{4})$/);
+          if (mdyMatch) {
+            const p1 = parseInt(mdyMatch[1], 10);
+            const p2 = parseInt(mdyMatch[2], 10);
+            const y = parseInt(mdyMatch[3], 10);
+            if (p1 > 12 && p2 <= 12) {
+              return formatDateParts(p1, p2, y);
+            }
+            if (cell.z && /^m{1,2}[/-]d{1,2}[/-]y{2,4}$/i.test(cell.z.trim())) {
+              return formatDateParts(p2, p1, y);
+            }
+          }
+
+          return rawStr;
         }
 
         return cell.v;
