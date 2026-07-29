@@ -28,7 +28,12 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
 
     try {
       const data = await file.arrayBuffer();
-      const workbook = XLSX.read(data, { type: 'array' });
+      const workbook = XLSX.read(data, {
+        type: 'array',
+        cellDates: true,
+        cellNF: true,
+        cellText: true,
+      });
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
 
@@ -39,6 +44,44 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
         throw new Error("File Excel không có dữ liệu hoặc định dạng không đúng.");
       }
 
+      // Hàm hỗ trợ trích xuất giá trị ô Excel đúng định dạng (bao gồm ngày tháng năm)
+      const getCellValue = (cell: XLSX.CellObject | undefined): any => {
+        if (!cell) return undefined;
+
+        // 1. Nếu ô có định dạng ngày (Date object do cellDates: true)
+        if (cell.v instanceof Date) {
+          if (cell.w && !/^\d{4}-\d{2}-\d{2}T/.test(cell.w)) {
+            return cell.w;
+          }
+          const d = cell.v;
+          const day = String(d.getDate()).padStart(2, '0');
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const year = d.getFullYear();
+          return `${day}/${month}/${year}`;
+        }
+
+        // 2. Nếu ô có văn bản đã format (cell.w - ví dụ ngày tháng hiển thị theo định dạng Excel)
+        if (cell.w !== undefined && cell.w !== null && cell.w !== '') {
+          return cell.w;
+        }
+
+        // 3. Nếu là số nguyên đại diện cho chuỗi ngày trong Excel (Excel serial date number: 25569 ~ 73050)
+        if (cell.t === 'n' && typeof cell.v === 'number') {
+          const isDateFormat = cell.z && XLSX.SSF && XLSX.SSF.is_date ? XLSX.SSF.is_date(cell.z) : false;
+          if (isDateFormat || (cell.v > 25569 && cell.v < 73050 && cell.z && /[dmy]/i.test(cell.z))) {
+            const dateObj = XLSX.SSF ? XLSX.SSF.parse_date_code(cell.v) : null;
+            if (dateObj) {
+              const day = String(dateObj.d).padStart(2, '0');
+              const month = String(dateObj.m).padStart(2, '0');
+              const year = dateObj.y;
+              return `${day}/${month}/${year}`;
+            }
+          }
+        }
+
+        return cell.v;
+      };
+
       // Đọc dữ liệu trực tiếp từ worksheet theo dòng và cột
       const tableData: any[][] = [];
       for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex++) {
@@ -47,7 +90,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
         for (let colIndex = range.s.c; colIndex <= Math.min(range.e.c, 7); colIndex++) {
           const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
           const cell = worksheet[cellAddress];
-          row[colIndex] = cell ? cell.v : undefined;
+          row[colIndex] = getCellValue(cell);
         }
         tableData.push(row);
       }
