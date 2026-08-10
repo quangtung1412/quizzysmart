@@ -127,6 +127,8 @@ model Test {
   endTime           DateTime?        // When the test expires
   knowledgeSources  String           @db.Text // JSON string: array of {knowledgeBaseId, percentage}
   questionOrder     String           @db.LongText // JSON string array of question IDs (generated randomly)
+  shuffleQuestions  Boolean          @default(true) // Whether to shuffle question order on each attempt
+  shuffleOptions    Boolean          @default(true) // Whether to shuffle option order for questions
   isActive          Boolean          @default(true)
   createdAt         DateTime         @default(now())
   attempts          Attempt[]

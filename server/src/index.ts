@@ -1224,9 +1224,14 @@ app.get('/api/tests/:id', async (req: Request, res: Response) => {
   });
 
   // Sort questions according to the predetermined order
-  const sortedQuestions = questionOrder.map((id: string) =>
+  let sortedQuestions = questionOrder.map((id: string) =>
     questions.find(q => q.id === id)
   ).filter(Boolean);
+
+  // If shuffleQuestions is enabled (default true), shuffle question order for this attempt
+  if (!viewOnly && (test as any).shuffleQuestions !== false) {
+    sortedQuestions = [...sortedQuestions].sort(() => 0.5 - Math.random());
+  }
 
   const testData = {
     id: test.id,
@@ -1238,15 +1243,29 @@ app.get('/api/tests/:id', async (req: Request, res: Response) => {
     currentAttempt: existingAttempts + 1, // Next attempt number
     startTime: test.startTime,
     endTime: test.endTime,
-    questions: sortedQuestions.map((q: any) => ({
-      id: q!.id,
-      question: q!.text,
-      options: JSON.parse(q!.options),
-      source: q!.source || '',
-      category: q!.category || '',
-      // Do not send correctAnswerIdx. Expose only whether multi-select is allowed.
-      isMultiSelect: typeof q!.correctAnswerIdx === 'number' && q!.correctAnswerIdx < 0
-    }))
+    shuffleQuestions: (test as any).shuffleQuestions ?? true,
+    shuffleOptions: (test as any).shuffleOptions ?? true,
+    questions: sortedQuestions.map((q: any) => {
+      const originalOptions = JSON.parse(q!.options || '[]');
+      let options = originalOptions;
+      let optionMapping: number[] | undefined = undefined;
+
+      if (!viewOnly && (test as any).shuffleOptions !== false && Array.isArray(originalOptions) && originalOptions.length > 0) {
+        const indices = originalOptions.map((_: any, i: number) => i).sort(() => 0.5 - Math.random());
+        options = indices.map((i: number) => originalOptions[i]);
+        optionMapping = indices;
+      }
+
+      return {
+        id: q!.id,
+        question: q!.text,
+        options,
+        optionMapping,
+        source: q!.source || '',
+        category: q!.category || '',
+        isMultiSelect: typeof q!.correctAnswerIdx === 'number' && q!.correctAnswerIdx < 0
+      };
+    })
   };
 
   res.json(testData);
@@ -1936,6 +1955,8 @@ app.post('/api/admin/tests', async (req: Request, res: Response) => {
     maxAttempts,
     startTime,
     endTime,
+    shuffleQuestions = true,
+    shuffleOptions = true,
     knowledgeSources, // Array of {knowledgeBaseId, percentage}
     assignedUsers = [] // Array of user IDs to assign the test to
   } = req.body;
@@ -1992,6 +2013,8 @@ app.post('/api/admin/tests', async (req: Request, res: Response) => {
         maxAttempts: maxAttempts || 0, // Default to 0 (unlimited) if not specified
         startTime: startTime ? new Date(startTime) : null,
         endTime: endTime ? new Date(endTime) : null,
+        shuffleQuestions: Boolean(shuffleQuestions),
+        shuffleOptions: Boolean(shuffleOptions),
         knowledgeSources: JSON.stringify(knowledgeSources),
         questionOrder: JSON.stringify(finalQuestions)
       }
@@ -2178,6 +2201,8 @@ app.post('/api/admin/tests/batch', async (req: Request, res: Response) => {
           maxAttempts: maxAttempts || 0,
           startTime: startTime ? new Date(startTime) : null,
           endTime: endTime ? new Date(endTime) : null,
+          shuffleQuestions: Boolean(shuffleQuestions),
+          shuffleOptions: Boolean(shuffleOptions),
           knowledgeSources: JSON.stringify(knowledgeSourcesSummary),
           questionOrder: JSON.stringify(finalQuestionOrder)
         }
@@ -2250,6 +2275,8 @@ app.get('/api/admin/tests', async (req: Request, res: Response) => {
     maxAttempts: t.maxAttempts, // Add maxAttempts field
     startTime: t.startTime,
     endTime: t.endTime,
+    shuffleQuestions: t.shuffleQuestions ?? true,
+    shuffleOptions: t.shuffleOptions ?? true,
     isActive: t.isActive,
     createdAt: t.createdAt,
     knowledgeSources: JSON.parse(t.knowledgeSources || '[]'),
@@ -2273,6 +2300,8 @@ app.put('/api/admin/tests/:id', async (req: Request, res: Response) => {
     maxAttempts,
     startTime,
     endTime,
+    shuffleQuestions = true,
+    shuffleOptions = true,
     knowledgeSources,
     assignedUsers = []
   } = req.body;
@@ -2293,6 +2322,8 @@ app.put('/api/admin/tests/:id', async (req: Request, res: Response) => {
         maxAttempts: maxAttempts !== undefined ? maxAttempts : 0, // Allow 0, fallback to 0 if undefined
         startTime: startTime ? new Date(startTime) : null,
         endTime: endTime ? new Date(endTime) : null,
+        shuffleQuestions: Boolean(shuffleQuestions),
+        shuffleOptions: Boolean(shuffleOptions),
         knowledgeSources: JSON.stringify(knowledgeSources)
       }
     });

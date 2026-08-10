@@ -128,6 +128,8 @@ const TestManagement: React.FC = () => {
     maxAttempts: 0, // default unlimited attempts
     startTime: '',
     endTime: '',
+    shuffleQuestions: true,
+    shuffleOptions: true,
     knowledgeSources: [{ knowledgeBaseId: '', percentage: 100 }] as KnowledgeSource[],
     assignedUsers: [] as string[]
   });
@@ -205,6 +207,8 @@ const TestManagement: React.FC = () => {
       maxAttempts: 0,
       startTime: '',
       endTime: '',
+      shuffleQuestions: true,
+      shuffleOptions: true,
       knowledgeSources: [{ knowledgeBaseId: '', percentage: 100 }],
       assignedUsers: []
     });
@@ -336,6 +340,8 @@ const TestManagement: React.FC = () => {
           maxAttempts: formData.maxAttempts,
           startTime: formData.startTime || undefined,
           endTime: formData.endTime || undefined,
+          shuffleQuestions: formData.shuffleQuestions,
+          shuffleOptions: formData.shuffleOptions,
           knowledgeBaseIds: selectedBatchKbIds,
           assignedUsers: resolveAssignedUserIds()
         });
@@ -363,6 +369,8 @@ const TestManagement: React.FC = () => {
           maxAttempts: formData.maxAttempts,
           startTime: formData.startTime || undefined,
           endTime: formData.endTime || undefined,
+          shuffleQuestions: formData.shuffleQuestions,
+          shuffleOptions: formData.shuffleOptions,
           knowledgeSources: formData.knowledgeSources,
           assignedUsers: resolveAssignedUserIds()
         });
@@ -389,6 +397,8 @@ const TestManagement: React.FC = () => {
       maxAttempts: test.maxAttempts, // Use exact value from database
       startTime: test.startTime ? new Date(test.startTime).toISOString().slice(0, 16) : '',
       endTime: test.endTime ? new Date(test.endTime).toISOString().slice(0, 16) : '',
+      shuffleQuestions: test.shuffleQuestions ?? true,
+      shuffleOptions: test.shuffleOptions ?? true,
       knowledgeSources: test.knowledgeSources,
       assignedUsers: test.assignedUsers.map(u => u.id)
     });
@@ -415,6 +425,8 @@ const TestManagement: React.FC = () => {
         maxAttempts: formData.maxAttempts,
         startTime: formData.startTime || undefined,
         endTime: formData.endTime || undefined,
+        shuffleQuestions: formData.shuffleQuestions,
+        shuffleOptions: formData.shuffleOptions,
         knowledgeSources: formData.knowledgeSources,
         assignedUsers: resolveAssignedUserIds()
       });
@@ -770,6 +782,30 @@ const TestManagement: React.FC = () => {
                       onChange={e => setFormData(prev => ({ ...prev, endTime: e.target.value }))}
                       className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-sky-500 focus:border-transparent"
                     />
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-200 space-y-2">
+                  <label className="block text-sm font-semibold text-slate-700">Tùy chọn xáo trộn đề thi</label>
+                  <div className="flex flex-col space-y-2 bg-slate-50 p-3 rounded-md border border-slate-200">
+                    <label className="flex items-center space-x-2 cursor-pointer text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={formData.shuffleQuestions}
+                        onChange={e => setFormData(prev => ({ ...prev, shuffleQuestions: e.target.checked }))}
+                        className="rounded text-sky-600 focus:ring-sky-500 w-4 h-4"
+                      />
+                      <span className="font-medium">Đảo thứ tự câu hỏi mỗi lần thi</span>
+                    </label>
+                    <label className="flex items-center space-x-2 cursor-pointer text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={formData.shuffleOptions}
+                        onChange={e => setFormData(prev => ({ ...prev, shuffleOptions: e.target.checked }))}
+                        className="rounded text-sky-600 focus:ring-sky-500 w-4 h-4"
+                      />
+                      <span className="font-medium">Đảo thứ tự các đáp án trong câu hỏi</span>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -1180,6 +1216,30 @@ const TestManagement: React.FC = () => {
                       onChange={e => setFormData(prev => ({ ...prev, endTime: e.target.value }))}
                       className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-sky-500 focus:border-transparent"
                     />
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-200 space-y-2">
+                  <label className="block text-sm font-semibold text-slate-700">Tùy chọn xáo trộn đề thi</label>
+                  <div className="flex flex-col space-y-2 bg-slate-50 p-3 rounded-md border border-slate-200">
+                    <label className="flex items-center space-x-2 cursor-pointer text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={formData.shuffleQuestions}
+                        onChange={e => setFormData(prev => ({ ...prev, shuffleQuestions: e.target.checked }))}
+                        className="rounded text-sky-600 focus:ring-sky-500 w-4 h-4"
+                      />
+                      <span className="font-medium">Đảo thứ tự câu hỏi mỗi lần thi</span>
+                    </label>
+                    <label className="flex items-center space-x-2 cursor-pointer text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={formData.shuffleOptions}
+                        onChange={e => setFormData(prev => ({ ...prev, shuffleOptions: e.target.checked }))}
+                        className="rounded text-sky-600 focus:ring-sky-500 w-4 h-4"
+                      />
+                      <span className="font-medium">Đảo thứ tự các đáp án trong câu hỏi</span>
+                    </label>
                   </div>
                 </div>
               </div>

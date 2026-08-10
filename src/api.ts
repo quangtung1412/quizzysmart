@@ -132,6 +132,8 @@ export const api = {
     maxAttempts?: number;
     startTime?: string;
     endTime?: string;
+    shuffleQuestions?: boolean;
+    shuffleOptions?: boolean;
     knowledgeSources: Array<{ knowledgeBaseId: string; percentage: number }>;
     assignedUsers: string[];
   }) => request<{ id: string }>(`/api/admin/tests`, { method: 'POST', body: JSON.stringify(payload) }),
@@ -143,6 +145,8 @@ export const api = {
     maxAttempts?: number;
     startTime?: string;
     endTime?: string;
+    shuffleQuestions?: boolean;
+    shuffleOptions?: boolean;
     knowledgeBaseIds: string[];
     assignedUsers: string[];
   }) => request<{ success: boolean; createdCount: number; totalQuestions: number; testIds: string[] }>(`/api/admin/tests/batch`, { method: 'POST', body: JSON.stringify(payload) }),
@@ -154,6 +158,8 @@ export const api = {
     maxAttempts?: number;
     startTime?: string;
     endTime?: string;
+    shuffleQuestions?: boolean;
+    shuffleOptions?: boolean;
     knowledgeSources: Array<{ knowledgeBaseId: string; percentage: number }>;
     assignedUsers: string[];
   }) => request<{ id: string }>(`/api/admin/tests/${testId}`, { method: 'PUT', body: JSON.stringify(payload) }),

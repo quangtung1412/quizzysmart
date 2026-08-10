@@ -408,6 +408,7 @@ const App: React.FC = () => {
         id: q.id,
         question: q.question,
         options: q.options,
+        optionMapping: q.optionMapping,
         correctAnswerIndex: 0, // Placeholder — real answer is graded server-side
         isMultiSelect: !!q.isMultiSelect,
         source: q.source || '',

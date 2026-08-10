@@ -62,6 +62,7 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
   const handleAnswerSelect = (optionIndex: number) => {
     if (mode === QuizMode.Study && showFeedback) return;
 
+    const targetIndex = currentQuestion.optionMapping ? currentQuestion.optionMapping[optionIndex] : optionIndex;
     const isMultiSelect = isMultiSelectQuestion(currentQuestion);
     let newSelectedIdx: number | null = null;
 
@@ -71,10 +72,10 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
       if (currentSelected !== null) {
         currentMask = currentSelected < 0 ? Math.abs(currentSelected) : (1 << currentSelected);
       }
-      currentMask ^= (1 << optionIndex);
+      currentMask ^= (1 << targetIndex);
       newSelectedIdx = currentMask === 0 ? null : -currentMask;
     } else {
-      newSelectedIdx = optionIndex;
+      newSelectedIdx = targetIndex;
     }
 
     const isCorrect = mode === QuizMode.Test ? null : (newSelectedIdx === currentQuestion.correctAnswerIndex);
@@ -292,12 +293,13 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
           {currentQuestion.options.map((option, index) => {
             const isMulti = isMultiSelectQuestion(currentQuestion);
             const selectedIndex = currentAnswer?.selectedOptionIndex;
+            const targetIndex = currentQuestion.optionMapping ? currentQuestion.optionMapping[index] : index;
             const isSelected =
               selectedIndex !== null &&
               selectedIndex !== undefined &&
               (selectedIndex < 0
-                ? (Math.abs(selectedIndex) & (1 << index)) !== 0
-                : selectedIndex === index);
+                ? (Math.abs(selectedIndex) & (1 << targetIndex)) !== 0
+                : selectedIndex === targetIndex);
 
             return (
               <button

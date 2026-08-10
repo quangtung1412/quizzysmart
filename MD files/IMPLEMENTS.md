@@ -129,3 +129,34 @@
 
 ### Ghi chu
 - Không có rủi ro phát sinh.
+
+## 2026-08-10 16:38:15 +07:00
+
+### Yeu cau
+- Bổ sung tùy chọn cho phép Admin lựa chọn có xáo trộn thứ tự câu hỏi mỗi lần thi hay không (`shuffleQuestions`) và có xáo trộn thứ tự các đáp án trong câu hỏi hay không (`shuffleOptions`) trong màn hình tạo/chỉnh sửa đề thi.
+
+### Ket qua
+- Cập nhật schema Prisma (`server/prisma/schema.prisma`): Thêm 2 thuộc tính `shuffleQuestions` (mặc định `true`) và `shuffleOptions` (mặc định `true`) vào model `Test`.
+- Cập nhật backend API (`server/src/index.ts`):
+  - Nhận và lưu `shuffleQuestions`, `shuffleOptions` tại các endpoint tạo mới đơn lẻ (`POST /api/admin/tests`), tạo bộ đề (`POST /api/admin/tests/batch`), chỉnh sửa đề thi (`PUT /api/admin/tests/:id`).
+  - Xử lý tại `GET /api/tests/:id`: Nếu `shuffleQuestions !== false`, tự động đảo thứ tự câu hỏi ngẫu nhiên cho từng lượt làm bài; Nếu `shuffleOptions !== false`, tự động đảo thứ tự lựa chọn đáp án và trả kèm `optionMapping` để khớp chính xác đáp án khi nộp bài.
+- Cập nhật frontend types (`types.ts`, `src/api.ts`, `AppWithRouter.tsx`, `App.tsx`, `components/QuizScreen.tsx`):
+  - Xử lý khớp thứ tự đáp án ban đầu qua `optionMapping` khi làm bài thi.
+- Cập nhật UI Quản lý đề thi (`components/admin/TestManagement.tsx`): Thêm nhóm Checkbox "Tùy chọn xáo trộn đề thi" (Đảo thứ tự câu hỏi & Đảo thứ tự các đáp án) trong Modal Tạo bài thi (đơn lẻ & bộ đề) và Modal Chỉnh sửa bài thi.
+
+### Files tac dong
+- `server/prisma/schema.prisma`
+- `server/src/index.ts`
+- `types.ts`
+- `src/api.ts`
+- `AppWithRouter.tsx`
+- `App.tsx`
+- `components/QuizScreen.tsx`
+- `components/admin/TestManagement.tsx`
+
+### Validation
+- Chạy `npx prisma generate` thành công.
+- Build thành công cả `server` và `root` (`npm run build`).
+
+### Ghi chu
+- Không có rủi ro phát sinh.

@@ -2,6 +2,8 @@ export interface Question {
   id: string; // use string (uuid) to avoid collisions
   question: string;
   options: string[];
+  /** Mapping of shuffled option index to original option index when options are shuffled. */
+  optionMapping?: number[];
   /** Single: 0..n-1. Multi-correct: negative bitmask of 0-based option indices (e.g. Excel "1,2,4" → -11). */
   correctAnswerIndex: number;
   /** Explicit multi flag for test mode when correctAnswerIndex is hidden from the client. */
@@ -50,6 +52,8 @@ export interface AdminTestSummary {
   name: string;
   knowledgeBaseId: string;
   questionCount: number;
+  shuffleQuestions?: boolean;
+  shuffleOptions?: boolean;
   createdAt: string;
 }
 
