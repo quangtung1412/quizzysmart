@@ -49,7 +49,14 @@ const TestListScreen: React.FC<TestListScreenProps> = ({
       if (showSpinner) setLoading(true);
       // Session auth preferred; identifier supports username-only accounts
       const assignedTests = await api.getUserTests(userIdentifier || undefined);
-      const activeTests = assignedTests.filter((test: Test) => test.isActive);
+      const activeTests = assignedTests
+        .filter((test: Test) => test.isActive)
+        .sort((a: Test, b: Test) => {
+          if (a.createdAt && b.createdAt) {
+            return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          }
+          return (b.id || '').localeCompare(a.id || '');
+        });
 
       const testsWithStats = await Promise.all(
         activeTests.map(async (test: Test) => {

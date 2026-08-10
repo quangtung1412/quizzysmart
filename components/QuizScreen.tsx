@@ -174,7 +174,8 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
 
   const getOptionClasses = (optionIndex: number) => {
     const base = "w-full text-left p-3 my-1.5 border rounded-lg transition-all duration-200 cursor-pointer flex items-center";
-    
+    const targetIndex = currentQuestion.optionMapping ? currentQuestion.optionMapping[optionIndex] : optionIndex;
+
     const isSelected = (selectedIndex: number | null | undefined, index: number) => {
       if (selectedIndex === null || selectedIndex === undefined) return false;
       if (selectedIndex < 0) {
@@ -183,12 +184,12 @@ const QuizScreen: React.FC<QuizScreenProps> = ({
       return selectedIndex === index;
     };
 
-    const selected = isSelected(currentAnswer?.selectedOptionIndex, optionIndex);
+    const selected = isSelected(currentAnswer?.selectedOptionIndex, targetIndex);
 
     if (mode === QuizMode.Study && showFeedback) {
       const isCorrect = currentQuestion.correctAnswerIndex < 0
-        ? (Math.abs(currentQuestion.correctAnswerIndex) & (1 << optionIndex)) !== 0
-        : optionIndex === currentQuestion.correctAnswerIndex;
+        ? (Math.abs(currentQuestion.correctAnswerIndex) & (1 << targetIndex)) !== 0
+        : targetIndex === currentQuestion.correctAnswerIndex;
       if (isCorrect) return `${base} bg-green-100 border-green-500 text-green-800 ring-2 ring-green-500`;
       if (selected && !isCorrect) return `${base} bg-red-100 border-red-500 text-red-800`;
       return `${base} bg-white border-slate-300 text-slate-700 cursor-not-allowed`;

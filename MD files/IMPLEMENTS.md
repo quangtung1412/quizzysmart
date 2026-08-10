@@ -177,3 +177,26 @@
 
 ### Ghi chu
 - Không có rủi ro phát sinh.
+
+## 2026-08-10 16:54:40 +07:00
+
+### Yeu cau
+1. Sửa lỗi hiển thị đáp án khi làm bài thi (lệch màu viền và biểu tượng chọn giữa 2 câu do đảo đáp án).
+2. Sửa thứ tự hiển thị danh sách đề thi ở giao diện người dùng (`/tests`): đưa đề thi mới nhất lên đầu tiên.
+
+### Ket qua
+1. Cập nhật `getOptionClasses` trong `components/QuizScreen.tsx`: chuyển đổi `optionIndex` hiển thị ở UI sang `targetIndex` thông qua `optionMapping` trước khi so sánh lựa chọn `selected` và đáp án đúng `isCorrect`.
+2. Cập nhật sắp xếp đề thi mới nhất lên đầu:
+   - Sắp xếp ở endpoint `GET /api/tests` trong `server/src/index.ts` theo `createdAt` / `id` giảm dần.
+   - Sắp xếp ở `loadTests` trong `components/TestListScreen.tsx` theo `createdAt` / `id` giảm dần.
+
+### Files tac dong
+- `components/QuizScreen.tsx`
+- `components/TestListScreen.tsx`
+- `server/src/index.ts`
+
+### Validation
+- Build thành công cả `server` và `root` (`npm run build`).
+
+### Ghi chu
+- Không có rủi ro phát sinh.

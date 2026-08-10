@@ -1140,6 +1140,13 @@ app.get('/api/tests', async (req: Request, res: Response) => {
     };
   });
 
+  tests.sort((a, b) => {
+    if (a.createdAt && b.createdAt) {
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    }
+    return b.id.localeCompare(a.id);
+  });
+
   res.json(tests);
 });
 
