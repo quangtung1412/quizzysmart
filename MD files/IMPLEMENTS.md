@@ -160,3 +160,20 @@
 
 ### Ghi chu
 - Không có rủi ro phát sinh.
+
+## 2026-08-10 16:42:00 +07:00
+
+### Yeu cau
+- Sửa lỗi biên dịch TypeScript `Cannot find name 'shuffleQuestions'` / `Cannot find name 'shuffleOptions'` khi build Docker backend container.
+
+### Ket qua
+- Bổ sung `shuffleQuestions = true` và `shuffleOptions = true` vào khai báo bóc tách dữ liệu (destructuring) từ `req.body` trong endpoint `POST /api/admin/tests/batch` (`server/src/index.ts`).
+
+### Files tac dong
+- `server/src/index.ts`
+
+### Validation
+- Kiểm tra biên dịch TypeScript `npx tsc -p tsconfig.json` (`npm run build` trong folder `server`) thành công 100%.
+
+### Ghi chu
+- Không có rủi ro phát sinh.

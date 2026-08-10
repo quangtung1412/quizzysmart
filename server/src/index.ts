@@ -2062,6 +2062,8 @@ app.post('/api/admin/tests/batch', async (req: Request, res: Response) => {
     maxAttempts,
     startTime,
     endTime,
+    shuffleQuestions = true,
+    shuffleOptions = true,
     knowledgeBaseIds,
     assignedUsers = []
   } = req.body;
