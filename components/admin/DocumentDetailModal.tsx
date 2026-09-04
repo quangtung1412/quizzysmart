@@ -23,6 +23,7 @@ interface DocumentDetail {
   processingStatus: string;
   errorMessage?: string;
   chunks: Chunk[];
+  qdrantCollectionName?: string;
 }
 
 interface Chunk {
@@ -265,6 +266,16 @@ const DocumentDetailModal: React.FC<DocumentDetailModalProps> = ({ documentId, o
                 <div>
                   <h3 className="text-sm font-semibold text-gray-500 mb-1">Trạng thái</h3>
                   <p className="text-gray-900">{document.processingStatus}</p>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-500 mb-1">Collection</h3>
+                  {document.qdrantCollectionName ? (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                      📦 {document.qdrantCollectionName}
+                    </span>
+                  ) : (
+                    <span className="text-gray-500 text-sm">Chưa gán collection</span>
+                  )}
                 </div>
               </div>
 

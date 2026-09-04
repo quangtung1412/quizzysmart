@@ -200,3 +200,42 @@
 
 ### Ghi chu
 - Không có rủi ro phát sinh.
+
+## 2026-09-04 14:05:00 +07:00
+
+### Yeu cau
+- Trong menu quản lý văn bản RAG: bổ sung bộ lọc theo Collection để khi chọn collection có thể biết văn bản nào đang thuộc collection nào, và trạng thái đã hoàn thành hay chưa.
+
+### Ket qua
+- Khắc phục lỗi backend thiếu trường `qdrantCollectionName`:
+  - Cập nhật `GET /api/documents` và `GET /api/documents/:id` trong `server/src/routes/document.routes.ts` để trả về `qdrantCollectionName`.
+  - Bổ sung hỗ trợ lọc tùy chọn phía server qua query parameters `collection`, `status`, `search` tại `GET /api/documents`.
+- Cập nhật giao diện Quản lý Văn bản RAG (`components/admin/DocumentManagement.tsx`):
+  - Phân tách rõ ràng mục chọn collection khi upload (`uploadCollection`) và bộ lọc danh sách (`filterCollection`).
+  - Thêm thanh công cụ lọc trực quan (Filter Toolbar) gồm:
+    - Dropdown lọc theo Collection kèm số lượng văn bản của từng collection (`{col.name} ({count} văn bản)`).
+    - Bộ lọc theo Trạng thái (Tabs/Pills): Tất cả, ✓ Đã hoàn thành (xanh lá), ⏳ Đang xử lý (xanh dương), ✗ Lỗi (đỏ) với số lượng đếm động tương ứng theo collection đang chọn.
+    - Ô tìm kiếm nhanh từ khóa (tên văn bản, số hiệu, file) kèm nút xóa nhanh ✕.
+    - Nút Đặt lại bộ lọc (✕ Đặt lại) khi có bộ lọc đang được áp dụng.
+  - Thêm thanh tóm tắt thông tin Collection đang chọn (Collection Active Banner) hiển thị tổng số văn bản và chi tiết số lượng hoàn thành / đang xử lý / lỗi.
+  - Cập nhật thẻ văn bản: Hiển thị badge Collection nổi bật (`📦 [Tên collection]`), cho phép nhấp trực tiếp vào badge để lọc nhanh văn bản theo collection đó; badge trạng thái hoàn thành / đang xử lý / lỗi chuẩn hóa.
+  - Bổ sung trạng thái rỗng (Empty state) kèm nút "Xóa bộ lọc" khi không có văn bản nào khớp điều kiện lọc.
+- Cập nhật modal Chi tiết Văn bản (`components/admin/DocumentDetailModal.tsx`):
+  - Bổ sung `qdrantCollectionName?: string` vào interface `DocumentDetail` và hiển thị thông tin Collection trong tab Thông tin chung.
+- Cập nhật tài liệu hệ thống:
+  - Tạo mới `MD files/SYSTEM-DESCRIPTION.md` mô tả các route, endpoint RAG và route mapping.
+
+### Files tac dong
+- `server/src/routes/document.routes.ts`
+- `components/admin/DocumentManagement.tsx`
+- `components/admin/DocumentDetailModal.tsx`
+- `MD files/SYSTEM-DESCRIPTION.md`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Biên dịch server thành công (`npm run build` trong `server`).
+- Biên dịch frontend root thành công (`npm run build`).
+- Đã xác thực logic đếm số lượng văn bản theo từng collection và theo từng trạng thái.
+
+### Ghi chu
+- Không có rủi ro phát sinh.

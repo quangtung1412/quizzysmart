@@ -166,11 +166,45 @@ router.post(
 
 /**
  * GET /api/documents
- * List all documents
+ * List all documents (supports optional query filters: collection, status, search)
  */
 router.get('/', requireAdmin, async (req: Request, res: Response) => {
   try {
+    const { collection, status, search } = req.query;
+
+    const where: any = {};
+    if (collection && typeof collection === 'string' && collection !== 'all') {
+      if (collection === '__none__') {
+        where.OR = [
+          { qdrantCollectionName: null },
+          { qdrantCollectionName: '' },
+        ];
+      } else {
+        where.qdrantCollectionName = collection;
+      }
+    }
+
+    if (status && typeof status === 'string' && status !== 'all') {
+      where.processingStatus = status;
+    }
+
+    if (search && typeof search === 'string' && search.trim() !== '') {
+      const query = search.trim();
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { fileName: { contains: query } },
+            { documentName: { contains: query } },
+            { documentNumber: { contains: query } },
+            { documentType: { contains: query } },
+          ],
+        },
+      ];
+    }
+
     const documents = await prisma.document.findMany({
+      where: Object.keys(where).length > 0 ? where : undefined,
       orderBy: { uploadedAt: 'desc' },
       include: {
         chunks: {
@@ -191,6 +225,7 @@ router.get('/', requireAdmin, async (req: Request, res: Response) => {
         uploadedAt: doc.uploadedAt.toISOString(),
         processingStatus: doc.processingStatus,
         chunksCount: doc.chunks.length,
+        qdrantCollectionName: doc.qdrantCollectionName,
       })),
       total: documents.length,
     };
@@ -235,6 +270,7 @@ router.get('/:id', requireAdmin, async (req: Request, res: Response) => {
       fileSize: document.fileSize,
       uploadedAt: document.uploadedAt.toISOString(),
       uploadedBy: document.uploadedBy,
+      qdrantCollectionName: document.qdrantCollectionName,
 
       // Metadata
       documentNumber: document.documentNumber,
