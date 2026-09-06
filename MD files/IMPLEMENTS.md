@@ -319,3 +319,22 @@
 ### Ghi chu
 - Không có rủi ro phát sinh.
 
+## 2026-09-06 10:25:00 +07:00
+
+### Yeu cau
+- Sửa lỗi cú pháp Babel JSX: `[plugin:vite:react-babel] /app/components/admin/TestManagement.tsx: Unexpected token, expected "," (744:18)`.
+
+### Ket qua
+- Khắc phục lỗi thiếu dấu đóng ngoặc tròn `)` của toán tử điều kiện ba ngôi (ternary operator `{filteredTests.length === 0 ? (...) : (...)}`) trong phần render bảng danh sách bài thi tại dòng 744 trong `components/admin/TestManagement.tsx`.
+
+### Files tac dong
+- `components/admin/TestManagement.tsx`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Chạy `npm run build` (Vite + React-Babel) thành công 100% với exit code 0.
+- Chạy `npx tsc -p tsconfig.json` trong `server` thành công 100% với exit code 0.
+
+### Ghi chu
+- Không có rủi ro phát sinh.
+
