@@ -14,6 +14,12 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
   const [selectedTopicFilter, setSelectedTopicFilter] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedBaseIds, setSelectedBaseIds] = useState<string[]>([]);
+  const [showBatchTopicModal, setShowBatchTopicModal] = useState(false);
+  const [batchTopicMode, setBatchTopicMode] = useState<'existing' | 'new' | 'clear'>('existing');
+  const [selectedBatchTopic, setSelectedBatchTopic] = useState('');
+  const [newBatchTopicName, setNewBatchTopicName] = useState('');
+  const [isSubmittingBatch, setIsSubmittingBatch] = useState(false);
 
   useEffect(() => {
     loadKnowledgeBases();
@@ -41,6 +47,64 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
       console.error('Failed to load knowledge bases:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      const allFilteredIds = filteredBases.map(b => b.id);
+      setSelectedBaseIds(Array.from(new Set([...selectedBaseIds, ...allFilteredIds])));
+    } else {
+      const filteredIdSet = new Set(filteredBases.map(b => b.id));
+      setSelectedBaseIds(selectedBaseIds.filter(id => !filteredIdSet.has(id)));
+    }
+  };
+
+  const handleToggleSelectOne = (id: string) => {
+    setSelectedBaseIds(prev =>
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleOpenBatchTopicModal = () => {
+    if (selectedBaseIds.length === 0) return;
+    setBatchTopicMode(topicsList.length > 0 ? 'existing' : 'new');
+    setSelectedBatchTopic(topicsList[0] || '');
+    setNewBatchTopicName('');
+    setShowBatchTopicModal(true);
+  };
+
+  const handleApplyBatchTopic = async () => {
+    if (selectedBaseIds.length === 0) return;
+    let finalTopic: string | null = null;
+    if (batchTopicMode === 'existing') {
+      if (!selectedBatchTopic) {
+        alert('Vui lòng chọn một chủ đề.');
+        return;
+      }
+      finalTopic = selectedBatchTopic.trim();
+    } else if (batchTopicMode === 'new') {
+      if (!newBatchTopicName.trim()) {
+        alert('Vui lòng nhập tên chủ đề mới.');
+        return;
+      }
+      finalTopic = newBatchTopicName.trim();
+    } else if (batchTopicMode === 'clear') {
+      finalTopic = null;
+    }
+
+    try {
+      setIsSubmittingBatch(true);
+      await api.adminBatchAssignKnowledgeBaseTopic(selectedBaseIds, finalTopic);
+      await loadKnowledgeBases();
+      await loadTopics();
+      setShowBatchTopicModal(false);
+      setSelectedBaseIds([]);
+    } catch (error: any) {
+      console.error('Failed to batch assign topic:', error);
+      alert(error.message || 'Không thể gán chủ đề. Vui lòng thử lại.');
+    } finally {
+      setIsSubmittingBatch(false);
     }
   };
 
@@ -149,6 +213,29 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
         </div>
       </div>
 
+      {/* Batch Action Toolbar */}
+      {selectedBaseIds.length > 0 && (
+        <div className="mb-4 p-3 bg-sky-50 border border-sky-200 rounded-lg flex items-center justify-between">
+          <div className="text-sm text-sky-800 font-medium">
+            Đã chọn <span className="font-bold">{selectedBaseIds.length}</span> cơ sở kiến thức
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleOpenBatchTopicModal}
+              className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-lg shadow-sm flex items-center gap-1.5 transition-colors"
+            >
+              🏷️ Gán chủ đề hàng loạt
+            </button>
+            <button
+              onClick={() => setSelectedBaseIds([])}
+              className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-lg transition-colors"
+            >
+              Bỏ chọn
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Statistics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white p-4 rounded-lg border border-slate-200">
@@ -190,6 +277,14 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50">
               <tr>
+                <th className="px-4 py-3 text-left w-12">
+                  <input
+                    type="checkbox"
+                    className="rounded border-slate-300 text-sky-600 focus:ring-sky-500 w-4 h-4 cursor-pointer"
+                    checked={filteredBases.length > 0 && filteredBases.every(b => selectedBaseIds.includes(b.id))}
+                    onChange={handleSelectAll}
+                  />
+                </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                   Tên cơ sở kiến thức
                 </th>
@@ -213,6 +308,14 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
             <tbody className="bg-white divide-y divide-slate-200">
               {filteredBases.map((base) => (
                 <tr key={base.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-4 whitespace-nowrap w-12">
+                    <input
+                      type="checkbox"
+                      className="rounded border-slate-300 text-sky-600 focus:ring-sky-500 w-4 h-4 cursor-pointer"
+                      checked={selectedBaseIds.includes(base.id)}
+                      onChange={() => handleToggleSelectOne(base.id)}
+                    />
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-slate-900">{base.name}</div>
                   </td>
@@ -251,6 +354,114 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Batch Assign Topic Modal */}
+      {showBatchTopicModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black bg-opacity-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-bold text-slate-900 mb-2">🏷️ Gán chủ đề hàng loạt</h3>
+            <p className="text-sm text-slate-600 mb-4">
+              Đang chọn <span className="font-semibold text-sky-600">{selectedBaseIds.length}</span> cơ sở kiến thức để gán chủ đề.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="batchTopicMode"
+                    value="existing"
+                    checked={batchTopicMode === 'existing'}
+                    onChange={() => setBatchTopicMode('existing')}
+                    className="text-sky-600"
+                  />
+                  Chọn chủ đề có sẵn
+                </label>
+                {batchTopicMode === 'existing' && (
+                  <div className="mt-2 ml-6">
+                    {topicsList.length > 0 ? (
+                      <select
+                        value={selectedBatchTopic}
+                        onChange={(e) => setSelectedBatchTopic(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500 bg-white"
+                      >
+                        {topicsList.map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="text-xs text-amber-600">Chưa có chủ đề nào trong hệ thống. Hãy chọn "Tạo chủ đề mới".</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="batchTopicMode"
+                    value="new"
+                    checked={batchTopicMode === 'new'}
+                    onChange={() => setBatchTopicMode('new')}
+                    className="text-sky-600"
+                  />
+                  Tạo chủ đề mới
+                </label>
+                {batchTopicMode === 'new' && (
+                  <div className="mt-2 ml-6">
+                    <input
+                      type="text"
+                      placeholder="Nhập tên chủ đề mới..."
+                      value={newBatchTopicName}
+                      onChange={(e) => setNewBatchTopicName(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="batchTopicMode"
+                    value="clear"
+                    checked={batchTopicMode === 'clear'}
+                    onChange={() => setBatchTopicMode('clear')}
+                    className="text-red-600"
+                  />
+                  <span className="text-slate-700">Xóa chủ đề (đưa về Chưa phân loại)</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setShowBatchTopicModal(false)}
+                disabled={isSubmittingBatch}
+                className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleApplyBatchTopic}
+                disabled={isSubmittingBatch}
+                className="px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-lg shadow-sm disabled:opacity-50 transition-colors flex items-center gap-2"
+              >
+                {isSubmittingBatch ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Đang lưu...
+                  </>
+                ) : (
+                  'Áp dụng'
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

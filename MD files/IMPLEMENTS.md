@@ -360,3 +360,53 @@
 ### Ghi chu
 - Không có rủi ro phát sinh.
 
+## 2026-09-06 10:45:00 +07:00
+
+### Yeu cau
+- Màn hình quản lý kiến thức và quản lý bài thi: Thêm tính năng gán chủ đề cho nhiều cơ sở kiến thức và bài thi (Batch assign topic).
+- Màn hình ôn luyện và Thi: Cho phép chọn chủ đề trước khi chọn bài ôn tập hoặc bài thi.
+
+### Ket qua
+- **Backend Endpoints (`server/src/index.ts`)**:
+  - Thêm endpoint `POST /api/admin/knowledge-bases/batch-topic`: Cho phép Admin gán hoặc xóa chủ đề hàng loạt cho danh sách cơ sở kiến thức (`baseIds`), đồng thời tự động upsert chủ đề mới vào bảng `Topic`.
+  - Thêm endpoint `POST /api/admin/tests/batch-topic`: Cho phép Admin gán hoặc xóa chủ đề hàng loạt cho danh sách bài thi (`testIds`), đồng thời tự động upsert chủ đề mới vào bảng `Topic`.
+- **Client API (`src/api.ts`)**:
+  - Thêm `adminBatchAssignKnowledgeBaseTopic(baseIds, topic)`.
+  - Thêm `adminBatchAssignTestTopic(testIds, topic)`.
+- **Màn hình Quản lý cơ sở kiến thức (`components/admin/KnowledgeManagement.tsx`)**:
+  - Thêm checkbox chọn tất cả và checkbox từng dòng cho bảng cơ sở kiến thức.
+  - Thêm thanh công cụ hành động khi có mục được chọn: Hiển thị số lượng mục đã chọn, nút "🏷️ Gán chủ đề hàng loạt" và "Bỏ chọn".
+  - Thêm Modal gán chủ đề hàng loạt: Hỗ trợ chọn chủ đề có sẵn, tạo chủ đề mới hoặc xóa chủ đề.
+- **Màn hình Quản lý bài thi (`components/admin/TestManagement.tsx`)**:
+  - Tích hợp tính năng gán chủ đề hàng loạt với hệ thống checkbox có sẵn (`selectedExportIds`).
+  - Thêm nút "🏷️ Gán chủ đề ({count})" bên cạnh nút "Xuất Excel" khi có ít nhất 1 bài thi được chọn.
+  - Thêm Modal gán chủ đề hàng loạt cho bài thi với đầy đủ các lựa chọn (chủ đề có sẵn, chủ đề mới, xóa chủ đề).
+- **Màn hình Ôn luyện (`components/KnowledgeBaseScreen.tsx`)**:
+  - Nâng cấp giao diện điều hướng 2 cấp độ:
+    - **Cấp 1 - Chọn chủ đề**: Gom nhóm các bài ôn tập theo chủ đề; hiển thị thẻ chủ đề với icon thư mục, số lượng bài ôn tập con và tổng số câu hỏi trong chủ đề.
+    - **Cấp 2 - Danh sách bài ôn tập con**: Hiển thị breadcrumb điều hướng `Tất cả chủ đề / [Tên chủ đề]`, nút quay lại và danh sách các bài ôn tập con.
+    - Cung cấp nút chuyển đổi linh hoạt: `📁 Theo chủ đề` / `📄 Tất cả bài ôn` và thanh tìm kiếm tức thì.
+    - Đầy đủ nút hành động trực tiếp: "🎯 Ôn tập bài này" và "📅 Kế hoạch học tập".
+- **Màn hình Thi (`components/TestListScreen.tsx`)**:
+  - Rà soát và đồng bộ trải nghiệm chọn chủ đề trước khi vào bài thi con, đảm bảo giao diện đồng nhất với màn hình ôn luyện.
+- **Tài liệu hệ thống (`MD files/SYSTEM-DESCRIPTION.md`)**:
+  - Cập nhật đầy đủ thông tin 2 endpoint mới và luồng điều hướng mới.
+
+### Files tac dong
+- `server/src/index.ts`
+- `src/api.ts`
+- `components/admin/KnowledgeManagement.tsx`
+- `components/admin/TestManagement.tsx`
+- `components/KnowledgeBaseScreen.tsx`
+- `MD files/SYSTEM-DESCRIPTION.md`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Kiểm tra AST `@babel/parser` cho tất cả các file mã nguồn TSX: 100% hợp lệ, không có lỗi cú pháp.
+- Chạy `npx tsc -p tsconfig.json` trong thư mục `server`: Thành công 100% với exit code 0.
+- Chạy `npm run build` (Vite + React-Babel) ở thư mục gốc: Thành công 100% với exit code 0.
+
+### Ghi chu
+- Không có rủi ro phát sinh.
+
+

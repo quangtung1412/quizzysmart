@@ -128,6 +128,13 @@ const TestManagement: React.FC = () => {
   const [isCreatingNewTopic, setIsCreatingNewTopic] = useState(false);
   const [customTopic, setCustomTopic] = useState('');
 
+  // Batch topic assignment states
+  const [showBatchTopicModal, setShowBatchTopicModal] = useState(false);
+  const [batchTopicMode, setBatchTopicMode] = useState<'existing' | 'new' | 'clear'>('existing');
+  const [selectedBatchTopic, setSelectedBatchTopic] = useState('');
+  const [newBatchTopicName, setNewBatchTopicName] = useState('');
+  const [isSubmittingBatchTopic, setIsSubmittingBatchTopic] = useState(false);
+
   // Form state
   const [formData, setFormData] = useState({
     name: '',
@@ -549,11 +556,61 @@ const TestManagement: React.FC = () => {
     setShowDetailModal(true);
   };
 
+  const handleOpenBatchTopicModal = () => {
+    if (selectedExportIds.length === 0) return;
+    setBatchTopicMode(topicsList.length > 0 ? 'existing' : 'new');
+    setSelectedBatchTopic(topicsList[0] || '');
+    setNewBatchTopicName('');
+    setShowBatchTopicModal(true);
+  };
+
+  const handleApplyBatchTopic = async () => {
+    if (selectedExportIds.length === 0) return;
+    let finalTopic: string | null = null;
+    if (batchTopicMode === 'existing') {
+      if (!selectedBatchTopic) {
+        alert('Vui lòng chọn một chủ đề.');
+        return;
+      }
+      finalTopic = selectedBatchTopic.trim();
+    } else if (batchTopicMode === 'new') {
+      if (!newBatchTopicName.trim()) {
+        alert('Vui lòng nhập tên chủ đề mới.');
+        return;
+      }
+      finalTopic = newBatchTopicName.trim();
+    } else if (batchTopicMode === 'clear') {
+      finalTopic = null;
+    }
+
+    try {
+      setIsSubmittingBatchTopic(true);
+      await api.adminBatchAssignTestTopic(selectedExportIds, finalTopic);
+      await loadData();
+      setShowBatchTopicModal(false);
+      setSelectedExportIds([]);
+    } catch (error: any) {
+      console.error('Failed to batch assign test topic:', error);
+      alert(error.message || 'Không thể gán chủ đề cho bài thi. Vui lòng thử lại.');
+    } finally {
+      setIsSubmittingBatchTopic(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center flex-wrap gap-3">
         <h3 className="text-xl font-semibold text-slate-800">Quản lý bài thi</h3>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {selectedExportIds.length > 0 && (
+            <button
+              onClick={handleOpenBatchTopicModal}
+              className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors flex items-center gap-1.5 shadow-sm"
+              title="Gán chủ đề cho các bài thi đã chọn"
+            >
+              🏷️ Gán chủ đề ({selectedExportIds.length})
+            </button>
+          )}
           <button
             onClick={handleExportSelected}
             disabled={exporting || selectedExportIds.length === 0}
@@ -1679,6 +1736,114 @@ const TestManagement: React.FC = () => {
                   setSelectedTestId(null);
                 }}
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch Assign Topic Modal for Tests */}
+      {showBatchTopicModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black bg-opacity-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-bold text-slate-900 mb-2">🏷️ Gán chủ đề bài thi hàng loạt</h3>
+            <p className="text-sm text-slate-600 mb-4">
+              Đang chọn <span className="font-semibold text-purple-600">{selectedExportIds.length}</span> bài thi để gán chủ đề.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="testBatchTopicMode"
+                    value="existing"
+                    checked={batchTopicMode === 'existing'}
+                    onChange={() => setBatchTopicMode('existing')}
+                    className="text-purple-600"
+                  />
+                  Chọn chủ đề có sẵn
+                </label>
+                {batchTopicMode === 'existing' && (
+                  <div className="mt-2 ml-6">
+                    {topicsList.length > 0 ? (
+                      <select
+                        value={selectedBatchTopic}
+                        onChange={(e) => setSelectedBatchTopic(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 bg-white"
+                      >
+                        {topicsList.map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="text-xs text-amber-600">Chưa có chủ đề nào trong hệ thống. Hãy chọn "Tạo chủ đề mới".</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="testBatchTopicMode"
+                    value="new"
+                    checked={batchTopicMode === 'new'}
+                    onChange={() => setBatchTopicMode('new')}
+                    className="text-purple-600"
+                  />
+                  Tạo chủ đề mới
+                </label>
+                {batchTopicMode === 'new' && (
+                  <div className="mt-2 ml-6">
+                    <input
+                      type="text"
+                      placeholder="Nhập tên chủ đề mới..."
+                      value={newBatchTopicName}
+                      onChange={(e) => setNewBatchTopicName(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="testBatchTopicMode"
+                    value="clear"
+                    checked={batchTopicMode === 'clear'}
+                    onChange={() => setBatchTopicMode('clear')}
+                    className="text-red-600"
+                  />
+                  <span className="text-slate-700">Xóa chủ đề (đưa về Chưa có chủ đề)</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setShowBatchTopicModal(false)}
+                disabled={isSubmittingBatchTopic}
+                className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleApplyBatchTopic}
+                disabled={isSubmittingBatchTopic}
+                className="px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-lg shadow-sm disabled:opacity-50 transition-colors flex items-center gap-2"
+              >
+                {isSubmittingBatchTopic ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Đang lưu...
+                  </>
+                ) : (
+                  'Áp dụng'
+                )}
+              </button>
             </div>
           </div>
         </div>

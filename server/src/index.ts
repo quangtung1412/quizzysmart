@@ -2052,6 +2052,62 @@ app.delete('/api/admin/knowledge-bases/:id', async (req: Request, res: Response)
   }
 });
 
+app.post('/api/admin/knowledge-bases/batch-topic', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const { baseIds, topic } = req.body;
+  if (!Array.isArray(baseIds) || baseIds.length === 0) {
+    return res.status(400).json({ error: 'baseIds must be a non-empty array' });
+  }
+
+  const topicName = typeof topic === 'string' && topic.trim() ? topic.trim() : null;
+  if (topicName) {
+    await (prisma as any).topic.upsert({
+      where: { name: topicName },
+      create: { name: topicName },
+      update: {}
+    }).catch(() => {});
+  }
+
+  try {
+    await (prisma as any).knowledgeBase.updateMany({
+      where: { id: { in: baseIds } },
+      data: { topic: topicName }
+    });
+    res.json({ ok: true, count: baseIds.length, topic: topicName });
+  } catch (error: any) {
+    console.error('Failed to batch update knowledge base topic:', error);
+    res.status(500).json({ error: error.message || 'Failed to update topic' });
+  }
+});
+
+app.post('/api/admin/tests/batch-topic', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const { testIds, topic } = req.body;
+  if (!Array.isArray(testIds) || testIds.length === 0) {
+    return res.status(400).json({ error: 'testIds must be a non-empty array' });
+  }
+
+  const topicName = typeof topic === 'string' && topic.trim() ? topic.trim() : null;
+  if (topicName) {
+    await (prisma as any).topic.upsert({
+      where: { name: topicName },
+      create: { name: topicName },
+      update: {}
+    }).catch(() => {});
+  }
+
+  try {
+    await (prisma as any).test.updateMany({
+      where: { id: { in: testIds } },
+      data: { topic: topicName }
+    });
+    res.json({ ok: true, count: testIds.length, topic: topicName });
+  } catch (error: any) {
+    console.error('Failed to batch update test topic:', error);
+    res.status(500).json({ error: error.message || 'Failed to update topic' });
+  }
+});
+
 app.post('/api/admin/tests', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
   const {

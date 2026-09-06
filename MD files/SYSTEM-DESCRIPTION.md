@@ -43,18 +43,25 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
 - `POST /api/admin/topics`: Tao moi hoac upsert chu de (Admin only).
 - `GET /api/bases`, `GET /api/admin/knowledge-bases`: Tra ve danh sach co so kien thuc co truong `topic`.
 - `POST /api/bases`, `POST /api/admin/knowledge-bases`: Tiep nhan `topic` luu vao `KnowledgeBase` va tu dong upsert vao bang `Topic`.
+- `POST /api/admin/knowledge-bases/batch-topic`: Gan chu de hang loat cho nhieu co so kien thuc (`{ baseIds: string[], topic: string | null }`).
 - `GET /api/tests`, `GET /api/admin/tests`: Tra ve danh sach bai thi co truong `topic`.
 - `POST /api/admin/tests`, `POST /api/admin/tests/batch`, `PUT /api/admin/tests/:id`: Tiep nhan `topic`, luu vao `Test` va upsert vao bang `Topic`.
+- `POST /api/admin/tests/batch-topic`: Gan chu de hang loat cho nhieu bai thi (`{ testIds: string[], topic: string | null }`).
 
 ### 2.4. Socket.IO Events
 - Event `document:processing`: Ban tien do xu ly van ban RAG real-time `{ documentId, status, progress, currentStep, chunksCreated, chunksEmbedded, error }`.
 
 ## 3. Frontend Navigation & User Flows
 - `AdminDashboard.tsx`:
-  - `tests`: Quan ly bai thi (`components/admin/TestManagement.tsx`) - Ho tro tao de don / bo de batch gan chu de, loc theo chu de, badge chu de tren tung bai thi.
-  - `knowledge`: Quan ly co so kien thuc (`components/admin/KnowledgeManagement.tsx`) - Ho tro tai len Excel gan chu de hoac tao chu de moi, loc theo chu de, badge chu de.
+  - `tests`: Quan ly bai thi (`components/admin/TestManagement.tsx`) - Ho tro tao de don / bo de batch gan chu de, loc theo chu de, badge chu de tren tung bai thi. Ho tro checkbox chon nhieu bai thi va gan chu de hang loat (`POST /api/admin/tests/batch-topic`).
+  - `knowledge`: Quan ly co so kien thuc (`components/admin/KnowledgeManagement.tsx`) - Ho tro tai len Excel gan chu de hoac tao chu de moi, loc theo chu de, badge chu de. Ho tro checkbox chon nhieu co so kien thuc va gan chu de hang loat (`POST /api/admin/knowledge-bases/batch-topic`).
   - `documents`: Quan ly van ban RAG (`components/admin/DocumentManagement.tsx`) - Ho tro bo loc theo Collection, trang thai xu ly, tim kiem va thong ke.
   - `collections`: Quan ly Vector Collections (`components/admin/CollectionManagement.tsx`).
+- `KnowledgeBaseScreen.tsx` (Man hinh on luyen cua nguoi dung):
+  - Khi co so kien thuc co chu de: nguoi dung duoc chon Chu de o Cap 1 (The chu de voi so luong bai on tap con, tong so cau hoi) -> vao Cap 2 xem cac bai on tap con cua chu de do.
+  - Cung cap Breadcrumb dieu huong quay lai danh sach chu de.
+  - Ho tro nut bat/tat chuyen doi che do xem ("Theo chu de" / "Tat ca bai on") va thanh tim kiem tuc thi theo ten bai hoc / chu de.
+  - Cung cap nut truc tiep: "🎯 On tap bai nay" (`onSelect`) va "📅 Ke hoach hoc tap" (`onViewStudyPlan`).
 - `TestListScreen.tsx` (Man hinh thi cua nguoi dung):
   - Khi bai thi co chu de: nguoi dung duoc chon Chu de o Cap 1 (The chu de voi so luong bai thi con, tien do hoan thanh, diem cao nhat) -> vao Cap 2 xem cac bai thi con cua chu de do.
   - Cung cap Breadcrumb dieu huong quay lai danh sach chu de.

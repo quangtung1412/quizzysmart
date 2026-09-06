@@ -177,6 +177,16 @@ export const api = {
   adminListKnowledgeBases: () => request<any[]>(`/api/admin/knowledge-bases`),
   adminDeleteKnowledgeBase: (baseId: string) => request<{ ok: boolean }>(`/api/admin/knowledge-bases/${baseId}`, { method: 'DELETE' }),
   adminCreateKnowledgeBase: (payload: { name: string; questions: any[]; creatorEmail?: string; topic?: string }) => request<{ id: string }>(`/api/admin/knowledge-bases`, { method: 'POST', body: JSON.stringify(payload) }),
+  adminBatchAssignKnowledgeBaseTopic: (baseIds: string[], topic: string | null) =>
+    request<{ ok: boolean; count: number; topic: string | null }>(`/api/admin/knowledge-bases/batch-topic`, {
+      method: 'POST',
+      body: JSON.stringify({ baseIds, topic })
+    }),
+  adminBatchAssignTestTopic: (testIds: string[], topic: string | null) =>
+    request<{ ok: boolean; count: number; topic: string | null }>(`/api/admin/tests/batch-topic`, {
+      method: 'POST',
+      body: JSON.stringify({ testIds, topic })
+    }),
 
   // Topics
   listTopics: () => request<Array<{ id: string; name: string; description?: string | null; testCount: number; kbCount: number }>>(`/api/topics`),
