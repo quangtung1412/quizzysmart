@@ -787,7 +787,7 @@ app.post('/api/bases', async (req: Request, res: Response) => {
     name: created.name,
     topic: (created as any).topic || null,
     createdAt: created.createdAt,
-    questions: created.questions.map(q => ({
+    questions: created.questions.map((q: any) => ({
       id: q.id,
       question: q.text,
       options: JSON.parse(q.options),
@@ -3540,6 +3540,8 @@ app.use(errorLogger);
     console.error('[RAG] Failed to initialize Qdrant:', error);
     console.error('[RAG] RAG features will be disabled');
   }
+})();
+
 // Ensure topic columns and tables exist in DB
 (async () => {
   try {

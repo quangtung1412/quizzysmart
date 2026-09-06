@@ -299,3 +299,23 @@
 ### Ghi chu
 - Không có rủi ro phát sinh.
 
+## 2026-09-06 10:20:00 +07:00
+
+### Yeu cau
+- Sửa lỗi biên dịch TypeScript `src/index.ts(6636,4): error TS1005: '}' expected.` khi build Docker image backend (`RUN npx tsc -p tsconfig.json`).
+
+### Ket qua
+- Khắc phục lỗi thiếu dấu đóng hàm `})();` của khối IIFE khởi tạo Qdrant (`qdrantService.initialize()`) tại dòng 3542 trong `server/src/index.ts`.
+- Bổ sung type annotation `(q: any)` cho tham số callback map danh sách câu hỏi tại endpoint `POST /api/bases` để loại bỏ cảnh báo `TS7006: Parameter 'q' implicitly has an 'any' type`.
+
+### Files tac dong
+- `server/src/index.ts`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Chạy `npx tsc -p tsconfig.json` trong thư mục `server` thành công 100% với exit code 0.
+- Chạy `npm run build` ở thư mục gốc thành công 100% với exit code 0.
+
+### Ghi chu
+- Không có rủi ro phát sinh.
+
