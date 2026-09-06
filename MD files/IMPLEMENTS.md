@@ -338,3 +338,25 @@
 ### Ghi chu
 - Không có rủi ro phát sinh.
 
+## 2026-09-06 10:28:00 +07:00
+
+### Yeu cau
+- Sửa lỗi cú pháp Babel JSX: `[plugin:vite:react-babel] /app/components/admin/TestManagement.tsx: Unexpected token, expected "}" (1688:3)`.
+- Rà soát toàn diện cấu trúc AST / JSX của tất cả các file vừa chỉnh sửa để đảm bảo không còn lỗi cú pháp nào.
+
+### Ket qua
+- Khắc phục lỗi thẻ `<div>` mở bị lặp 2 lần tại phần trường Mô tả trong Create Test Modal (dòng 812-813 trong `components/admin/TestManagement.tsx`).
+- Rà soát tự động bằng `@babel/parser` trên toàn bộ 60+ file `.tsx` và `.ts` trong `components/`, `src/`, `App.tsx`, `AppWithRouter.tsx` và `server/`: Tất cả đều đạt trạng thái `OK` 100%.
+
+### Files tac dong
+- `components/admin/TestManagement.tsx`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Chạy script kiểm tra AST `@babel/parser` cho tất cả các file mã nguồn: 100% hợp lệ.
+- Chạy `npm run build` (Vite + React-Babel) ở thư mục gốc: Thành công 100% với exit code 0.
+- Chạy `npx tsc -p tsconfig.json` ở thư mục `server`: Thành công 100% với exit code 0.
+
+### Ghi chu
+- Không có rủi ro phát sinh.
+
