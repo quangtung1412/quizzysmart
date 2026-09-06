@@ -146,7 +146,7 @@ const App: React.FC = () => {
 
   const { bases: knowledgeBases, addBase, removeBase, setBases: setKnowledgeBases } = useKnowledgeBaseStore(user?.email || user?.username || null);
   const { attempts: quizAttempts, createAttempt, updateAttempt, setAttempts: setQuizAttempts } = useAttemptStore(user?.email || user?.username || null);
-  const { studyPlans, createStudyPlan, updateStudyPlan, updateQuestionProgress, getTodayQuestions, deleteStudyPlan, refreshStudyPlans, getStudyPlanByKnowledgeBaseId } = useStudyPlanStore(user?.email || user?.username || null);
+  const { studyPlans, createStudyPlan, updateStudyPlan, resetStudyPlanProgress, updateQuestionProgress, getTodayQuestions, deleteStudyPlan, refreshStudyPlans, getStudyPlanByKnowledgeBaseId } = useStudyPlanStore(user?.email || user?.username || null);
 
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<KnowledgeBase | null>(null);
   const [currentStudyPlan, setCurrentStudyPlan] = useState<StudyPlan | null>(null);
@@ -578,6 +578,52 @@ const App: React.FC = () => {
     setCurrentScreen('studyPlanSetup');
   }, []);
 
+  const handleStartReview = useCallback(async (knowledgeBase: KnowledgeBase) => {
+    setSelectedKnowledgeBase(knowledgeBase);
+    setAllQuestions(knowledgeBase.questions);
+    try {
+      const newStudyPlan = await createStudyPlan(
+        knowledgeBase.id,
+        knowledgeBase.name,
+        knowledgeBase.questions.length,
+        30,
+        60
+      );
+      setCurrentStudyPlan(newStudyPlan);
+      setCurrentScreen('studyPlanOverview');
+    } catch (error) {
+      console.error('Error auto-creating study plan:', error);
+      alert('Có lỗi xảy ra khi tạo lộ trình ôn tập. Vui lòng thử lại.');
+    }
+  }, [createStudyPlan]);
+
+  const handleContinueReview = useCallback((knowledgeBase: KnowledgeBase, plan: StudyPlan) => {
+    setSelectedKnowledgeBase(knowledgeBase);
+    setAllQuestions(knowledgeBase.questions);
+    setCurrentStudyPlan(plan);
+    setCurrentScreen('studyPlanOverview');
+  }, []);
+
+  const handleRestartReview = useCallback(async (knowledgeBase: KnowledgeBase, plan: StudyPlan) => {
+    try {
+      const resetPlan = await resetStudyPlanProgress(plan.id);
+      setSelectedKnowledgeBase(knowledgeBase);
+      setAllQuestions(knowledgeBase.questions);
+      setCurrentStudyPlan(resetPlan || {
+        ...plan,
+        questionProgress: [],
+        completedQuestions: [],
+        newQuestionsLearned: 0,
+        currentDay: 1,
+        currentPhase: StudyPhase.Initial
+      });
+      setCurrentScreen('studyPlanOverview');
+    } catch (error) {
+      console.error('Error restarting study plan:', error);
+      alert('Có lỗi xảy ra khi bắt đầu lại lộ trình ôn tập. Vui lòng thử lại.');
+    }
+  }, [resetStudyPlanProgress]);
+
   const handleCreateStudyPlan = useCallback(async (totalDays: number, minutesPerDay: number) => {
     if (!selectedKnowledgeBase || !user) return;
 
@@ -756,6 +802,9 @@ const App: React.FC = () => {
           onCreateStudyPlan={handleCreateStudyPlanRequest}
           studyPlans={studyPlans}
           onViewStudyPlan={handleViewStudyPlan}
+          onStartReview={handleStartReview}
+          onContinueReview={handleContinueReview}
+          onRestartReview={handleRestartReview}
           isAdmin={user?.isAdmin}
           onBack={handleGoToModeSelection}
         />;
@@ -807,7 +856,7 @@ const App: React.FC = () => {
           onStartPhase2={handleStartPhase2}
           onDeleteStudyPlan={handleDeleteStudyPlan}
           onUpdateStudyPlan={handleUpdateStudyPlan}
-          onBack={handleGoToStudyPlanList}
+          onBack={handleGoToKnowledgeBase}
         />;
       case 'studyPlanList':
         if (!selectedKnowledgeBase) return handleGoToKnowledgeBase();

@@ -3,12 +3,15 @@ import { KnowledgeBase, StudyPlan } from '../types';
 
 interface KnowledgeBaseScreenProps {
   bases: KnowledgeBase[];
-  onSelect: (baseId: string) => void;
+  onSelect?: (baseId: string) => void;
   onCreate?: () => void;
   onViewHistory: () => void;
-  onCreateStudyPlan: (knowledgeBase: KnowledgeBase) => void;
+  onCreateStudyPlan?: (knowledgeBase: KnowledgeBase) => void;
   studyPlans?: StudyPlan[];
   onViewStudyPlan?: (knowledgeBase: KnowledgeBase) => void;
+  onStartReview?: (knowledgeBase: KnowledgeBase) => Promise<void> | void;
+  onContinueReview?: (knowledgeBase: KnowledgeBase, plan: StudyPlan) => void;
+  onRestartReview?: (knowledgeBase: KnowledgeBase, plan: StudyPlan) => Promise<void> | void;
   isAdmin?: boolean;
   onBack?: () => void;
 }
@@ -21,12 +24,35 @@ const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({
   onCreateStudyPlan,
   studyPlans = [],
   onViewStudyPlan,
+  onStartReview,
+  onContinueReview,
+  onRestartReview,
   isAdmin = false,
   onBack
 }) => {
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'by_topic' | 'all'>('by_topic');
   const [searchQuery, setSearchQuery] = useState('');
+  const [loadingBaseId, setLoadingBaseId] = useState<string | null>(null);
+  const [restartConfirm, setRestartConfirm] = useState<{ base: KnowledgeBase; plan: StudyPlan } | null>(null);
+
+  // Map lấy lộ trình mới nhất của từng cơ sở kiến thức
+  const latestPlanMap = useMemo(() => {
+    const map: Record<string, StudyPlan> = {};
+    (studyPlans || []).forEach(plan => {
+      const existing = map[plan.knowledgeBaseId];
+      if (!existing) {
+        map[plan.knowledgeBaseId] = plan;
+      } else {
+        const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+        const planTime = new Date(plan.updatedAt || plan.createdAt || 0).getTime();
+        if (planTime >= existingTime) {
+          map[plan.knowledgeBaseId] = plan;
+        }
+      }
+    });
+    return map;
+  }, [studyPlans]);
 
   // Nhóm các cơ sở kiến thức theo Chủ đề
   const topicGroups = useMemo(() => {
@@ -36,6 +62,7 @@ const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({
         name: string;
         bases: KnowledgeBase[];
         totalQuestions: number;
+        activePlansCount: number;
       };
     } = {};
 
@@ -46,15 +73,19 @@ const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({
           key: rawTopic,
           name: rawTopic === '__OTHER__' ? 'Chủ đề khác' : rawTopic,
           bases: [],
-          totalQuestions: 0
+          totalQuestions: 0,
+          activePlansCount: 0
         };
       }
       groups[rawTopic].bases.push(base);
       groups[rawTopic].totalQuestions += (base.questions ? base.questions.length : 0);
+      if (latestPlanMap[base.id]) {
+        groups[rawTopic].activePlansCount += 1;
+      }
     });
 
     return groups;
-  }, [bases]);
+  }, [bases, latestPlanMap]);
 
   // Kiểm tra có ít nhất 1 cơ sở kiến thức được gán chủ đề
   const hasTopics = useMemo(() => {
@@ -71,21 +102,80 @@ const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({
     );
   }, [bases, searchQuery]);
 
+  // Bắt đầu ôn tập (tạo lộ trình tự động nếu chưa có)
+  const handleStart = async (base: KnowledgeBase) => {
+    setLoadingBaseId(base.id);
+    try {
+      if (onStartReview) {
+        await onStartReview(base);
+      } else if (onCreateStudyPlan) {
+        onCreateStudyPlan(base);
+      } else if (onSelect) {
+        onSelect(base.id);
+      }
+    } catch (error) {
+      console.error('Failed to start review:', error);
+    } finally {
+      setLoadingBaseId(null);
+    }
+  };
+
+  // Tiếp tục ôn tập theo lộ trình hiện có
+  const handleContinue = (base: KnowledgeBase, plan: StudyPlan) => {
+    if (onContinueReview) {
+      onContinueReview(base, plan);
+    } else if (onViewStudyPlan) {
+      onViewStudyPlan(base);
+    }
+  };
+
+  // Xác nhận bắt đầu lại lộ trình
+  const handleConfirmRestart = async () => {
+    if (!restartConfirm) return;
+    const { base, plan } = restartConfirm;
+    setRestartConfirm(null);
+    setLoadingBaseId(base.id);
+    try {
+      if (onRestartReview) {
+        await onRestartReview(base, plan);
+      } else {
+        await handleStart(base);
+      }
+    } catch (error) {
+      console.error('Failed to restart review:', error);
+    } finally {
+      setLoadingBaseId(null);
+    }
+  };
+
   // Render thẻ hiển thị 1 cơ sở kiến thức con
   const renderBaseCard = (base: KnowledgeBase) => {
+    const plan = latestPlanMap[base.id];
+    const isLoading = loadingBaseId === base.id;
+    const totalQuestions = base.questions?.length || 0;
+    const completedCount = plan?.completedQuestions?.length || 0;
+    const progressPercent = totalQuestions > 0 ? Math.min(100, Math.round((completedCount / totalQuestions) * 100)) : 0;
+
     return (
       <div
         key={base.id}
         className="group relative bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md hover:border-sky-400 transition-all duration-200 flex flex-col justify-between"
       >
         <div>
-          {base.topic && (
-            <div className="mb-2">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            {base.topic ? (
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
                 🏷️ {base.topic}
               </span>
-            </div>
-          )}
+            ) : <span />}
+            {plan && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Đang có lộ trình
+              </span>
+            )}
+          </div>
+
           <h3 className="text-base sm:text-lg font-bold text-slate-800 leading-snug line-clamp-2 mb-2 group-hover:text-sky-600 transition-colors">
             {base.name}
           </h3>
@@ -94,29 +184,75 @@ const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({
               <svg className="w-4 h-4 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              {base.questions?.length || 0} câu hỏi
+              {totalQuestions} câu hỏi
             </span>
             <span>•</span>
             <span className="text-xs text-slate-400">
               {new Date(base.createdAt).toLocaleDateString('vi-VN')}
             </span>
           </div>
+
+          {plan && (
+            <div className="mt-3 pt-2.5 border-t border-slate-100">
+              <div className="flex justify-between text-xs text-slate-600 mb-1">
+                <span>Tiến độ ghi nhớ</span>
+                <span className="font-semibold text-emerald-600">{completedCount}/{totalQuestions} câu ({progressPercent}%)</span>
+              </div>
+              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                <div
+                  className="bg-emerald-500 h-full rounded-full transition-all duration-300"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="mt-5 pt-4 border-t border-slate-100 flex flex-col sm:flex-row gap-2">
-          <button
-            onClick={() => onSelect(base.id)}
-            className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-sky-600 hover:bg-sky-700 rounded-lg shadow-sm transition-colors min-h-[42px] flex items-center justify-center gap-1.5"
-          >
-            🎯 Ôn tập bài này
-          </button>
-          {onViewStudyPlan && (
+        <div className="mt-5 pt-4 border-t border-slate-100">
+          {plan ? (
+            <div className="flex flex-col sm:flex-row gap-2 w-full">
+              <button
+                type="button"
+                onClick={() => setRestartConfirm({ base, plan })}
+                disabled={isLoading}
+                className="flex-1 px-3 py-2.5 text-xs sm:text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 active:bg-amber-200 border border-amber-200 rounded-lg transition-colors min-h-[42px] flex items-center justify-center gap-1.5"
+                title="Bắt đầu lại lộ trình ôn tập này từ đầu"
+              >
+                <span>🔄</span>
+                <span>Bắt đầu lại</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleContinue(base, plan)}
+                disabled={isLoading}
+                className="flex-1 px-3.5 py-2.5 text-xs sm:text-sm font-semibold text-white bg-sky-600 hover:bg-sky-700 active:bg-sky-800 rounded-lg shadow-sm transition-colors min-h-[42px] flex items-center justify-center gap-1.5"
+                title="Tiếp tục học lộ trình"
+              >
+                <span>▶️</span>
+                <span>Tiếp tục ôn tập</span>
+              </button>
+            </div>
+          ) : (
             <button
-              onClick={() => onViewStudyPlan(base)}
-              className="px-3.5 py-2.5 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors min-h-[42px] flex items-center justify-center gap-1"
-              title="Kế hoạch ôn tập"
+              type="button"
+              onClick={() => handleStart(base)}
+              disabled={isLoading}
+              className="w-full px-4 py-2.5 text-sm font-semibold text-white bg-sky-600 hover:bg-sky-700 active:bg-sky-800 rounded-lg shadow-sm transition-colors min-h-[42px] flex items-center justify-center gap-1.5"
             >
-              📅 Kế hoạch
+              {isLoading ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  <span>Đang khởi tạo lộ trình...</span>
+                </>
+              ) : (
+                <>
+                  <span>🎯</span>
+                  <span>Bắt đầu ôn tập</span>
+                </>
+              )}
             </button>
           )}
         </div>
@@ -307,9 +443,14 @@ const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({
                     <h4 className="font-bold text-slate-900 text-base sm:text-lg mb-1 group-hover:text-sky-600 transition-colors">
                       {group.name}
                     </h4>
-                    <p className="text-xs sm:text-sm text-slate-500 mb-4">
-                      Gồm <span className="font-semibold text-slate-700">{group.bases.length}</span> bài ôn tập con
-                    </p>
+                    <div className="text-xs sm:text-sm text-slate-500 mb-4 flex items-center justify-between gap-2">
+                      <span>Gồm <span className="font-semibold text-slate-700">{group.bases.length}</span> bài ôn tập con</span>
+                      {group.activePlansCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          {group.activePlansCount}/{group.bases.length} đang ôn
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="pt-4 mt-2 border-t border-slate-100 flex items-center justify-between text-sm font-semibold text-sky-600 group-hover:text-sky-700">
@@ -356,6 +497,39 @@ const KnowledgeBaseScreen: React.FC<KnowledgeBaseScreenProps> = ({
         /* 4. Chế độ xem tất cả (danh sách phẳng) */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {filteredBases.map(renderBaseCard)}
+        </div>
+      )}
+
+      {/* Modal xác nhận bắt đầu lại lộ trình */}
+      {restartConfirm && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-100 transform transition-all">
+            <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto mb-4 text-2xl">
+              🔄
+            </div>
+            <h3 className="text-lg font-bold text-slate-800 text-center mb-2">
+              Bắt đầu lại lộ trình ôn tập?
+            </h3>
+            <p className="text-sm text-slate-600 text-center mb-6 leading-relaxed">
+              Tiến trình ôn tập của bài <span className="font-semibold text-slate-800">"{restartConfirm.base.name}"</span> sẽ được làm mới về Ngày 1. Toàn bộ câu hỏi sẽ được bắt đầu lại từ đầu.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setRestartConfirm(null)}
+                className="flex-1 px-4 py-2.5 border border-slate-300 text-slate-700 font-medium rounded-xl hover:bg-slate-50 active:bg-slate-100 transition-colors"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRestart}
+                className="flex-1 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-semibold rounded-xl shadow-sm transition-colors"
+              >
+                Xác nhận bắt đầu lại
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
