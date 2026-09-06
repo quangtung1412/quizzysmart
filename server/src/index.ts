@@ -732,6 +732,7 @@ app.get('/api/bases', async (_req: Request, res: Response) => {
     const result = bases.map(b => ({
       id: b.id,
       name: b.name,
+      topic: (b as any).topic || null,
       createdAt: b.createdAt,
       questions: b.questions.map(q => ({
         id: q.id,
@@ -755,9 +756,12 @@ app.post('/api/bases', async (req: Request, res: Response) => {
   let user = await prisma.user.findUnique({ where: { email } });
   if (!user) user = await prisma.user.create({ data: { email } });
   if ((user as any).role !== 'admin') return res.status(403).json({ error: 'Only admin can create knowledge bases' });
-  const created = await prisma.knowledgeBase.create({
+  
+  const topicTrimmed = base.topic ? String(base.topic).trim() : null;
+  const created = await (prisma as any).knowledgeBase.create({
     data: {
       name: base.name,
+      topic: topicTrimmed,
       userId: user.id,
       questions: {
         create: base.questions.map((q: any) => ({ text: q.question, options: JSON.stringify(q.options), correctAnswerIdx: q.correctAnswerIndex, source: q.source, category: q.category }))
@@ -765,9 +769,23 @@ app.post('/api/bases', async (req: Request, res: Response) => {
     },
     include: { questions: true }
   });
+
+  if (topicTrimmed) {
+    try {
+      await (prisma as any).topic.upsert({
+        where: { name: topicTrimmed },
+        update: {},
+        create: { name: topicTrimmed }
+      });
+    } catch (e) {
+      console.warn('Failed to upsert topic for base:', e);
+    }
+  }
+
   res.json({
     id: created.id,
     name: created.name,
+    topic: (created as any).topic || null,
     createdAt: created.createdAt,
     questions: created.questions.map(q => ({
       id: q.id,
@@ -1121,6 +1139,7 @@ app.get('/api/tests', async (req: Request, res: Response) => {
       id: test.id,
       name: test.name,
       description: test.description,
+      topic: (test as any).topic || null,
       questionCount: test.questionCount,
       timeLimit: test.timeLimit,
       maxAttempts: test.maxAttempts,
@@ -1879,6 +1898,76 @@ app.delete('/api/admin/groups/:id', async (req: Request, res: Response) => {
   }
 });
 
+// Topics endpoints
+app.get('/api/topics', async (req: Request, res: Response) => {
+  try {
+    const managedTopics = await (prisma as any).topic.findMany({
+      orderBy: { name: 'asc' }
+    }).catch(() => []);
+
+    const kbTopics = await (prisma as any).knowledgeBase.findMany({
+      where: { topic: { not: null } },
+      select: { topic: true },
+      distinct: ['topic']
+    }).catch(() => []);
+
+    const testTopics = await (prisma as any).test.findMany({
+      where: { topic: { not: null } },
+      select: { topic: true },
+      distinct: ['topic']
+    }).catch(() => []);
+
+    const allTopicNames = new Set<string>();
+    managedTopics.forEach((t: any) => { if (t.name) allTopicNames.add(t.name.trim()); });
+    kbTopics.forEach((k: any) => { if (k.topic) allTopicNames.add(k.topic.trim()); });
+    testTopics.forEach((t: any) => { if (t.topic) allTopicNames.add(t.topic.trim()); });
+
+    const topicList = await Promise.all(
+      Array.from(allTopicNames).sort().map(async (name) => {
+        const managed = managedTopics.find((t: any) => t.name.toLowerCase() === name.toLowerCase());
+        const testCount = await (prisma as any).test.count({
+          where: { topic: name, isActive: true }
+        }).catch(() => 0);
+        const kbCount = await (prisma as any).knowledgeBase.count({
+          where: { topic: name }
+        }).catch(() => 0);
+
+        return {
+          id: managed?.id || name,
+          name,
+          description: managed?.description || null,
+          testCount,
+          kbCount,
+          createdAt: managed?.createdAt || null
+        };
+      })
+    );
+
+    res.json(topicList);
+  } catch (error: any) {
+    console.error('Failed to get topics:', error);
+    res.status(500).json({ error: error.message || 'Failed to get topics' });
+  }
+});
+
+app.post('/api/admin/topics', async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const { name, description } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Tên chủ đề không được để trống' });
+  const topicName = name.trim();
+  try {
+    const topic = await (prisma as any).topic.upsert({
+      where: { name: topicName },
+      create: { name: topicName, description: description || null },
+      update: { description: description !== undefined ? description : undefined }
+    });
+    res.json(topic);
+  } catch (error: any) {
+    console.error('Failed to create topic:', error);
+    res.status(500).json({ error: error.message || 'Failed to create topic' });
+  }
+});
+
 // Admin knowledge base management endpoints
 app.get('/api/admin/knowledge-bases', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
@@ -1892,6 +1981,7 @@ app.get('/api/admin/knowledge-bases', async (req: Request, res: Response) => {
   const result = bases.map(b => ({
     id: b.id,
     name: b.name,
+    topic: (b as any).topic || null,
     createdAt: b.createdAt,
     creatorEmail: b.user.email,
     creatorName: b.user.name,
@@ -1909,9 +1999,18 @@ app.get('/api/admin/knowledge-bases', async (req: Request, res: Response) => {
 
 app.post('/api/admin/knowledge-bases', async (req: Request, res: Response) => {
   const admin = await requireAdmin(req, res); if (!admin) return;
-  const { name, questions, creatorEmail } = req.body;
+  const { name, questions, creatorEmail, topic } = req.body;
   if (!name || !Array.isArray(questions) || questions.length === 0) {
     return res.status(400).json({ error: 'Invalid payload' });
+  }
+
+  const topicName = typeof topic === 'string' && topic.trim() ? topic.trim() : null;
+  if (topicName) {
+    await (prisma as any).topic.upsert({
+      where: { name: topicName },
+      create: { name: topicName },
+      update: {}
+    }).catch(() => {});
   }
 
   // Find or create user for creator
@@ -1920,9 +2019,10 @@ app.post('/api/admin/knowledge-bases', async (req: Request, res: Response) => {
     user = await prisma.user.create({ data: { email: creatorEmail || admin.email } });
   }
 
-  const created = await prisma.knowledgeBase.create({
+  const created = await (prisma as any).knowledgeBase.create({
     data: {
       name,
+      topic: topicName,
       userId: user.id,
       questions: {
         create: questions.map((q: any) => ({
@@ -1957,6 +2057,7 @@ app.post('/api/admin/tests', async (req: Request, res: Response) => {
   const {
     name,
     description,
+    topic,
     questionCount,
     timeLimit,
     maxAttempts,
@@ -1976,6 +2077,15 @@ app.post('/api/admin/tests', async (req: Request, res: Response) => {
   const totalPercentage = knowledgeSources.reduce((sum: number, source: any) => sum + (source.percentage || 0), 0);
   if (Math.abs(totalPercentage - 100) > 0.01) {
     return res.status(400).json({ error: 'Knowledge source percentages must add up to 100%' });
+  }
+
+  const topicName = typeof topic === 'string' && topic.trim() ? topic.trim() : null;
+  if (topicName) {
+    await (prisma as any).topic.upsert({
+      where: { name: topicName },
+      create: { name: topicName },
+      update: {}
+    }).catch(() => {});
   }
 
   try {
@@ -2015,6 +2125,7 @@ app.post('/api/admin/tests', async (req: Request, res: Response) => {
       data: {
         name,
         description: description || '',
+        topic: topicName,
         questionCount,
         timeLimit,
         maxAttempts: maxAttempts || 0, // Default to 0 (unlimited) if not specified
@@ -2064,6 +2175,7 @@ app.post('/api/admin/tests/batch', async (req: Request, res: Response) => {
   const {
     name,
     description,
+    topic,
     questionCountPerTest,
     timeLimit,
     maxAttempts,
@@ -2077,6 +2189,15 @@ app.post('/api/admin/tests/batch', async (req: Request, res: Response) => {
 
   if (!name || !questionCountPerTest || questionCountPerTest <= 0 || !timeLimit || timeLimit <= 0 || !Array.isArray(knowledgeBaseIds) || knowledgeBaseIds.length === 0) {
     return res.status(400).json({ error: 'Missing required fields or invalid parameters' });
+  }
+
+  const topicName = typeof topic === 'string' && topic.trim() ? topic.trim() : null;
+  if (topicName) {
+    await (prisma as any).topic.upsert({
+      where: { name: topicName },
+      create: { name: topicName },
+      update: {}
+    }).catch(() => {});
   }
 
   try {
@@ -2205,6 +2326,7 @@ app.post('/api/admin/tests/batch', async (req: Request, res: Response) => {
         data: {
           name: testName,
           description: description || '',
+          topic: topicName,
           questionCount: finalQuestionOrder.length,
           timeLimit,
           maxAttempts: maxAttempts || 0,
@@ -2279,6 +2401,7 @@ app.get('/api/admin/tests', async (req: Request, res: Response) => {
     id: t.id,
     name: t.name,
     description: t.description,
+    topic: t.topic || null,
     questionCount: t.questionCount,
     timeLimit: t.timeLimit,
     maxAttempts: t.maxAttempts, // Add maxAttempts field
@@ -2304,6 +2427,7 @@ app.put('/api/admin/tests/:id', async (req: Request, res: Response) => {
   const {
     name,
     description,
+    topic,
     questionCount,
     timeLimit,
     maxAttempts,
@@ -2319,6 +2443,15 @@ app.put('/api/admin/tests/:id', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
+  const topicName = typeof topic === 'string' ? topic.trim() : (topic === null ? null : undefined);
+  if (topicName) {
+    await (prisma as any).topic.upsert({
+      where: { name: topicName },
+      create: { name: topicName },
+      update: {}
+    }).catch(() => {});
+  }
+
   try {
     // Update the test
     await (prisma as any).test.update({
@@ -2326,6 +2459,7 @@ app.put('/api/admin/tests/:id', async (req: Request, res: Response) => {
       data: {
         name,
         description: description || '',
+        ...(topic !== undefined ? { topic: topicName } : {}),
         questionCount,
         timeLimit,
         maxAttempts: maxAttempts !== undefined ? maxAttempts : 0, // Allow 0, fallback to 0 if undefined
@@ -3405,6 +3539,27 @@ app.use(errorLogger);
   } catch (error) {
     console.error('[RAG] Failed to initialize Qdrant:', error);
     console.error('[RAG] RAG features will be disabled');
+  }
+// Ensure topic columns and tables exist in DB
+(async () => {
+  try {
+    await prisma.$executeRawUnsafe(`ALTER TABLE \`KnowledgeBase\` ADD COLUMN \`topic\` VARCHAR(255) NULL`).catch(() => {});
+    await prisma.$executeRawUnsafe(`CREATE INDEX \`KnowledgeBase_topic_idx\` ON \`KnowledgeBase\`(\`topic\`)`).catch(() => {});
+    await prisma.$executeRawUnsafe(`ALTER TABLE \`tests\` ADD COLUMN \`topic\` VARCHAR(255) NULL`).catch(() => {});
+    await prisma.$executeRawUnsafe(`CREATE INDEX \`tests_topic_idx\` ON \`tests\`(\`topic\`)`).catch(() => {});
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS \`topics\` (
+        \`id\` VARCHAR(191) NOT NULL,
+        \`name\` VARCHAR(191) NOT NULL,
+        \`description\` TEXT NULL,
+        \`createdAt\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        \`updatedAt\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        UNIQUE INDEX \`topics_name_key\`(\`name\`),
+        PRIMARY KEY (\`id\`)
+      ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    `).catch(() => {});
+  } catch (e) {
+    // Ignore schema auto-patching errors
   }
 })();
 

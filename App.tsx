@@ -470,12 +470,12 @@ const App: React.FC = () => {
     setCurrentScreen('upload');
   }, []);
 
-  const handleSaveNewBase = useCallback(async (name: string, questions: Question[]) => {
+  const handleSaveNewBase = useCallback(async (name: string, questions: Question[], topic?: string) => {
     if (!user) return;
     const userEmail = user.email || user.username || '';
     if (!userEmail) return;
 
-    const created = await addBase(userEmail, { name, questions } as any);
+    const created = await addBase(userEmail, { name, questions, topic } as any);
     setAllQuestions(created.questions);
     setSelectedKnowledgeBase(created as any);
     setCurrentScreen('menu');

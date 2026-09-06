@@ -55,6 +55,7 @@ interface Test {
   id: string;
   name: string;
   description?: string;
+  topic?: string | null;
   questionCount: number;
   timeLimit: number;
   maxAttempts: number;
@@ -81,6 +82,7 @@ interface AssignedUser {
 interface KnowledgeBase {
   id: string;
   name: string;
+  topic?: string | null;
   questions: any[];
   creatorEmail?: string;
 }
@@ -119,10 +121,18 @@ const TestManagement: React.FC = () => {
   const [creationMode, setCreationMode] = useState<'single' | 'batch'>('single');
   const [selectedBatchKbIds, setSelectedBatchKbIds] = useState<string[]>([]);
 
+  // Topic states
+  const [topicsList, setTopicsList] = useState<string[]>([]);
+  const [selectedTopicFilter, setSelectedTopicFilter] = useState<string>('all');
+  const [testSearchTerm, setTestSearchTerm] = useState<string>('');
+  const [isCreatingNewTopic, setIsCreatingNewTopic] = useState(false);
+  const [customTopic, setCustomTopic] = useState('');
+
   // Form state
   const [formData, setFormData] = useState({
     name: '',
     description: '',
+    topic: '',
     questionCount: 20,
     timeLimit: 60, // minutes
     maxAttempts: 0, // default unlimited attempts
@@ -174,19 +184,43 @@ const TestManagement: React.FC = () => {
     return [...tests].sort((a, b) => b.id.localeCompare(a.id));
   }, [tests]);
 
+  const filteredTests = useMemo(() => {
+    return sortedTests.filter(t => {
+      const q = testSearchTerm.trim().toLowerCase();
+      const matchSearch =
+        q === '' ||
+        t.name.toLowerCase().includes(q) ||
+        (t.description && t.description.toLowerCase().includes(q)) ||
+        (t.topic && t.topic.toLowerCase().includes(q));
+
+      const matchTopic =
+        selectedTopicFilter === 'all'
+          ? true
+          : selectedTopicFilter === '__NONE__'
+          ? !t.topic
+          : t.topic === selectedTopicFilter;
+
+      return matchSearch && matchTopic;
+    });
+  }, [sortedTests, testSearchTerm, selectedTopicFilter]);
+
   const loadData = async () => {
     setLoading(true);
     try {
-      const [testsData, basesData, usersData, groupsData] = await Promise.all([
+      const [testsData, basesData, usersData, groupsData, topicsData] = await Promise.all([
         api.adminListTests(),
         api.adminListKnowledgeBases(),
         api.adminListUsers(),
-        api.adminListGroups().catch(() => [])
+        api.adminListGroups().catch(() => []),
+        api.listTopics().catch(() => [])
       ]);
       setTests(testsData);
       setKnowledgeBases(basesData);
       setUsers(usersData);
       setGroups(groupsData);
+      if (Array.isArray(topicsData)) {
+        setTopicsList(topicsData.map(t => t.name).filter(Boolean));
+      }
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
@@ -202,6 +236,7 @@ const TestManagement: React.FC = () => {
     setFormData({
       name: '',
       description: '',
+      topic: '',
       questionCount: 20,
       timeLimit: 60,
       maxAttempts: 0,
@@ -216,6 +251,16 @@ const TestManagement: React.FC = () => {
     setAssignedGroupIds([]);
     setCreationMode('single');
     setSelectedBatchKbIds([]);
+    setIsCreatingNewTopic(false);
+    setCustomTopic('');
+  };
+
+  // Helper chọn tất cả CSKT thuộc chủ đề hiện tại
+  const selectBatchKbsByCurrentTopic = (targetTopic?: string) => {
+    const t = (targetTopic || (isCreatingNewTopic ? customTopic : formData.topic)).trim();
+    if (!t) return;
+    const matchedKbIds = knowledgeBases.filter(kb => kb.topic === t).map(kb => kb.id);
+    setSelectedBatchKbIds(matchedKbIds);
   };
 
   /** Merge individual users + selected groups + admin group into final assignment IDs */
@@ -327,6 +372,8 @@ const TestManagement: React.FC = () => {
   };
 
   const handleCreateTest = async () => {
+    const finalTopic = (isCreatingNewTopic ? customTopic : formData.topic).trim() || undefined;
+
     if (creationMode === 'batch') {
       if (!canSubmitBatch()) return;
       
@@ -335,6 +382,7 @@ const TestManagement: React.FC = () => {
         const res = await api.adminCreateTestBatch({
           name: formData.name,
           description: formData.description,
+          topic: finalTopic,
           questionCountPerTest: formData.questionCount,
           timeLimit: formData.timeLimit,
           maxAttempts: formData.maxAttempts,
@@ -364,6 +412,7 @@ const TestManagement: React.FC = () => {
         await api.adminCreateTest({
           name: formData.name,
           description: formData.description,
+          topic: finalTopic,
           questionCount: formData.questionCount,
           timeLimit: formData.timeLimit,
           maxAttempts: formData.maxAttempts,
@@ -392,6 +441,7 @@ const TestManagement: React.FC = () => {
     setFormData({
       name: test.name,
       description: test.description || '',
+      topic: test.topic || '',
       questionCount: test.questionCount,
       timeLimit: test.timeLimit,
       maxAttempts: test.maxAttempts, // Use exact value from database
@@ -402,6 +452,8 @@ const TestManagement: React.FC = () => {
       knowledgeSources: test.knowledgeSources,
       assignedUsers: test.assignedUsers.map(u => u.id)
     });
+    setIsCreatingNewTopic(false);
+    setCustomTopic('');
     // Admin group is considered assigned if every current admin is in the assignment
     const allAdminsAssigned =
       adminUserIds.length > 0 &&
@@ -415,11 +467,14 @@ const TestManagement: React.FC = () => {
   const handleUpdateTest = async () => {
     if (!canSubmit() || !selectedTestId) return;
     
+    const finalTopic = (isCreatingNewTopic ? customTopic : formData.topic).trim() || undefined;
+
     setLoading(true);
     try {
       await api.adminUpdateTest(selectedTestId, {
         name: formData.name,
         description: formData.description,
+        topic: finalTopic,
         questionCount: formData.questionCount,
         timeLimit: formData.timeLimit,
         maxAttempts: formData.maxAttempts,
@@ -540,8 +595,33 @@ const TestManagement: React.FC = () => {
 
       {/* Tests Table */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200">
+        <div className="px-6 py-4 border-b border-slate-200 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <h4 className="text-lg font-semibold text-slate-800">Danh sách bài thi</h4>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Tìm kiếm bài thi..."
+                value={testSearchTerm}
+                onChange={e => setTestSearchTerm(e.target.value)}
+                className="pl-9 pr-3 py-1.5 border border-slate-300 rounded-md text-sm focus:ring-2 focus:ring-sky-500 focus:border-transparent w-full sm:w-56"
+              />
+              <svg className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+            <select
+              value={selectedTopicFilter}
+              onChange={e => setSelectedTopicFilter(e.target.value)}
+              className="px-3 py-1.5 border border-slate-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+            >
+              <option value="all">Tất cả chủ đề</option>
+              {topicsList.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+              <option value="__NONE__">Chưa có chủ đề</option>
+            </select>
+          </div>
         </div>
         <div className="overflow-x-auto">
           {loading && !showCreateModal ? (
@@ -556,14 +636,15 @@ const TestManagement: React.FC = () => {
                   <th className="px-4 py-3">
                     <input
                       type="checkbox"
-                      checked={tests.length > 0 && selectedExportIds.length === tests.length}
+                      checked={filteredTests.length > 0 && selectedExportIds.length === filteredTests.length}
                       onChange={(e) => {
-                        setSelectedExportIds(e.target.checked ? tests.map(t => t.id) : []);
+                        setSelectedExportIds(e.target.checked ? filteredTests.map(t => t.id) : []);
                       }}
                       title="Chọn tất cả để xuất Excel"
                     />
                   </th>
                   <th className="px-6 py-3 font-medium text-slate-600">Tên bài thi</th>
+                  <th className="px-6 py-3 font-medium text-slate-600">Chủ đề</th>
                   <th className="px-6 py-3 font-medium text-slate-600">Số câu hỏi</th>
                   <th className="px-6 py-3 font-medium text-slate-600">Thời gian</th>
                   <th className="px-6 py-3 font-medium text-slate-600">Số lần thi</th>
@@ -574,21 +655,37 @@ const TestManagement: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {sortedTests.map(test => (
-                  <tr key={test.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-4">
-                      <input
-                        type="checkbox"
-                        checked={selectedExportIds.includes(test.id)}
-                        onChange={() => toggleExportSelection(test.id)}
-                      />
+                {filteredTests.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="px-6 py-8 text-center text-slate-500">
+                      Không tìm thấy bài thi nào phù hợp
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="font-medium text-slate-900">{test.name}</div>
-                      {test.description && (
-                        <div className="text-sm text-slate-500">{test.description}</div>
-                      )}
-                    </td>
+                  </tr>
+                ) : (
+                  filteredTests.map(test => (
+                    <tr key={test.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedExportIds.includes(test.id)}
+                          onChange={() => toggleExportSelection(test.id)}
+                        />
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="font-medium text-slate-900">{test.name}</div>
+                        {test.description && (
+                          <div className="text-sm text-slate-500">{test.description}</div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {test.topic ? (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                            {test.topic}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-400 italic">Chưa có</span>
+                        )}
+                      </td>
                     <td className="px-6 py-4 text-slate-600">{test.questionCount} câu</td>
                     <td className="px-6 py-4 text-slate-600">{test.timeLimit} phút</td>
                     <td className="px-6 py-4 text-slate-600">
@@ -712,14 +809,49 @@ const TestManagement: React.FC = () => {
                 </div>
                 
                 <div>
+                <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Mô tả</label>
                   <textarea
                     value={formData.description}
                     onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                    rows={3}
+                    rows={2}
                     className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-sky-500 focus:border-transparent"
                     placeholder="Nhập mô tả bài thi..."
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Chủ đề (Topic)
+                  </label>
+                  <select
+                    value={isCreatingNewTopic ? '__NEW__' : formData.topic}
+                    onChange={(e) => {
+                      if (e.target.value === '__NEW__') {
+                        setIsCreatingNewTopic(true);
+                      } else {
+                        setIsCreatingNewTopic(false);
+                        setFormData(prev => ({ ...prev, topic: e.target.value }));
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm bg-white"
+                  >
+                    <option value="">-- Không phân loại chủ đề --</option>
+                    {topicsList.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                    <option value="__NEW__">+ Nhập chủ đề mới...</option>
+                  </select>
+                  {isCreatingNewTopic && (
+                    <input
+                      type="text"
+                      value={customTopic}
+                      onChange={e => setCustomTopic(e.target.value)}
+                      placeholder="Nhập tên chủ đề mới..."
+                      className="mt-2 w-full px-3 py-2 border border-sky-300 rounded-md focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm"
+                      autoFocus
+                    />
+                  )}
                 </div>
                 
                 <div className="grid grid-cols-3 gap-4">
@@ -817,11 +949,21 @@ const TestManagement: React.FC = () => {
                 {/* Knowledge Sources */}
                 {creationMode === 'batch' ? (
                   <div>
-                    <div className="flex justify-between items-center mb-2">
+                    <div className="flex flex-wrap justify-between items-center mb-2 gap-2">
                       <label className="block text-sm font-medium text-slate-700">
                         Chọn các chủ đề (Cơ sở kiến thức) *
                       </label>
-                      <div className="flex space-x-2">
+                      <div className="flex flex-wrap gap-2">
+                        {Boolean((isCreatingNewTopic ? customTopic : formData.topic).trim()) && (
+                          <button
+                            type="button"
+                            onClick={() => selectBatchKbsByCurrentTopic()}
+                            className="text-xs text-purple-600 hover:text-purple-800 font-semibold"
+                            title="Chọn tất cả CSKT có cùng chủ đề này"
+                          >
+                            Chọn theo chủ đề
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={selectAllBatchKbs}
@@ -834,7 +976,7 @@ const TestManagement: React.FC = () => {
                           onClick={unselectAllBatchKbs}
                           className="text-xs text-red-600 hover:text-red-800 font-medium"
                         >
-                          Bỏ chọn tất cả
+                          Bỏ chọn
                         </button>
                       </div>
                     </div>
@@ -855,6 +997,11 @@ const TestManagement: React.FC = () => {
                                 onChange={() => toggleBatchKbSelection(kb.id)}
                               />
                               <span className="font-medium text-slate-800">{kb.name}</span>
+                              {kb.topic && (
+                                <span className="ml-1 text-[11px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">
+                                  {kb.topic}
+                                </span>
+                              )}
                             </div>
                             <div className="text-xs text-slate-500">
                               <span className="font-semibold text-slate-700">{count} câu</span>
@@ -1156,10 +1303,44 @@ const TestManagement: React.FC = () => {
                   <textarea
                     value={formData.description}
                     onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                    rows={3}
+                    rows={2}
                     className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-sky-500 focus:border-transparent"
                     placeholder="Nhập mô tả bài thi..."
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Chủ đề (Topic)
+                  </label>
+                  <select
+                    value={isCreatingNewTopic ? '__NEW__' : formData.topic}
+                    onChange={(e) => {
+                      if (e.target.value === '__NEW__') {
+                        setIsCreatingNewTopic(true);
+                      } else {
+                        setIsCreatingNewTopic(false);
+                        setFormData(prev => ({ ...prev, topic: e.target.value }));
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm bg-white"
+                  >
+                    <option value="">-- Không phân loại chủ đề --</option>
+                    {topicsList.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                    <option value="__NEW__">+ Nhập chủ đề mới...</option>
+                  </select>
+                  {isCreatingNewTopic && (
+                    <input
+                      type="text"
+                      value={customTopic}
+                      onChange={e => setCustomTopic(e.target.value)}
+                      placeholder="Nhập tên chủ đề mới..."
+                      className="mt-2 w-full px-3 py-2 border border-sky-300 rounded-md focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm"
+                      autoFocus
+                    />
+                  )}
                 </div>
                 
                 <div className="grid grid-cols-3 gap-4">

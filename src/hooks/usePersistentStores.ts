@@ -14,6 +14,7 @@ export function useKnowledgeBaseStore(userEmail: string | null) {
     const newBase: KnowledgeBase = {
       id: created.id,
       name: created.name,
+      topic: created.topic || null,
       createdAt: created.createdAt,
       questions: created.questions.map((q: any) => ({
         id: q.id,

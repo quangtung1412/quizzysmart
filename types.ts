@@ -15,8 +15,19 @@ export interface Question {
 export interface KnowledgeBase {
   id: string;
   name: string;
+  topic?: string | null;
+  creatorEmail?: string;
   questions: Question[];
   createdAt: string;
+}
+
+export interface TopicItem {
+  id: string;
+  name: string;
+  description?: string | null;
+  testCount?: number;
+  kbCount?: number;
+  createdAt?: string | null;
 }
 
 export type UserRole = 'admin' | 'user';
@@ -50,6 +61,7 @@ export interface AppUser {
 export interface AdminTestSummary {
   id: string;
   name: string;
+  topic?: string | null;
   knowledgeBaseId: string;
   questionCount: number;
   shuffleQuestions?: boolean;

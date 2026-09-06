@@ -127,6 +127,7 @@ export const api = {
   adminCreateTest: (payload: {
     name: string;
     description?: string;
+    topic?: string;
     questionCount: number;
     timeLimit: number;
     maxAttempts?: number;
@@ -140,6 +141,7 @@ export const api = {
   adminCreateTestBatch: (payload: {
     name: string;
     description?: string;
+    topic?: string;
     questionCountPerTest: number;
     timeLimit: number;
     maxAttempts?: number;
@@ -153,6 +155,7 @@ export const api = {
   adminUpdateTest: (testId: string, payload: {
     name: string;
     description?: string;
+    topic?: string;
     questionCount: number;
     timeLimit: number;
     maxAttempts?: number;
@@ -173,7 +176,12 @@ export const api = {
     }),
   adminListKnowledgeBases: () => request<any[]>(`/api/admin/knowledge-bases`),
   adminDeleteKnowledgeBase: (baseId: string) => request<{ ok: boolean }>(`/api/admin/knowledge-bases/${baseId}`, { method: 'DELETE' }),
-  adminCreateKnowledgeBase: (payload: { name: string; questions: any[]; creatorEmail?: string }) => request<{ id: string }>(`/api/admin/knowledge-bases`, { method: 'POST', body: JSON.stringify(payload) }),
+  adminCreateKnowledgeBase: (payload: { name: string; questions: any[]; creatorEmail?: string; topic?: string }) => request<{ id: string }>(`/api/admin/knowledge-bases`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Topics
+  listTopics: () => request<Array<{ id: string; name: string; description?: string | null; testCount: number; kbCount: number }>>(`/api/topics`),
+  adminCreateTopic: (payload: { name: string; description?: string }) =>
+    request<{ id: string; name: string }>(`/api/admin/topics`, { method: 'POST', body: JSON.stringify(payload) }),
 
   // User groups
   adminListGroups: () => request<any[]>(`/api/admin/groups`),

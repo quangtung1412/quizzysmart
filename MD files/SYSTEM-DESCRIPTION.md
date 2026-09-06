@@ -38,12 +38,24 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
 - `POST /api/admin/collections`: Tao moi collection vector voi dimension va khoang cach Cosine.
 - `DELETE /api/admin/collections/:name`: Xoa collection khoi Qdrant.
 
-### 2.3. Socket.IO Events
+### 2.3. Topics, Knowledge Bases & Tests with Topics
+- `GET /api/topics`: Lay danh sach tat ca cac chu de trong he thong gom `{ id, name, description, createdAt }`.
+- `POST /api/admin/topics`: Tao moi hoac upsert chu de (Admin only).
+- `GET /api/bases`, `GET /api/admin/knowledge-bases`: Tra ve danh sach co so kien thuc co truong `topic`.
+- `POST /api/bases`, `POST /api/admin/knowledge-bases`: Tiep nhan `topic` luu vao `KnowledgeBase` va tu dong upsert vao bang `Topic`.
+- `GET /api/tests`, `GET /api/admin/tests`: Tra ve danh sach bai thi co truong `topic`.
+- `POST /api/admin/tests`, `POST /api/admin/tests/batch`, `PUT /api/admin/tests/:id`: Tiep nhan `topic`, luu vao `Test` va upsert vao bang `Topic`.
+
+### 2.4. Socket.IO Events
 - Event `document:processing`: Ban tien do xu ly van ban RAG real-time `{ documentId, status, progress, currentStep, chunksCreated, chunksEmbedded, error }`.
 
-## 3. Frontend Admin Navigation
+## 3. Frontend Navigation & User Flows
 - `AdminDashboard.tsx`:
-  - `tests`: Quan ly bai thi.
-  - `knowledge`: Quan ly co so kien thuc.
-  - `documents`: Quan ly van ban RAG (`components/admin/DocumentManagement.tsx`) - Ho tro bo loc theo Collection (hien thi so luong theo tung collection), bo loc trang thai xu ly (Tat ca, Hoan thanh, Dang xu ly, Loi), tim kiem tu khoa va thong ke truc quan.
+  - `tests`: Quan ly bai thi (`components/admin/TestManagement.tsx`) - Ho tro tao de don / bo de batch gan chu de, loc theo chu de, badge chu de tren tung bai thi.
+  - `knowledge`: Quan ly co so kien thuc (`components/admin/KnowledgeManagement.tsx`) - Ho tro tai len Excel gan chu de hoac tao chu de moi, loc theo chu de, badge chu de.
+  - `documents`: Quan ly van ban RAG (`components/admin/DocumentManagement.tsx`) - Ho tro bo loc theo Collection, trang thai xu ly, tim kiem va thong ke.
   - `collections`: Quan ly Vector Collections (`components/admin/CollectionManagement.tsx`).
+- `TestListScreen.tsx` (Man hinh thi cua nguoi dung):
+  - Khi bai thi co chu de: nguoi dung duoc chon Chu de o Cap 1 (The chu de voi so luong bai thi con, tien do hoan thanh, diem cao nhat) -> vao Cap 2 xem cac bai thi con cua chu de do.
+  - Cung cap Breadcrumb dieu huong quay lai danh sach chu de.
+  - Ho tro chuyen doi che do xem ("Theo chu de" / "Tat ca bai thi") va thanh tim kiem tuc thi.

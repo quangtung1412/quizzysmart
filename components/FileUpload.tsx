@@ -1,20 +1,40 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import type { Question } from '../types';
 import { v4 as uuidv4 } from 'uuid';
+import { api } from '../src/api';
 
 interface FileUploadProps {
-  onSaveNewBase: (name: string, questions: Question[]) => void;
+  onSaveNewBase: (name: string, questions: Question[], topic?: string) => void;
   onBack: () => void;
+  availableTopics?: string[];
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack, availableTopics }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [parsedQuestions, setParsedQuestions] = useState<Question[] | null>(null);
   const [baseName, setBaseName] = useState('');
+  const [topics, setTopics] = useState<string[]>(availableTopics || []);
+  const [selectedTopic, setSelectedTopic] = useState('');
+  const [customTopic, setCustomTopic] = useState('');
+  const [isCreatingNewTopic, setIsCreatingNewTopic] = useState(false);
+
+  useEffect(() => {
+    if (availableTopics && availableTopics.length > 0) {
+      setTopics(availableTopics);
+    } else {
+      api.listTopics().then(res => {
+        if (Array.isArray(res)) {
+          setTopics(res.map(t => t.name).filter(Boolean));
+        }
+      }).catch(err => {
+        console.error('Failed to load topics in FileUpload:', err);
+      });
+    }
+  }, [availableTopics]);
 
   const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -244,7 +264,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
 
   const handleSave = () => {
     if (baseName.trim() && parsedQuestions) {
-      onSaveNewBase(baseName.trim(), parsedQuestions);
+      const finalTopic = isCreatingNewTopic ? customTopic.trim() : selectedTopic.trim();
+      onSaveNewBase(baseName.trim(), parsedQuestions, finalTopic || undefined);
     }
   };
 
@@ -255,18 +276,64 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
         <p className="text-slate-500 mb-6 text-center">
           Đã phân tích thành công <span className="font-bold text-sky-600">{parsedQuestions.length}</span> câu hỏi từ file <span className="font-medium text-slate-800">{fileName}</span>.
         </p>
-        <div className="w-full max-w-sm">
-          <label htmlFor="base-name" className="block text-sm font-medium text-slate-600 mb-2">
-            Đặt tên cho bộ câu hỏi này:
-          </label>
-          <input
-            type="text"
-            id="base-name"
-            value={baseName}
-            onChange={(e) => setBaseName(e.target.value)}
-            placeholder="Ví dụ: Đề cương Ôn tập Giữa kỳ"
-            className="block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-sky-500 focus:border-sky-500 sm:text-sm"
-          />
+        <div className="w-full max-w-md space-y-4">
+          <div>
+            <label htmlFor="base-name" className="block text-sm font-medium text-slate-600 mb-1">
+              Đặt tên cho bộ câu hỏi này <span className="text-red-500">*</span>:
+            </label>
+            <input
+              type="text"
+              id="base-name"
+              value={baseName}
+              onChange={(e) => setBaseName(e.target.value)}
+              placeholder="Ví dụ: Đề cương Ôn tập Giữa kỳ"
+              className="block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-sky-500 focus:border-sky-500 sm:text-sm"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="base-topic" className="block text-sm font-medium text-slate-600 mb-1">
+              Chủ đề (Topic):
+            </label>
+            <select
+              id="base-topic"
+              value={isCreatingNewTopic ? '__NEW__' : selectedTopic}
+              onChange={(e) => {
+                if (e.target.value === '__NEW__') {
+                  setIsCreatingNewTopic(true);
+                } else {
+                  setIsCreatingNewTopic(false);
+                  setSelectedTopic(e.target.value);
+                }
+              }}
+              className="block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500 sm:text-sm"
+            >
+              <option value="">-- Không phân loại chủ đề --</option>
+              {topics.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+              <option value="__NEW__">+ Nhập chủ đề mới...</option>
+            </select>
+          </div>
+
+          {isCreatingNewTopic && (
+            <div>
+              <label htmlFor="new-topic-input" className="block text-sm font-medium text-sky-700 mb-1">
+                Tên chủ đề mới:
+              </label>
+              <input
+                type="text"
+                id="new-topic-input"
+                value={customTopic}
+                onChange={(e) => setCustomTopic(e.target.value)}
+                placeholder="Nhập tên chủ đề mới (ví dụ: An toàn lao động, Pháp luật...)"
+                className="block w-full px-3 py-2 bg-white border border-sky-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500 sm:text-sm"
+                autoFocus
+              />
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-center gap-4 mt-8">
           <button
@@ -278,14 +345,14 @@ const FileUpload: React.FC<FileUploadProps> = ({ onSaveNewBase, onBack }) => {
           </button>
           <button
             onClick={handleSave}
-            disabled={!baseName.trim()}
+            disabled={!baseName.trim() || (isCreatingNewTopic && !customTopic.trim())}
             className="px-8 py-2 text-sm font-medium text-white bg-sky-600 rounded-md shadow-sm hover:bg-sky-700 disabled:bg-slate-400 disabled:cursor-not-allowed"
           >
             Lưu và Bắt đầu
           </button>
         </div>
       </div>
-    )
+    );
   }
 
   return (

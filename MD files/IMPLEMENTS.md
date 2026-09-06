@@ -239,3 +239,63 @@
 
 ### Ghi chu
 - Không có rủi ro phát sinh.
+
+## 2026-09-06 10:10:00 +07:00
+
+### Yeu cau
+- Ở màn hình quản lý cơ sở kiến thức: khi thêm kiến thức mới (qua Excel) chọn được chủ đề của kiến thức đó (chọn từ danh sách hoặc nhập mới).
+- Khi tạo bài thi (Admin): chọn được chủ đề cho bài thi (áp dụng cho cả tạo đề đơn và tạo bộ đề batch); hỗ trợ chọn nhanh các cơ sở kiến thức cùng chủ đề.
+- Ở màn hình thi của người dùng (`TestListScreen.tsx`): nếu bài thi được gán chủ đề, người dùng vào thi sẽ chọn chủ đề trước (Cấp 1), trong chủ đề sẽ hiển thị danh sách các bài thi con (Cấp 2), kèm breadcrumb điều hướng và nút chuyển đổi xem phẳng.
+
+### Ket qua
+- **Database & Prisma Schema**:
+  - Bổ sung trường `topic String?` (có index) vào `model KnowledgeBase` và `model Test`.
+  - Thêm `model Topic` độc lập (`id`, `name`, `description`, `createdAt`).
+  - Chạy `npx prisma generate` thành công.
+- **Backend API (`server/src/index.ts`)**:
+  - Bổ sung hàm tự động migrate an toàn khi khởi động server `ensureTopicColumns()` để tạo cột `topic` và bảng `topics` nếu chưa tồn tại.
+  - Thêm endpoints `GET /api/topics` và `POST /api/admin/topics`.
+  - Cập nhật các endpoint `GET /api/bases`, `POST /api/bases`, `GET /api/admin/knowledge-bases`, `POST /api/admin/knowledge-bases` để nhận, lưu và trả về `topic`, đồng thời tự động upsert vào bảng `Topic`.
+  - Cập nhật các endpoint `GET /api/tests`, `GET /api/admin/tests`, `POST /api/admin/tests`, `POST /api/admin/tests/batch`, `PUT /api/admin/tests/:id` để nhận, lưu và trả về `topic`.
+- **Frontend Core & Client API (`types.ts`, `src/api.ts`, `src/hooks/usePersistentStores.ts`)**:
+  - Thêm `topic?: string | null` vào `KnowledgeBase`, `AdminTestSummary`, `CreateTestPayload`, `CreateTestBatchPayload`, `UpdateTestPayload`, `CreateKnowledgeBasePayload`.
+  - Thêm `listTopics()` và `adminCreateTopic()`.
+- **Quản lý cơ sở kiến thức (`components/FileUpload.tsx`, `components/admin/KnowledgeManagement.tsx`, `components/AdminDashboard.tsx`, `AppWithRouter.tsx`, `App.tsx`)**:
+  - Bổ sung dropdown chọn chủ đề có sẵn hoặc `+ Nhập chủ đề mới...` trong form xem trước câu hỏi của `FileUpload.tsx`.
+  - Chuyển tiếp `topic` khi lưu cơ sở kiến thức qua `handleSaveNewBase`.
+  - Bổ sung dropdown lọc theo Chủ đề bên cạnh ô tìm kiếm và cột "Chủ đề" hiển thị badge trực quan trong bảng cơ sở kiến thức của Admin.
+- **Quản lý bài thi Admin (`components/admin/TestManagement.tsx`)**:
+  - Thêm trường chọn / nhập chủ đề mới trong Modal Tạo đề thi (đơn lẻ & bộ đề batch) và Modal Sửa đề thi.
+  - Trong chế độ tạo bộ đề thi batch: thêm nút tiện ích `Chọn theo chủ đề` giúp Admin chọn nhanh toàn bộ các CSKT thuộc chủ đề đã chọn.
+  - Thêm thanh tìm kiếm và dropdown lọc theo Chủ đề, bổ sung cột "Chủ đề" hiển thị badge màu tím trên bảng danh sách bài thi Admin.
+- **Màn hình thi của người dùng (`components/TestListScreen.tsx`)**:
+  - Thiết kế điều hướng 2 cấp độ trực quan:
+    - **Cấp 1 - Chọn chủ đề**: Lưới các thẻ chủ đề với icon thư mục, số lượng bài thi con, thống kê tiến độ hoàn thành (X/Y bài đã làm + progress bar) và điểm cao nhất đạt được trong chủ đề.
+    - **Cấp 2 - Danh sách bài thi con**: Hiển thị breadcrumb điều hướng `Tất cả chủ đề / [Tên chủ đề]`, nút quay lại danh sách chủ đề và danh sách các thẻ bài thi con với đầy đủ chức năng làm bài, xem thống kê và chi tiết.
+  - Bổ sung nút chuyển đổi linh hoạt giữa chế độ xem `📁 Theo chủ đề` và `📄 Tất cả bài thi`, cùng thanh tìm kiếm tức thì theo tên đề thi hoặc chủ đề.
+
+### Files tac dong
+- `server/prisma/schema.prisma`
+- `server/src/index.ts`
+- `types.ts`
+- `src/api.ts`
+- `src/hooks/usePersistentStores.ts`
+- `components/FileUpload.tsx`
+- `components/AdminDashboard.tsx`
+- `components/admin/KnowledgeManagement.tsx`
+- `components/admin/TestManagement.tsx`
+- `components/TestListScreen.tsx`
+- `AppWithRouter.tsx`
+- `App.tsx`
+- `MD files/SYSTEM-DESCRIPTION.md`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Chạy `npx prisma generate` thành công.
+- Build server thành công (`npm run build` trong `server`) với exit code 0.
+- Build frontend root thành công (`npm run build`) với exit code 0.
+- Đã xác thực logic điều hướng cấp độ chọn chủ đề -> xem bài thi con và lọc theo chủ đề ở các màn hình.
+
+### Ghi chu
+- Không có rủi ro phát sinh.
+

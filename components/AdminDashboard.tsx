@@ -36,9 +36,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ userEmail, onBack, know
     setOpenDropdowns(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const handleSaveNewBase = async (name: string, questions: Question[]) => {
+  const handleSaveNewBase = async (name: string, questions: Question[], topic?: string) => {
     try {
-      await api.adminCreateKnowledgeBase({ name, questions, creatorEmail: userEmail });
+      await api.adminCreateKnowledgeBase({ name, questions, creatorEmail: userEmail, topic });
     } catch (error: any) {
       console.error('Failed to create knowledge base:', error);
       if (error?.message?.includes('API 401')) {

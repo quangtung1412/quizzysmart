@@ -60,6 +60,7 @@ model UserGroupMember {
 model KnowledgeBase {
   id        String     @id @default(cuid())
   name      String
+  topic     String?
   createdAt DateTime   @default(now())
   user      User       @relation(fields: [userId], references: [id])
   userId    String
@@ -67,6 +68,7 @@ model KnowledgeBase {
   attempts  Attempt[]
   
   @@index([userId])
+  @@index([topic])
 }
 
 model Question {
@@ -120,6 +122,7 @@ model Test {
   id                String           @id @default(cuid())
   name              String
   description       String?          @db.Text
+  topic             String?          // Chủ đề bài thi
   questionCount     Int              // Total number of questions in the test
   timeLimit         Int              // Time limit in minutes
   maxAttempts       Int              @default(0) // Maximum number of attempts allowed (0 = unlimited)
@@ -135,7 +138,18 @@ model Test {
   assignments       TestAssignment[]
   
   // Remove the single knowledge base relation since we now support multiple
+  @@index([topic])
   @@map("tests")
+}
+
+model Topic {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("topics")
 }
 
 model TestAssignment {

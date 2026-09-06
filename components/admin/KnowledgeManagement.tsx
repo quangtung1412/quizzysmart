@@ -4,18 +4,32 @@ import { KnowledgeBase, Question } from '../../types';
 import { api } from '../../src/api';
 
 interface KnowledgeManagementProps {
-  onSaveNewBase: (name: string, questions: Question[]) => Promise<void>;
+  onSaveNewBase: (name: string, questions: Question[], topic?: string) => Promise<void>;
 }
 
 const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase }) => {
   const [view, setView] = useState<'list' | 'upload'>('list');
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [topicsList, setTopicsList] = useState<string[]>([]);
+  const [selectedTopicFilter, setSelectedTopicFilter] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     loadKnowledgeBases();
+    loadTopics();
   }, []);
+
+  const loadTopics = async () => {
+    try {
+      const res = await api.listTopics();
+      if (Array.isArray(res)) {
+        setTopicsList(res.map(t => t.name).filter(Boolean));
+      }
+    } catch (e) {
+      console.warn('Failed to load topics:', e);
+    }
+  };
 
   const loadKnowledgeBases = async () => {
     try {
@@ -42,16 +56,28 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
     }
   };
 
-  const handleSaveBase = async (name: string, questions: Question[]) => {
-    await onSaveNewBase(name, questions);
+  const handleSaveBase = async (name: string, questions: Question[], topic?: string) => {
+    await onSaveNewBase(name, questions, topic);
     setView('list');
     await loadKnowledgeBases(); // Reload list
+    await loadTopics();
   };
 
-  const filteredBases = knowledgeBases.filter(base =>
-    base.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (base.creatorEmail && base.creatorEmail.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const filteredBases = knowledgeBases.filter(base => {
+    const matchesSearch =
+      base.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (base.creatorEmail && base.creatorEmail.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (base.topic && base.topic.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    const matchesTopic =
+      selectedTopicFilter === 'all'
+        ? true
+        : selectedTopicFilter === '__NONE__'
+        ? !base.topic
+        : base.topic === selectedTopicFilter;
+
+    return matchesSearch && matchesTopic;
+  });
 
   if (view === 'upload') {
     return (
@@ -69,7 +95,8 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
         </div>
         <FileUpload 
           onSaveNewBase={handleSaveBase} 
-          onBack={() => setView('list')} 
+          onBack={() => setView('list')}
+          availableTopics={topicsList} 
         />
       </div>
     );
@@ -93,12 +120,12 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
         </button>
       </div>
 
-      {/* Search bar */}
-      <div className="mb-6">
-        <div className="relative">
+      {/* Search bar & Topic filter */}
+      <div className="flex flex-col md:flex-row gap-4 mb-6">
+        <div className="relative flex-1">
           <input
             type="text"
-            placeholder="Tìm kiếm theo tên hoặc email người tạo..."
+            placeholder="Tìm kiếm theo tên, chủ đề hoặc email người tạo..."
             className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-transparent"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -106,6 +133,19 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
           <svg className="w-5 h-5 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
+        </div>
+        <div className="w-full md:w-64">
+          <select
+            value={selectedTopicFilter}
+            onChange={(e) => setSelectedTopicFilter(e.target.value)}
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm bg-white"
+          >
+            <option value="all">Tất cả chủ đề</option>
+            {topicsList.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+            <option value="__NONE__">Chưa phân loại chủ đề</option>
+          </select>
         </div>
       </div>
 
@@ -139,10 +179,10 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
           </svg>
           <h3 className="mt-2 text-sm font-medium text-slate-900">
-            {searchTerm ? 'Không tìm thấy kết quả' : 'Chưa có cơ sở kiến thức nào'}
+            {searchTerm || selectedTopicFilter !== 'all' ? 'Không tìm thấy kết quả' : 'Chưa có cơ sở kiến thức nào'}
           </h3>
           <p className="mt-1 text-sm text-slate-500">
-            {searchTerm ? 'Thử tìm kiếm với từ khóa khác' : 'Tạo cơ sở kiến thức đầu tiên để bắt đầu'}
+            {searchTerm || selectedTopicFilter !== 'all' ? 'Thử tìm kiếm hoặc chọn bộ lọc khác' : 'Tạo cơ sở kiến thức đầu tiên để bắt đầu'}
           </p>
         </div>
       ) : (
@@ -152,6 +192,9 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                   Tên cơ sở kiến thức
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                  Chủ đề
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                   Người tạo
@@ -172,6 +215,15 @@ const KnowledgeManagement: React.FC<KnowledgeManagementProps> = ({ onSaveNewBase
                 <tr key={base.id} className="hover:bg-slate-50">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-slate-900">{base.name}</div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {base.topic ? (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                        {base.topic}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-400 italic">Chưa phân loại</span>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm text-slate-600">{base.creatorEmail || 'N/A'}</div>
