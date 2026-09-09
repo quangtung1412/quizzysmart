@@ -446,4 +446,49 @@
 ### Ghi chu
 - Không có rủi ro phát sinh.
 
+## 2026-09-09 09:05:00 +07:00
+
+### Yeu cau
+- Kiểm tra và khắc phục triệt để vấn đề: Đã xóa văn bản RAG nhưng dữ liệu vector points trong Vector DB (Qdrant) vẫn còn tồn tại.
+
+### Ket qua
+- **Tìm ra nguyên nhân gốc rễ (Findings)**:
+  1. `deleteDocumentPoints(documentId)` trong `server/src/services/qdrant.service.ts` bị hardcode xóa ở `this.collectionName` (`vietnamese_documents`). Khi văn bản được upload vào collection tùy chỉnh (`doc.qdrantCollectionName`), lệnh xóa chỉ xóa nhầm ở collection mặc định, dẫn đến 100% vector points trong collection thực tế của văn bản không hề bị xóa.
+  2. Các route xóa (`DELETE /api/documents/:id`, `POST /api/documents/batch-delete`, `POST /api/documents/:id/re-extract`, `POST /api/documents/:id/re-embed`) chỉ gọi `qdrantService.deleteDocumentPoints(id)` mà không truyền tên collection thực tế của văn bản và không truyền danh sách `qdrantPointId`.
+  3. Lệnh xóa trước đây chỉ dựa vào payload filter `documentId` mà không xóa trực tiếp theo mảng Point IDs, có thể bị sót nếu index payload chưa sẵn sàng hoặc cluster đa collection.
+- **Khắc phục tầng Backend (`server/src/services/qdrant.service.ts`, `server/src/routes/document.routes.ts`, `server/src/routes/collection.routes.ts`)**:
+  1. Nâng cấp `deleteDocumentPoints(documentId, collectionName?, pointIds?)`:
+     - Tự động gom collection chỉ định, collection mặc định và quét qua toàn bộ collection hiện có trong Qdrant cluster.
+     - Thực hiện xóa đồng thời bằng cả danh sách `points: pointIds` (xóa theo ID vật lý chính xác 100%) và bộ lọc payload `documentId`.
+  2. Bổ sung phương thức `cleanupOrphanPoints(validDocumentIds)` trong `QdrantService`:
+     - Sử dụng API `scroll` duyệt qua toàn bộ các collection trong Qdrant.
+     - So sánh `payload.documentId` với danh sách document IDs hợp lệ còn tồn tại trong DB, nhận diện các point mồ côi và xóa dọn sạch triệt để.
+  3. Bổ sung các endpoint dọn dẹp:
+     - `POST /api/documents/cleanup-orphans` (Admin only).
+     - `POST /api/admin/collections/cleanup-orphans` (Admin only).
+  4. Cập nhật các route xóa đơn lẻ, xóa hàng loạt, re-extract, re-embed để truy vấn trước danh sách chunk IDs (`qdrantPointId`) và truyền đầy đủ `collectionName` + `pointIds` cho `deleteDocumentPoints`.
+- **Khắc phục tầng Frontend (`components/admin/DocumentManagement.tsx`, `components/admin/CollectionManagement.tsx`)**:
+  1. Bổ sung nút bấm `🧹 Dọn dẹp vector rác` trên thanh công cụ Quản lý văn bản RAG và Quản lý Collections.
+  2. Cho phép người quản trị kích hoạt quét và dọn dẹp toàn diện tất cả các vector rác mồ côi còn sót lại từ các lần xóa văn bản trước đó.
+- **Tài liệu hệ thống (`MD files/SYSTEM-DESCRIPTION.md`)**:
+  1. Cập nhật chi tiết cơ chế xóa vector đa collection và các endpoint cleanup mới.
+
+### Files tac dong
+- `server/src/services/qdrant.service.ts`
+- `server/src/routes/document.routes.ts`
+- `server/src/routes/collection.routes.ts`
+- `components/admin/DocumentManagement.tsx`
+- `components/admin/CollectionManagement.tsx`
+- `MD files/SYSTEM-DESCRIPTION.md`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Chạy kiểm tra cú pháp AST bằng `@babel/parser` cho `components/admin/DocumentManagement.tsx` và `components/admin/CollectionManagement.tsx`: 100% hợp lệ.
+- Chạy biên dịch `npx tsc -p tsconfig.json` trong thư mục `server`: Thành công 100% với exit code 0.
+- Xác thực toàn bộ diff của 5 file mã nguồn, không còn lỗi cú pháp hoặc mismatch route.
+
+### Ghi chu
+- Đã giải quyết tận gốc nguyên nhân gây tồn đọng vector trong Qdrant.
+- Để xóa sạch các vector rác của các văn bản đã xóa từ trước, người dùng chỉ cần nhấn nút "🧹 Dọn dẹp vector rác" trên giao diện Quản lý văn bản RAG hoặc Quản lý Collections.
+
 

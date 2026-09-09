@@ -297,31 +297,140 @@ class QdrantService {
   }
 
   /**
-   * Delete all points for a document
+   * Delete all points for a document across specified collection and all available collections
    */
-  async deleteDocumentPoints(documentId: string): Promise<void> {
+  async deleteDocumentPoints(
+    documentId: string,
+    collectionName?: string,
+    pointIds?: string[]
+  ): Promise<void> {
     if (!this.client) throw new Error('Qdrant client not initialized');
 
     try {
-      await this.client.delete(this.collectionName, {
-        wait: true,
-        filter: {
-          must: [
-            {
-              key: 'documentId',
-              match: {
-                value: documentId,
-              },
-            },
-          ],
-        },
-      });
+      // 1. Determine all target collections to clean
+      const targetCollections = new Set<string>();
+      if (collectionName && collectionName.trim()) {
+        targetCollections.add(collectionName.trim());
+      }
+      if (this.collectionName) {
+        targetCollections.add(this.collectionName);
+      }
 
-      console.log(`[Qdrant] Deleted all points for document: ${documentId}`);
+      // Also list all collections in Qdrant to ensure no points remain in other collections
+      try {
+        const collectionsResp = await this.client.getCollections();
+        for (const c of collectionsResp.collections) {
+          targetCollections.add(c.name);
+        }
+      } catch (err) {
+        console.warn('[Qdrant] Failed to list all collections during deletion, using known collections:', err);
+      }
+
+      // 2. Perform deletion in each target collection
+      for (const col of targetCollections) {
+        try {
+          // A. Delete by exact point IDs if available
+          if (pointIds && pointIds.length > 0) {
+            try {
+              await this.client.delete(col, {
+                wait: true,
+                points: pointIds,
+              });
+              console.log(`[Qdrant] Deleted ${pointIds.length} points by ID for doc "${documentId}" in collection "${col}"`);
+            } catch (err) {
+              // Points might not exist in this collection, continue
+            }
+          }
+
+          // B. Delete by documentId payload filter
+          await this.client.delete(col, {
+            wait: true,
+            filter: {
+              must: [
+                {
+                  key: 'documentId',
+                  match: {
+                    value: documentId,
+                  },
+                },
+              ],
+            },
+          });
+
+          console.log(`[Qdrant] Deleted points by documentId filter for "${documentId}" in collection "${col}"`);
+        } catch (colErr: any) {
+          console.warn(`[Qdrant] Deletion attempt in collection "${col}" for doc "${documentId}":`, colErr?.message || colErr);
+        }
+      }
     } catch (error) {
-      console.error(`[Qdrant] Failed to delete document points:`, error);
+      console.error(`[Qdrant] Failed to delete document points for ${documentId}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Scan all collections and remove orphan points belonging to non-existent documents
+   */
+  async cleanupOrphanPoints(validDocumentIds: string[]): Promise<{
+    totalDeleted: number;
+    details: Array<{ collection: string; deletedCount: number }>;
+  }> {
+    if (!this.client) throw new Error('Qdrant client not initialized');
+
+    const validSet = new Set(validDocumentIds);
+    let totalDeleted = 0;
+    const details: Array<{ collection: string; deletedCount: number }> = [];
+
+    try {
+      const collectionsResp = await this.client.getCollections();
+      for (const col of collectionsResp.collections) {
+        let colDeleted = 0;
+        try {
+          let nextOffset: any = null;
+          do {
+            const scrollRes: any = await this.client.scroll(col.name, {
+              limit: 200,
+              with_payload: true,
+              with_vector: false,
+              offset: nextOffset,
+            });
+
+            const points = scrollRes.points || [];
+            const orphanIds: string[] = [];
+
+            for (const pt of points) {
+              const docId = pt.payload?.documentId;
+              // If the point is tagged with a documentId that is no longer in validSet, it's orphan
+              if (docId && !validSet.has(docId)) {
+                orphanIds.push(String(pt.id));
+              }
+            }
+
+            if (orphanIds.length > 0) {
+              await this.client.delete(col.name, {
+                wait: true,
+                points: orphanIds,
+              });
+              colDeleted += orphanIds.length;
+              totalDeleted += orphanIds.length;
+              console.log(`[Qdrant Cleanup] Deleted ${orphanIds.length} orphan points in collection "${col.name}"`);
+            }
+
+            nextOffset = scrollRes.next_page_offset;
+          } while (nextOffset);
+
+          details.push({ collection: col.name, deletedCount: colDeleted });
+        } catch (colErr) {
+          console.warn(`[Qdrant Cleanup] Failed to cleanup collection "${col.name}":`, colErr);
+          details.push({ collection: col.name, deletedCount: colDeleted });
+        }
+      }
+    } catch (error) {
+      console.error('[Qdrant Cleanup] Failed to get collections list:', error);
+      throw error;
+    }
+
+    return { totalDeleted, details };
   }
 
   /**

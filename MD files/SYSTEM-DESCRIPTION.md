@@ -28,12 +28,15 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
 - `GET /api/documents/:id`: Chi tiet mot van ban RAG.
   - Auth: Admin only (`requireAdmin`).
   - Response contract: Chi tiet van ban bao gom cac truong metadata, markdownContent, chunks, processingStatus va `qdrantCollectionName`.
-- `DELETE /api/documents/:id`: Xoa van ban va cac vector lien quan trong Qdrant.
+- `DELETE /api/documents/:id`: Xoa van ban, file vat ly va toan bo vector points lien quan trong Qdrant (ho tro tim va xoa theo ca danh sach point IDs lan payload filter tren collection cua van ban, collection mac dinh va toan bo cac collection khac trong cluster).
   - Auth: Admin only (`requireAdmin`).
 - `POST /api/documents/batch-delete`: Xoa cung luc nhieu van ban RAG, toan bo vector points tuong ung trong Qdrant va file vat ly tren disk.
   - Auth: Admin only (`requireAdmin`).
   - Request: JSON `{ ids: string[] }`.
   - Response: `{ success: true, count: number, message: string }`.
+- `POST /api/documents/cleanup-orphans`: Quet tat ca collections trong Qdrant bang scroll va xoa sach cac vector points mo coi (cac point co documentId khong con ton tai trong DB).
+  - Auth: Admin only (`requireAdmin`).
+  - Response: `{ success: true, totalDeleted: number, details: Array<{ collection: string, deletedCount: number }> }`.
 - `POST /api/documents/:id/re-extract`: Yeu cau Gemini trich xuat lai noi dung van ban.
 - `POST /api/documents/:id/re-embed`: Yeu cau tinh toan va tao lai vector embeddings vao Qdrant.
 
@@ -41,6 +44,8 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
 - `GET /api/admin/collections`: Danh sach cac collections trong Qdrant vector DB kem so luong vectors/points.
 - `POST /api/admin/collections`: Tao moi collection vector voi dimension va khoang cach Cosine.
 - `DELETE /api/admin/collections/:name`: Xoa collection khoi Qdrant.
+- `POST /api/admin/collections/cleanup-orphans`: Quet va don dep tat ca vector points mo coi tren moi collection trong Qdrant cluster.
+  - Auth: Admin only (`requireAdmin`).
 
 ### 2.3. Topics, Knowledge Bases & Tests with Topics
 - `GET /api/topics`: Lay danh sach tat ca cac chu de trong he thong gom `{ id, name, description, createdAt }`.
@@ -59,8 +64,8 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
 - `AdminDashboard.tsx`:
   - `tests`: Quan ly bai thi (`components/admin/TestManagement.tsx`) - Ho tro tao de don / bo de batch gan chu de, loc theo chu de, badge chu de tren tung bai thi. Ho tro checkbox chon nhieu bai thi va gan chu de hang loat (`POST /api/admin/tests/batch-topic`).
   - `knowledge`: Quan ly co so kien thuc (`components/admin/KnowledgeManagement.tsx`) - Ho tro tai len Excel gan chu de hoac tao chu de moi, loc theo chu de, badge chu de. Ho tro checkbox chon nhieu co so kien thuc va gan chu de hang loat (`POST /api/admin/knowledge-bases/batch-topic`).
-  - `documents`: Quan ly van ban RAG (`components/admin/DocumentManagement.tsx`) - Ho tro bo loc theo Collection, trang thai xu ly, tim kiem va thong ke. Ho tro checkbox chon tung van ban / chon tat ca va xoa hang loat cung luc (`POST /api/documents/batch-delete`).
-  - `collections`: Quan ly Vector Collections (`components/admin/CollectionManagement.tsx`).
+  - `documents`: Quan ly van ban RAG (`components/admin/DocumentManagement.tsx`) - Ho tro bo loc theo Collection, trang thai xu ly, tim kiem va thong ke. Ho tro checkbox chon tung van ban / chon tat ca va xoa hang loat cung luc (`POST /api/documents/batch-delete`). Cung cap nut "🧹 Don dep vector rac" goi `POST /api/documents/cleanup-orphans` de quet va xoa toan bo vector mo coi trong Qdrant.
+  - `collections`: Quan ly Vector Collections (`components/admin/CollectionManagement.tsx`) - Ho tro xem thong so collection, tao moi, xoa collection va nut "🧹 Don dep vector rac" goi `POST /api/admin/collections/cleanup-orphans`.
 - `KnowledgeBaseScreen.tsx` (Man hinh on luyen cua nguoi dung):
   - Khi co so kien thuc co chu de: nguoi dung duoc chon Chu de o Cap 1 (The chu de voi so luong bai on tap con, tong so cau hoi) -> vao Cap 2 xem cac bai on tap con cua chu de do.
   - Cung cap Breadcrumb dieu huong quay lai danh sach chu de.

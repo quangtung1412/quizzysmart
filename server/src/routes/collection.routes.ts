@@ -185,4 +185,31 @@ router.get('/collections/:name/exists', requireAdmin, async (req: Request, res: 
   }
 });
 
+/**
+ * POST /api/admin/collections/cleanup-orphans
+ * Clean up orphan vector points in Qdrant collections
+ */
+router.post('/collections/cleanup-orphans', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const existingDocs = await prisma.document.findMany({
+      select: { id: true },
+    });
+    const validIds = existingDocs.map((d) => d.id);
+    const result = await qdrantService.cleanupOrphanPoints(validIds);
+
+    res.json({
+      success: true,
+      message: `Đã dọn dẹp ${result.totalDeleted} vector points mồ côi khỏi Qdrant`,
+      ...result,
+    });
+  } catch (error: any) {
+    console.error('[Collections API] Cleanup orphans failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to cleanup orphan points',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 export default router;

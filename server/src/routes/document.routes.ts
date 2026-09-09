@@ -326,6 +326,11 @@ router.post('/batch-delete', requireAdmin, async (req: Request, res: Response) =
 
     const documents = await prisma.document.findMany({
       where: { id: { in: ids } },
+      include: {
+        chunks: {
+          select: { qdrantPointId: true },
+        },
+      },
     });
 
     if (documents.length === 0) {
@@ -337,8 +342,24 @@ router.post('/batch-delete', requireAdmin, async (req: Request, res: Response) =
 
     // Delete points from Qdrant for each document
     for (const doc of documents) {
+      // Gather all point IDs for this document
+      const pointIds: string[] = [];
+      if (doc.chunks) {
+        for (const ch of doc.chunks) {
+          if (ch.qdrantPointId) pointIds.push(ch.qdrantPointId);
+        }
+      }
+      if (doc.qdrantPointIds) {
+        try {
+          const parsed = JSON.parse(doc.qdrantPointIds);
+          if (Array.isArray(parsed)) {
+            pointIds.push(...parsed);
+          }
+        } catch (_) {}
+      }
+
       try {
-        await qdrantService.deleteDocumentPoints(doc.id);
+        await qdrantService.deleteDocumentPoints(doc.id, doc.qdrantCollectionName, pointIds);
       } catch (error) {
         console.warn(`[Documents] Failed to delete document ${doc.id} from Qdrant:`, error);
       }
@@ -382,6 +403,11 @@ router.delete('/:id', requireAdmin, async (req: Request, res: Response) => {
 
     const document = await prisma.document.findUnique({
       where: { id },
+      include: {
+        chunks: {
+          select: { qdrantPointId: true },
+        },
+      },
     });
 
     if (!document) {
@@ -391,9 +417,25 @@ router.delete('/:id', requireAdmin, async (req: Request, res: Response) => {
       });
     }
 
-    // Delete from Qdrant
+    // Gather all point IDs for this document
+    const pointIds: string[] = [];
+    if (document.chunks) {
+      for (const ch of document.chunks) {
+        if (ch.qdrantPointId) pointIds.push(ch.qdrantPointId);
+      }
+    }
+    if (document.qdrantPointIds) {
+      try {
+        const parsed = JSON.parse(document.qdrantPointIds);
+        if (Array.isArray(parsed)) {
+          pointIds.push(...parsed);
+        }
+      } catch (_) {}
+    }
+
+    // Delete from Qdrant with target collection and point IDs
     try {
-      await qdrantService.deleteDocumentPoints(id);
+      await qdrantService.deleteDocumentPoints(id, document.qdrantCollectionName, pointIds);
     } catch (error) {
       console.warn('[Documents] Failed to delete from Qdrant:', error);
       // Continue with database deletion
@@ -418,6 +460,33 @@ router.delete('/:id', requireAdmin, async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: 'Lỗi server khi xóa',
+    });
+  }
+});
+
+/**
+ * POST /api/documents/cleanup-orphans
+ * Scan and clean up orphan vector points in Qdrant whose documents were already deleted
+ */
+router.post('/cleanup-orphans', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const existingDocs = await prisma.document.findMany({
+      select: { id: true },
+    });
+    const validIds = existingDocs.map((d) => d.id);
+    const result = await qdrantService.cleanupOrphanPoints(validIds);
+
+    res.json({
+      success: true,
+      message: `Đã dọn dẹp ${result.totalDeleted} vector points mồ côi khỏi Qdrant`,
+      ...result,
+    });
+  } catch (error: any) {
+    console.error('[Documents] Cleanup orphans error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Lỗi server khi dọn dẹp vector mồ côi',
+      message: error?.message || 'Unknown error',
     });
   }
 });
@@ -470,6 +539,11 @@ router.post('/:id/re-extract', requireAdmin, async (req: Request, res: Response)
 
     const document = await prisma.document.findUnique({
       where: { id },
+      include: {
+        chunks: {
+          select: { qdrantPointId: true },
+        },
+      },
     });
 
     if (!document) {
@@ -497,7 +571,8 @@ router.post('/:id/re-extract', requireAdmin, async (req: Request, res: Response)
 
     // Delete old chunks and Qdrant points
     try {
-      await qdrantService.deleteDocumentPoints(id);
+      const pointIds = (document.chunks || []).map((c) => c.qdrantPointId).filter(Boolean) as string[];
+      await qdrantService.deleteDocumentPoints(id, document.qdrantCollectionName, pointIds);
     } catch (error) {
       console.warn('[Documents] Failed to delete old Qdrant points:', error);
     }
@@ -567,7 +642,8 @@ router.post('/:id/re-embed', requireAdmin, async (req: Request, res: Response) =
 
     // Delete old Qdrant points
     try {
-      await qdrantService.deleteDocumentPoints(id);
+      const pointIds = (document.chunks || []).map((c) => c.qdrantPointId).filter(Boolean) as string[];
+      await qdrantService.deleteDocumentPoints(id, document.qdrantCollectionName, pointIds);
     } catch (error) {
       console.warn('[Documents] Failed to delete old Qdrant points:', error);
     }

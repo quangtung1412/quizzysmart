@@ -19,6 +19,7 @@ const CollectionManagement: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [cleaningOrphans, setCleaningOrphans] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -122,6 +123,37 @@ const CollectionManagement: React.FC = () => {
     }
   };
 
+  // Cleanup orphan vectors across all collections
+  const cleanupOrphanVectors = async () => {
+    if (!confirm('Hệ thống sẽ quét toàn bộ các collection trong Qdrant và xóa vĩnh viễn các vector points mồ côi (của những văn bản đã bị xóa khỏi hệ thống).\n\nBạn có muốn tiếp tục?')) {
+      return;
+    }
+
+    try {
+      setCleaningOrphans(true);
+      setError(null);
+      setSuccess(null);
+
+      const response = await fetch('/api/admin/collections/cleanup-orphans', {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || data.error || 'Dọn dẹp thất bại');
+      }
+
+      setSuccess(`Đã dọn dẹp thành công ${data.totalDeleted} vector points mồ côi khỏi các collections!`);
+      await fetchCollections();
+    } catch (err) {
+      console.error('Cleanup orphans error:', err);
+      setError(err instanceof Error ? err.message : 'Lỗi khi dọn dẹp vector mồ côi');
+    } finally {
+      setCleaningOrphans(false);
+    }
+  };
+
   useEffect(() => {
     fetchCollections();
   }, []);
@@ -129,14 +161,31 @@ const CollectionManagement: React.FC = () => {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <div className="flex justify-between items-center mb-4">
+        <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
           <h2 className="text-2xl font-bold text-gray-800">Quản Lý Collections</h2>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            + Tạo Collection Mới
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={cleanupOrphanVectors}
+              disabled={cleaningOrphans || loading}
+              className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50 flex items-center gap-1.5 text-sm font-medium"
+              title="Quét và xóa các vector points của các văn bản đã bị xóa khỏi DB"
+            >
+              {cleaningOrphans ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                  <span>Đang dọn dẹp...</span>
+                </>
+              ) : (
+                <span>🧹 Dọn dẹp vector rác</span>
+              )}
+            </button>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+            >
+              + Tạo Collection Mới
+            </button>
+          </div>
         </div>
 
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">

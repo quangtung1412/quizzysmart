@@ -58,6 +58,7 @@ const DocumentManagement: React.FC = () => {
   // Batch selection states
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [isDeletingBatch, setIsDeletingBatch] = useState<boolean>(false);
+  const [isCleaningOrphans, setIsCleaningOrphans] = useState<boolean>(false);
 
   // Fetch collections
   const fetchCollections = useCallback(async () => {
@@ -277,6 +278,35 @@ const DocumentManagement: React.FC = () => {
     setSelectedDocIds(prev =>
       prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     );
+  };
+
+  // Cleanup orphan vectors
+  const handleCleanupOrphans = async () => {
+    if (!confirm('Hệ thống sẽ quét toàn bộ các collection trong Vector DB và xóa các vector points mồ côi (thuộc các văn bản đã bị xóa trước đây).\n\nBạn có muốn tiến hành dọn dẹp không?')) {
+      return;
+    }
+
+    setIsCleaningOrphans(true);
+    try {
+      const response = await fetch('/api/documents/cleanup-orphans', {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      const result = await response.json();
+      if (response.ok && result.success) {
+        alert(`Đã dọn dẹp thành công ${result.totalDeleted} vector points mồ côi khỏi Vector DB!`);
+        fetchDocuments();
+        fetchCollections();
+      } else {
+        alert(result.error || 'Lỗi khi dọn dẹp vector mồ côi');
+      }
+    } catch (error) {
+      console.error('Cleanup orphans error:', error);
+      alert('Lỗi kết nối khi dọn dẹp vector mồ côi');
+    } finally {
+      setIsCleaningOrphans(false);
+    }
   };
 
   // Format file size
@@ -546,17 +576,34 @@ const DocumentManagement: React.FC = () => {
             </p>
           </div>
 
-          <button
-            onClick={() => {
-              fetchDocuments();
-              fetchCollections();
-            }}
-            disabled={loading}
-            className="self-start sm:self-auto inline-flex items-center px-3 py-1.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
-            title="Tải lại danh sách"
-          >
-            🔄 Làm mới
-          </button>
+          <div className="self-start sm:self-auto flex items-center gap-2">
+            <button
+              onClick={handleCleanupOrphans}
+              disabled={isCleaningOrphans || loading}
+              className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-amber-800 bg-amber-50 border border-amber-300 rounded-lg hover:bg-amber-100 transition-colors disabled:opacity-50"
+              title="Quét và xóa các vector points mồ côi trong Qdrant của những văn bản đã bị xóa"
+            >
+              {isCleaningOrphans ? (
+                <>
+                  <div className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-amber-800 border-t-transparent mr-1.5" />
+                  <span>Đang dọn dẹp...</span>
+                </>
+              ) : (
+                <span>🧹 Dọn dẹp vector rác</span>
+              )}
+            </button>
+            <button
+              onClick={() => {
+                fetchDocuments();
+                fetchCollections();
+              }}
+              disabled={loading}
+              className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+              title="Tải lại danh sách"
+            >
+              🔄 Làm mới
+            </button>
+          </div>
         </div>
 
         {/* Filter Toolbar */}
