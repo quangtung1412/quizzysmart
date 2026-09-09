@@ -6042,7 +6042,7 @@ app.get('/api/study-plans/:id/smart-review', async (req: Request, res: Response)
   }
 });
 
-// Reset study plan progress (for testing purposes)
+// Reset study plan progress
 app.post('/api/study-plans/:id/reset-progress', async (req: Request, res: Response) => {
   try {
     const user = req.user as any;
@@ -6064,7 +6064,42 @@ app.post('/api/study-plans/:id/reset-progress', async (req: Request, res: Respon
       where: { studyPlanId: studyPlanId }
     });
 
-    res.json({ message: 'Progress reset successfully' });
+    // Re-initialize question progress entries as 'hard'
+    const kbWithQuestions = await prisma.knowledgeBase.findUnique({
+      where: { id: studyPlan.knowledgeBaseId },
+      include: { questions: true }
+    });
+
+    if (kbWithQuestions && kbWithQuestions.questions.length) {
+      await prismaAny.questionProgress.createMany({
+        data: kbWithQuestions.questions.map((q: any) => ({
+          studyPlanId: studyPlan.id,
+          questionId: q.id,
+          difficultyLevel: 'hard',
+          reviewCount: 0,
+          nextReviewAfter: 0
+        }))
+      });
+    }
+
+    const startDate = new Date();
+    const endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + (studyPlan.totalDays || 30) - 1);
+
+    const updatedPlan = await prismaAny.studyPlan.update({
+      where: { id: studyPlanId },
+      data: {
+        completedQuestions: '[]',
+        newQuestionsLearned: 0,
+        currentDay: 1,
+        currentPhase: 'initial',
+        startDate,
+        endDate
+      },
+      include: { questionProgress: true }
+    });
+
+    res.json({ success: true, message: 'Progress reset successfully', studyPlan: updatedPlan });
   } catch (error) {
     console.error('Error resetting progress:', error);
     res.status(500).json({ error: 'Failed to reset progress' });

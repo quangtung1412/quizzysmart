@@ -286,7 +286,7 @@ const AppContent: React.FC = () => {
 
   const { bases: knowledgeBases, addBase, removeBase, setBases: setKnowledgeBases } = useKnowledgeBaseStore(user?.email || user?.username || null);
   const { attempts: quizAttempts, createAttempt, updateAttempt, setAttempts: setQuizAttempts } = useAttemptStore(user?.email || user?.username || null);
-  const { studyPlans, createStudyPlan, updateStudyPlan, updateQuestionProgress, getTodayQuestions, deleteStudyPlan, refreshStudyPlans, getStudyPlanByKnowledgeBaseId } = useStudyPlanStore(user?.email || user?.username || null);
+  const { studyPlans, createStudyPlan, updateStudyPlan, resetStudyPlanProgress, updateQuestionProgress, getTodayQuestions, deleteStudyPlan, refreshStudyPlans, getStudyPlanByKnowledgeBaseId } = useStudyPlanStore(user?.email || user?.username || null);
 
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<KnowledgeBase | null>(null);
   const [currentStudyPlan, setCurrentStudyPlan] = useState<StudyPlan | null>(null);
@@ -613,6 +613,53 @@ const AppContent: React.FC = () => {
     setAllQuestions(knowledgeBase.questions);
     navigate('/study-plan/setup');
   }, [navigate]);
+
+  const handleStartReview = useCallback(async (knowledgeBase: KnowledgeBase) => {
+    setSelectedKnowledgeBase(knowledgeBase);
+    setAllQuestions(knowledgeBase.questions);
+    try {
+      // Mặc định tự động tạo lộ trình 30 ngày, 60 phút/ngày, không cần chọn thủ công
+      const newStudyPlan = await createStudyPlan(
+        knowledgeBase.id,
+        knowledgeBase.name,
+        knowledgeBase.questions.length,
+        30,
+        60
+      );
+      setCurrentStudyPlan(newStudyPlan);
+      navigate('/study-plan/overview');
+    } catch (error) {
+      console.error('Error auto-creating study plan:', error);
+      alert('Có lỗi xảy ra khi tạo lộ trình ôn tập. Vui lòng thử lại.');
+    }
+  }, [createStudyPlan, navigate]);
+
+  const handleContinueReview = useCallback((knowledgeBase: KnowledgeBase, plan: StudyPlan) => {
+    setSelectedKnowledgeBase(knowledgeBase);
+    setAllQuestions(knowledgeBase.questions);
+    setCurrentStudyPlan(plan);
+    navigate('/study-plan/overview');
+  }, [navigate]);
+
+  const handleRestartReview = useCallback(async (knowledgeBase: KnowledgeBase, plan: StudyPlan) => {
+    try {
+      const resetPlan = await resetStudyPlanProgress(plan.id);
+      setSelectedKnowledgeBase(knowledgeBase);
+      setAllQuestions(knowledgeBase.questions);
+      setCurrentStudyPlan(resetPlan || {
+        ...plan,
+        questionProgress: [],
+        completedQuestions: [],
+        newQuestionsLearned: 0,
+        currentDay: 1,
+        currentPhase: StudyPhase.Initial
+      });
+      navigate('/study-plan/overview');
+    } catch (error) {
+      console.error('Error restarting study plan:', error);
+      alert('Có lỗi xảy ra khi bắt đầu lại lộ trình ôn tập. Vui lòng thử lại.');
+    }
+  }, [resetStudyPlanProgress, navigate]);
 
   const handleCreateStudyPlan = useCallback(async (totalDays: number, minutesPerDay: number) => {
     if (!selectedKnowledgeBase || !user) return;
@@ -991,6 +1038,9 @@ const AppContent: React.FC = () => {
                 onCreateStudyPlan={handleCreateStudyPlanRequest}
                 studyPlans={studyPlans}
                 onViewStudyPlan={handleViewStudyPlan}
+                onStartReview={handleStartReview}
+                onContinueReview={handleContinueReview}
+                onRestartReview={handleRestartReview}
                 isAdmin={user?.isAdmin}
                 onBack={() => navigate('/')}
               />
@@ -1116,7 +1166,7 @@ const AppContent: React.FC = () => {
                   onStartPhase2={handleStartPhase2}
                   onDeleteStudyPlan={handleDeleteStudyPlan}
                   onUpdateStudyPlan={handleUpdateStudyPlan}
-                  onBack={() => navigate('/study-plan/list')}
+                  onBack={() => navigate('/knowledge-base')}
                 />
               ) : <Navigate to="/knowledge-base" replace />}
             </AppLayout>

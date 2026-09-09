@@ -188,6 +188,28 @@ export const useStudyPlanStore = (userEmail: string | null) => {
     }
   }, [userEmail]);
 
+  // Reset study plan progress
+  const resetStudyPlanProgress = useCallback(async (planId: string): Promise<StudyPlan | null> => {
+    try {
+      const res = await api.resetStudyPlanProgress(planId);
+      await refreshStudyPlans();
+      if (res && res.studyPlan) {
+        const transformedPlan = {
+          ...res.studyPlan,
+          completedQuestions: typeof res.studyPlan.completedQuestions === 'string'
+            ? JSON.parse(res.studyPlan.completedQuestions || '[]')
+            : res.studyPlan.completedQuestions || []
+        };
+        setStudyPlans(prev => prev.map(p => p.id === planId ? transformedPlan : p));
+        return transformedPlan;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error resetting study plan progress:', error);
+      throw error;
+    }
+  }, [refreshStudyPlans]);
+
   // Get study plan by knowledge base ID
   const getStudyPlanByKnowledgeBaseId = useCallback((knowledgeBaseId: string) => {
     return studyPlans.find(plan => plan.knowledgeBaseId === knowledgeBaseId);
@@ -198,6 +220,7 @@ export const useStudyPlanStore = (userEmail: string | null) => {
     loading,
     createStudyPlan,
     updateStudyPlan,
+    resetStudyPlanProgress,
     updateQuestionProgress,
     getTodayQuestions,
     getAllHardQuestions,
