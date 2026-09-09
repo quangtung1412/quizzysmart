@@ -4032,8 +4032,8 @@ function alignOptions(
   ];
   const validExtractedCount = extList.filter(s => cleanOptionText(s).length > 0).length;
 
-  // Fallback to default DB options if image has insufficient extracted options
-  if (validExtractedCount < 2) {
+  // Fallback to default DB options ONLY if image has 0 valid extracted options (user only photographed question)
+  if (validExtractedCount === 0) {
     const defaultImageOptions: ImageOptionItem[] = dbOptions.map((opt, i) => {
       const slot = slots[i] || 'A';
       const isCorrect = correctAnswerIdx < 0
@@ -4057,11 +4057,11 @@ function alignOptions(
     };
   }
 
-  // Calculate all pairwise similarity scores between image slots and DB options
+  // Calculate pairwise similarity scores ONLY between slots present in image and DB options
   const pairs: Array<{ slot: number; dbIdx: number; score: number }> = [];
   for (let slot = 0; slot < 4; slot++) {
     const extText = extList[slot];
-    if (!cleanOptionText(extText)) continue;
+    if (!cleanOptionText(extText)) continue; // Skip slots not present in image
     for (let dbIdx = 0; dbIdx < dbOptions.length; dbIdx++) {
       const score = computeTextSimilarity(extText, dbOptions[dbIdx]);
       if (score >= 0.45) {
@@ -4074,44 +4074,19 @@ function alignOptions(
   pairs.sort((a, b) => b.score - a.score);
 
   const slotToDbIndex: number[] = [-1, -1, -1, -1];
-  const dbIndexToSlot = new Map<number, number>();
   const usedSlots = new Set<number>();
   const usedDbIndices = new Set<number>();
 
   for (const p of pairs) {
     if (!usedSlots.has(p.slot) && !usedDbIndices.has(p.dbIdx)) {
       slotToDbIndex[p.slot] = p.dbIdx;
-      dbIndexToSlot.set(p.dbIdx, p.slot);
       usedSlots.add(p.slot);
       usedDbIndices.add(p.dbIdx);
     }
   }
 
-  // If fewer than 2 slots were reliably matched, fallback to DB order to prevent incorrect answer assignment
-  if (usedSlots.size < 2) {
-    const fallbackImageOptions: ImageOptionItem[] = dbOptions.map((opt, i) => {
-      const slot = slots[i] || 'A';
-      const isCorrect = correctAnswerIdx < 0
-        ? ((Math.abs(correctAnswerIdx) & (1 << i)) !== 0)
-        : (i === correctAnswerIdx);
-      return {
-        slot,
-        text: opt,
-        dbText: opt,
-        isCorrect,
-        matchScore: 1.0,
-        slotIndex: i
-      };
-    });
-    return {
-      alignedOptions: dbOptions,
-      alignedCorrectAnswerIdx: correctAnswerIdx,
-      imageOptions: fallbackImageOptions,
-      imageCorrectAnswerSlots: fallbackImageOptions.filter(o => o.isCorrect).map(o => o.slot)
-    };
-  }
-
-  // Fill in any unused DB indices for empty/unassigned image slots
+  // If some image slot was not matched with score >= 0.45, assign remaining unused DB indices
+  // ONLY to slots that ACTUALLY exist in the image (do not assign to empty image slots)
   const unusedDbIndices: number[] = [];
   for (let dbIdx = 0; dbIdx < dbOptions.length; dbIdx++) {
     if (!usedDbIndices.has(dbIdx)) {
@@ -4120,18 +4095,21 @@ function alignOptions(
   }
   let unusedPtr = 0;
   for (let slot = 0; slot < 4; slot++) {
-    if (slotToDbIndex[slot] === -1 && unusedPtr < unusedDbIndices.length) {
+    if (cleanOptionText(extList[slot]) && slotToDbIndex[slot] === -1 && unusedPtr < unusedDbIndices.length) {
       slotToDbIndex[slot] = unusedDbIndices[unusedPtr++];
     }
   }
 
-  // Build imageOptions preserving visual order (A, B, C, D)
+  // Build imageOptions preserving ONLY the slots present in the image (rút gọn các đáp án không có)
   const imageOptions: ImageOptionItem[] = [];
   const imageCorrectAnswerSlots: string[] = [];
 
   for (let slot = 0; slot < 4; slot++) {
-    const slotLetter = slots[slot];
     const rawExt = extList[slot]?.trim() || '';
+    // Rút gọn: Nếu slot không có trong ảnh (ví dụ ảnh chỉ có A, B, C -> slot D rỗng) thì BỎ QUA!
+    if (!cleanOptionText(rawExt)) continue;
+
+    const slotLetter = slots[slot];
     const dbIdx = slotToDbIndex[slot];
     let dbText = '';
     let isCorrect = false;
@@ -4146,13 +4124,14 @@ function alignOptions(
       }
     }
 
-    const text = rawExt || dbText;
+    // Always use the text extracted from the image
+    const text = rawExt;
 
     if (isCorrect) {
       imageCorrectAnswerSlots.push(slotLetter);
     }
 
-    const score = rawExt && dbText ? computeTextSimilarity(rawExt, dbText) : 1.0;
+    const score = dbText ? computeTextSimilarity(rawExt, dbText) : 1.0;
 
     imageOptions.push({
       slot: slotLetter,
@@ -4160,35 +4139,28 @@ function alignOptions(
       dbText,
       isCorrect,
       matchScore: score,
-      slotIndex: slot
+      slotIndex: imageOptions.length
     });
   }
 
-  // Safety Verification: Ensure the correct answer is accurately identified
+  // Safety Verification: Ensure the correct answer is accurately identified if it exists in image
   if (correctAnswerIdx >= 0) {
     const hasCorrectSlot = imageOptions.some(o => o.isCorrect);
     if (!hasCorrectSlot) {
-      // If correct DB answer wasn't mapped, check which image slot is most similar to the DB correct answer
+      // Check if correct DB answer matches any of the slots present in the image
       const correctDbText = dbOptions[correctAnswerIdx];
-      let bestSlot = -1;
+      let bestSlotIdx = -1;
       let bestSim = 0;
-      for (let s = 0; s < 4; s++) {
-        const sim = computeTextSimilarity(extList[s], correctDbText);
+      for (let i = 0; i < imageOptions.length; i++) {
+        const sim = computeTextSimilarity(imageOptions[i].text, correctDbText);
         if (sim > bestSim && sim >= 0.45) {
           bestSim = sim;
-          bestSlot = s;
+          bestSlotIdx = i;
         }
       }
-      if (bestSlot !== -1) {
-        imageOptions[bestSlot].isCorrect = true;
-        imageCorrectAnswerSlots.push(slots[bestSlot]);
-      } else {
-        // Fallback safely to DB index if no slot matches
-        const fallbackIdx = Math.min(correctAnswerIdx, imageOptions.length - 1);
-        if (imageOptions[fallbackIdx]) {
-          imageOptions[fallbackIdx].isCorrect = true;
-          imageCorrectAnswerSlots.push(slots[fallbackIdx]);
-        }
+      if (bestSlotIdx !== -1) {
+        imageOptions[bestSlotIdx].isCorrect = true;
+        imageCorrectAnswerSlots.push(imageOptions[bestSlotIdx].slot);
       }
     }
   }
@@ -4206,7 +4178,7 @@ function alignOptions(
     alignedCorrectAnswerIdx = -newMask;
   } else {
     const foundIdx = imageOptions.findIndex(o => o.isCorrect);
-    alignedCorrectAnswerIdx = foundIdx !== -1 ? foundIdx : correctAnswerIdx;
+    alignedCorrectAnswerIdx = foundIdx !== -1 ? foundIdx : -1;
   }
 
   return { alignedOptions, alignedCorrectAnswerIdx, imageOptions, imageCorrectAnswerSlots };
@@ -4237,14 +4209,14 @@ function parseExtractedVisionJson(rawText: string): {
   try {
     parsed = JSON.parse(text);
   } catch {
-    // If parse fails, attempt regex fallback for fields
-    const qMatch = rawText.match(/"question"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
-    const aMatch = rawText.match(/"optionA"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
-    const bMatch = rawText.match(/"optionB"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
-    const cMatch = rawText.match(/"optionC"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
-    const dMatch = rawText.match(/"optionD"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
+    // If parse fails, attempt regex fallback for fields with multiline support
+    const qMatch = rawText.match(/"(?:question|cau_hoi|cauHoi|text|prompt|content|noidung|noiDung|title)"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+    const aMatch = rawText.match(/"(?:optionA|dapAnA|a|A)"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+    const bMatch = rawText.match(/"(?:optionB|dapAnB|b|B)"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+    const cMatch = rawText.match(/"(?:optionC|dapAnC|c|C)"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+    const dMatch = rawText.match(/"(?:optionD|dapAnD|d|D)"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
     return {
-      question: qMatch ? qMatch[1].replace(/\\"/g, '"').trim() : rawText.trim(),
+      question: qMatch ? qMatch[1].replace(/\\"/g, '"').replace(/\\n/g, ' ').trim() : rawText.trim(),
       optionA: aMatch ? aMatch[1].replace(/\\"/g, '"').trim() : '',
       optionB: bMatch ? bMatch[1].replace(/\\"/g, '"').trim() : '',
       optionC: cMatch ? cMatch[1].replace(/\\"/g, '"').trim() : '',
@@ -4253,12 +4225,26 @@ function parseExtractedVisionJson(rawText: string): {
   }
 
   if (parsed && typeof parsed === 'object') {
+    const extractedQ = (
+      parsed.question ||
+      parsed.Question ||
+      parsed.cau_hoi ||
+      parsed.cauHoi ||
+      parsed.text ||
+      parsed.prompt ||
+      parsed.content ||
+      parsed.noidung ||
+      parsed.noiDung ||
+      parsed.title ||
+      ''
+    ).toString().trim();
+
     return {
-      question: (parsed.question || parsed.Question || parsed.cau_hoi || parsed.cauHoi || parsed.text || '').trim(),
-      optionA: (parsed.optionA || parsed.OptionA || parsed.a || parsed.A || '').trim(),
-      optionB: (parsed.optionB || parsed.OptionB || parsed.b || parsed.B || '').trim(),
-      optionC: (parsed.optionC || parsed.OptionC || parsed.c || parsed.C || '').trim(),
-      optionD: (parsed.optionD || parsed.OptionD || parsed.d || parsed.D || '').trim(),
+      question: extractedQ || rawText.trim(),
+      optionA: (parsed.optionA || parsed.OptionA || parsed.dapAnA || parsed.a || parsed.A || '').toString().trim(),
+      optionB: (parsed.optionB || parsed.OptionB || parsed.dapAnB || parsed.b || parsed.B || '').toString().trim(),
+      optionC: (parsed.optionC || parsed.OptionC || parsed.dapAnC || parsed.c || parsed.C || '').toString().trim(),
+      optionD: (parsed.optionD || parsed.OptionD || parsed.dapAnD || parsed.d || parsed.D || '').toString().trim(),
     };
   }
 

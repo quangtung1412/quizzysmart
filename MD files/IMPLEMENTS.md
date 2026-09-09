@@ -667,6 +667,53 @@
 - Câu hỏi hiển thị trên màn hình kết quả sau khi tìm thấy trong DB hiện luôn là câu hỏi trích xuất từ ảnh của người dùng.
 - Vẫn bảo toàn câu hỏi trong DB tại trường `dbQuestion` phục vụ lưu trữ hoặc đối chiếu khi cần.
 
+## 2026-09-10 00:43:00 +07:00
+
+### Yeu cau
+- Rút gọn đáp án theo ảnh chụp: Nếu ảnh có ít hơn 4 đáp án (ví dụ chỉ có 3 đáp án A, B, C hoặc 2 đáp án A, B), chương trình chỉ hiển thị các đáp án thực tế có trong ảnh, loại bỏ các đáp án không có (không tự ý chèn thêm đáp án từ DB vào cho đủ 4 đáp án).
+- Đảm bảo chương trình luôn hiển thị câu hỏi trích xuất từ ảnh khi tìm thấy câu hỏi trong DB với độ khớp trên 70%.
+
+### Ket qua
+- **Tìm ra nguyên nhân (Findings)**:
+  1. Trong `alignOptions` (`server/src/index.ts`): Vòng lặp `for (let slot = 0; slot < 4; slot++)` cố định 4 slot A, B, C, D. Khi ảnh chỉ có 3 đáp án (A, B, C), slot D rỗng nhưng logic gán các DB index chưa dùng (`unusedDbIndices`) lại tự động lấp DB option thứ 4 vào slot D và gán `text = rawExt || dbText = dbText`. Hậu quả là màn hình luôn hiển thị đủ 4 đáp án dù ảnh chỉ có 3 đáp án.
+  2. Cơ chế fallback của `alignOptions` cũ khi `usedSlots.size < 2` hoặc `validExtractedCount < 2` tự động trả về toàn bộ `dbOptions`, vứt bỏ danh sách đáp án từ ảnh.
+  3. `parseExtractedVisionJson`: Cần hỗ trợ trích xuất đa dạng các biến thể tên trường câu hỏi (`question`, `Question`, `cau_hoi`, `cauHoi`, `text`, `prompt`, `content`, `noidung`, `noiDung`, `title`) và xử lý regex đa dòng khi JSON bị lỗi định dạng.
+- **Khắc phục tầng Backend (`server/src/index.ts`)**:
+  1. Cập nhật `alignOptions`:
+     - Nhận diện các slot thực sự có trên ảnh qua `cleanOptionText(extList[slot]).length > 0`.
+     - Chỉ tính toán độ tương đồng và ghép đôi cho các slot có mặt trên ảnh.
+     - Không gán `unusedDbIndices` vào các slot không có trên ảnh.
+     - Duyệt tạo `imageOptions`: Bỏ qua các slot không có trong ảnh (`!cleanOptionText(rawExt)` -> `continue`). Rút gọn danh sách `imageOptions` chỉ gồm đúng các đáp án thực tế xuất hiện trên ảnh chụp.
+     - Gán `text = rawExt` (chính xác nội dung trích xuất từ ảnh).
+     - Chỉ fallback hiển thị đầy đủ đáp án từ DB khi ảnh chụp hoàn toàn không có phương án nào (`validExtractedCount === 0`).
+     - Safety Verification: Chỉ đánh dấu `isCorrect = true` cho slot trên ảnh nếu nó tương ứng với đáp án đúng trong DB, không tự tiện gán bừa đáp án đúng vào slot cuối cùng nếu đáp án đúng không xuất hiện trên ảnh.
+     - Cập nhật `alignedOptions = imageOptions.map(o => o.text)` để đồng bộ với số lượng đáp án trên ảnh.
+  2. Nâng cấp `parseExtractedVisionJson`:
+     - Nhận diện các biến thể tên trường câu hỏi tiếng Việt và tiếng Anh.
+     - Hỗ trợ regex fallback trích xuất chuỗi có chứa ký tự xuống dòng.
+- **Tài liệu hệ thống (`MD files/SYSTEM-DESCRIPTION.md`)**:
+  - Cập nhật tài liệu kỹ thuật về thuật toán `alignOptions` (cơ chế rút gọn đáp án theo ảnh chụp) và hợp đồng payload `imageOptions`, `options`.
+
+### Files tac dong
+- `server/src/index.ts`
+- `MD files/SYSTEM-DESCRIPTION.md`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Kiểm thử độc lập logic `alignOptions` bằng file script test `test-align-options.ts`:
+  - Case 1: Ảnh có 3 đáp án (A, B, C) trong khi DB có 4 đáp án -> `imageOptions` rút gọn chính xác chỉ còn đúng 3 đáp án A, B, C; tích xanh đúng slot A.
+  - Case 2: Ảnh có 2 đáp án (A, B: Đúng/Sai) trong khi DB có 4 đáp án -> `imageOptions` rút gọn chính xác chỉ còn đúng 2 đáp án A, B; tích xanh đúng slot A.
+  - Case 3: Ảnh không có đáp án nào (`validExtractedCount === 0`) -> Fallback trả về đủ 4 đáp án DB.
+  - Case 4: Nội dung `text` của `imageOptions` luôn là chuỗi text trích xuất từ ảnh (`rawExt`).
+  -> 100% test cases passed.
+- Kiểm thử độc lập hàm `parseExtractedVisionJson` bằng `test-json-parse.ts` (JSON chuẩn, JSON trường tiếng Việt, JSON lỗi định dạng): 100% test cases passed.
+- Biên dịch TypeScript Backend `npx tsc -p tsconfig.json`: Thành công 100% với exit code 0.
+- Biên dịch Frontend Vite `npm run build`: Thành công 100% với exit code 0.
+
+### Ghi chu
+- Danh sách đáp án trên màn hình Live Camera và Image Search hiện phản ánh chính xác số lượng và nội dung phương án có trên ảnh chụp của người dùng.
+- Tuyệt đối không còn tình trạng tự ý chèn thêm đáp án từ DB vào giao diện khi ảnh chụp có ít hơn 4 đáp án.
+
 
 
 

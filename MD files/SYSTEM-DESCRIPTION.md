@@ -67,17 +67,17 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
   - Thuat toan can chinh dap an `alignOptions`:
     - Clean prefix loai bo ky tu dau dong (A., B., 1., a)...).
     - Strict Number Check (neu so khac nhau thi similarity = 0).
+    - Rut gon dap an theo anh chup: Chi giu lai dung cac slot phuong an thuc te co tren anh (vi du: anh co 3 dap an thi chi hien thi A, B, C; khong chen them dap an tu DB de du 4). Chi fallback hien thi du phuong an tu DB khi anh chup khong co bat ky phuong an nao (validExtractedCount === 0).
     - Global Best-Pair Matching: Sap xep cac cap do tuong dong giam dan truoc khi ghep, tranh loi tham lam theo slot gay cuop slot dung.
-    - Safety Verification: Dam bao dap an dung trong DB luon duoc anh xa chinh xac 100% vao dung slot phuong an tuong ung tren anh.
-    - Fallback an toan ve thu tu goc trong DB neu so luong options trich xuat duoi 2 hoac do tin cay khop kem.
+    - Safety Verification: Dam bao dap an dung trong DB luon duoc anh xa chinh xac 100% vao dung slot phuong an tuong ung tren anh. Khong tu tien gan dap an dung vao slot cuoi cung neu dap an dung khong xuat hien tren anh.
   - Payload contract khi tim thay cau hoi trac nghiem (`matchedQuestion` & `alternativeMatches`):
-    - `question`: Luon uu tien cau hoi trich xuat tu anh chup nguoi dung (`recognizedText`), fallback sang cau hoi trong DB neu anh khong co text cau hoi.
+    - `question`: Luon uu tien tuyet doi cau hoi trich xuat tu anh chup nguoi dung (`recognizedText`), fallback sang cau hoi trong DB chi khi anh hoan toan khong co chu.
     - `dbQuestion`: Cau hoi goc luu trong ngan hang de trac nghiem de luu tru doi chieu khi can.
     - `recognizedQuestion`: Cau hoi trich xuat tu anh chup cua nguoi dung.
-    - `options`: Danh sach noi dung phuong an da can chinh theo thu tu A, B, C, D tren anh chup.
+    - `options`: Danh sach noi dung phuong an da can chinh va rut gon theo dung cac slot tren anh chup.
     - `dbOptions`: Danh sach phuong an goc trong ngan hang de.
-    - `imageOptions`: Mang doi tuong `{ slot: 'A'|'B'|'C'|'D', text: string, dbText?: string, isCorrect: boolean, matchScore: number, slotIndex: number }`.
-    - `imageCorrectAnswerSlots`: Danh sach slot dap an dung tren anh chup (vi du: `['B']`).
+    - `imageOptions`: Mang doi tuong rut gon theo cac slot co tren anh `{ slot: 'A'|'B'|'C'|'D', text: string, dbText?: string, isCorrect: boolean, matchScore: number, slotIndex: number }`.
+    - `imageCorrectAnswerSlots`: Danh sach slot dap an dung tren anh chup (vi du: `['A']` hoac `['B']`).
     - `accuracy`: Ti le khop da duoc chuan hoa clamp ve doan [0, 100]%.
 
 ## 3. Frontend Navigation & User Flows
