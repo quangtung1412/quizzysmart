@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Question } from '../types';
 import { api } from '../src/api';
-import { DiffHighlighter, DiffLegend } from './common/DiffHighlighter';
 
 interface LiveCameraSearchProps {
     onBack: () => void;
@@ -60,7 +59,6 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
     const [capturedImage, setCapturedImage] = useState<string | null>(null);
     const [remainingQuota, setRemainingQuota] = useState<number>(user?.aiSearchQuota || 0);
     const [showGuidePopup, setShowGuidePopup] = useState(true);
-    const [showOriginalQuestion, setShowOriginalQuestion] = useState(false);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -429,10 +427,11 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                     </div>
 
                                     {/* Question with Diff against DB reference */}
+                                    {/* Question */}
                                     <div className="bg-white rounded-lg p-3 sm:p-4 mb-3 border border-green-200 shadow-sm">
                                         <div className="flex items-center justify-between gap-2 mb-1.5">
                                             <span className="text-xs font-semibold text-emerald-800 uppercase tracking-wide">
-                                                📸 Câu hỏi (từ ảnh chụp):
+                                                📸 Câu hỏi:
                                             </span>
                                             {searchResult.matchedQuestion.correctAnswerIndex < 0 && (
                                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
@@ -440,15 +439,12 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                                 </span>
                                             )}
                                         </div>
-                                        <div className="text-gray-800 font-medium text-xs sm:text-sm leading-relaxed">
-                                            <DiffHighlighter
-                                                extractedText={searchResult.recognizedText || searchResult.matchedQuestion.question}
-                                                referenceText={searchResult.matchedQuestion.dbQuestion || searchResult.matchedQuestion.question}
-                                            />
+                                        <div className="text-gray-900 font-medium text-xs sm:text-sm leading-relaxed">
+                                            {searchResult.recognizedText || searchResult.matchedQuestion.question}
                                         </div>
                                     </div>
 
-                                    {/* Answers in Image Order with Diff against DB reference */}
+                                    {/* Answers */}
                                     <div className="space-y-2 mb-3">
                                         {(searchResult.matchedQuestion.imageOptions && searchResult.matchedQuestion.imageOptions.length > 0
                                             ? searchResult.matchedQuestion.imageOptions
@@ -468,7 +464,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                                 <div
                                                     key={index}
                                                     className={`rounded-lg p-3 text-xs sm:text-sm transition-all ${isCorrect
-                                                        ? 'bg-green-100 border-2 border-green-500 font-medium shadow-sm'
+                                                        ? 'bg-green-100 border-2 border-green-500 font-semibold shadow-sm'
                                                         : 'bg-white border border-gray-200'
                                                         }`}
                                                 >
@@ -476,11 +472,8 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                                         <span className={`inline-block w-6 font-bold flex-shrink-0 ${isCorrect ? 'text-green-800' : 'text-gray-700'}`}>
                                                             {item.slot || String.fromCharCode(65 + index)}.
                                                         </span>
-                                                        <div className="flex-1 text-slate-800">
-                                                            <DiffHighlighter
-                                                                extractedText={item.text}
-                                                                referenceText={item.dbText}
-                                                            />
+                                                        <div className={`flex-1 ${isCorrect ? 'text-green-950 font-semibold' : 'text-slate-800'}`}>
+                                                            {item.text}
                                                         </div>
                                                         {isCorrect && (
                                                             <span className="ml-2 text-green-600 font-bold flex-shrink-0 text-base" title="Đáp án đúng">✓</span>
@@ -489,42 +482,6 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                                 </div>
                                             );
                                         })}
-                                    </div>
-
-                                    {/* Diff Legend */}
-                                    <DiffLegend className="mb-3 p-2.5 bg-white/80 rounded-lg border border-green-200 shadow-sm" />
-
-                                    {/* Toggle Original DB Question */}
-                                    <div className="mt-2 pt-2 border-t border-green-200">
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowOriginalQuestion(!showOriginalQuestion)}
-                                            className="text-xs font-semibold text-emerald-800 hover:text-emerald-900 flex items-center gap-1.5 transition-colors py-1"
-                                        >
-                                            <span>{showOriginalQuestion ? '▼ Thu gọn câu hỏi gốc trong bộ đề' : '▶ Đối chiếu với câu hỏi gốc trong ngân hàng đề'}</span>
-                                        </button>
-
-                                        {showOriginalQuestion && (
-                                            <div className="mt-2 p-3 bg-emerald-50 rounded-lg border border-emerald-300 text-xs text-emerald-950 space-y-2 animate-fadeIn">
-                                                <p className="font-semibold text-emerald-900">📖 Nguyên văn trong ngân hàng đề:</p>
-                                                <p className="bg-white p-2.5 rounded border border-emerald-200 text-slate-800">
-                                                    {searchResult.matchedQuestion.dbQuestion || searchResult.matchedQuestion.question}
-                                                </p>
-                                                <div className="space-y-1 mt-2">
-                                                    <span className="font-semibold text-emerald-900">Các đáp án trong ngân hàng đề:</span>
-                                                    {(searchResult.matchedQuestion.dbOptions || searchResult.matchedQuestion.options).map((opt, i) => {
-                                                        const isDbCorrect = searchResult.matchedQuestion!.correctAnswerIndex < 0
-                                                            ? (Math.abs(searchResult.matchedQuestion!.correctAnswerIndex) & (1 << i)) !== 0
-                                                            : i === searchResult.matchedQuestion!.correctAnswerIndex;
-                                                        return (
-                                                            <div key={i} className={`p-1.5 rounded text-xs ${isDbCorrect ? 'bg-green-200 text-green-900 font-semibold' : 'bg-white text-slate-700'}`}>
-                                                                <span className="font-bold">{String.fromCharCode(65 + i)}.</span> {opt} {isDbCorrect && '✓ (Đáp án đúng)'}
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                        )}
                                     </div>
 
                                     {searchResult.matchedQuestion.source && (

@@ -3961,6 +3961,57 @@ function computeLevenshtein(a: string, b: string): number {
   return d[m][n];
 }
 
+// Helper to clean option text (strips leading prefixes like "A.", "B.", "1.", "(A)", etc.)
+function cleanOptionText(text: string): string {
+  if (!text) return '';
+  return text.trim()
+    .replace(/^(\([A-Da-d0-9]\)|[A-Da-d0-9][\.\)\:\/\-–—]\s*)/, '')
+    .trim();
+}
+
+// Helper to normalize text for comparison
+function normalizeForComparison(text: string): string {
+  if (!text) return '';
+  return text.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Remove Vietnamese accents
+    .replace(/đ/g, 'd')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Helper to compute semantic text similarity with strict number validation
+function computeTextSimilarity(text1: string, text2: string): number {
+  const s1 = normalizeForComparison(cleanOptionText(text1));
+  const s2 = normalizeForComparison(cleanOptionText(text2));
+  if (!s1 || !s2) return 0;
+  if (s1 === s2) return 1.0;
+
+  // Strict Number Check: numbers must match identically
+  const nums1 = s1.match(/\b\d+\b/g) || [];
+  const nums2 = s2.match(/\b\d+\b/g) || [];
+  if (nums1.length > 0 || nums2.length > 0) {
+    const sorted1 = [...nums1].sort().join(',');
+    const sorted2 = [...nums2].sort().join(',');
+    if (sorted1 !== sorted2) {
+      return 0.0; // Different numbers means distinct options/questions
+    }
+  }
+
+  const maxLen = Math.max(s1.length, s2.length);
+  const dist = computeLevenshtein(s1, s2);
+  const levSim = maxLen > 0 ? Math.max(0, 1 - dist / maxLen) : 0;
+
+  const words1 = s1.split(' ').filter(w => w.length > 0);
+  const words2 = s2.split(' ').filter(w => w.length > 0);
+  if (words1.length === 0 || words2.length === 0) return levSim;
+
+  const common = words1.filter(w => words2.includes(w));
+  const jaccard = common.length / Math.max(words1.length, words2.length);
+
+  return Math.max(levSim, jaccard * 0.9);
+}
+
 // Helper to align database options to extracted visual options from image
 function alignOptions(
   dbOptions: string[],
@@ -3973,9 +4024,16 @@ function alignOptions(
   imageCorrectAnswerSlots: string[];
 } {
   const slots: Array<'A' | 'B' | 'C' | 'D'> = ['A', 'B', 'C', 'D'];
-  const hasExtracted = !!(extracted.optionA || extracted.optionB || extracted.optionC || extracted.optionD);
+  const extList = [
+    extracted.optionA || '',
+    extracted.optionB || '',
+    extracted.optionC || '',
+    extracted.optionD || ''
+  ];
+  const validExtractedCount = extList.filter(s => cleanOptionText(s).length > 0).length;
 
-  if (!hasExtracted) {
+  // Fallback to default DB options if image has insufficient extracted options
+  if (validExtractedCount < 2) {
     const defaultImageOptions: ImageOptionItem[] = dbOptions.map((opt, i) => {
       const slot = slots[i] || 'A';
       const isCorrect = correctAnswerIdx < 0
@@ -3999,109 +4057,81 @@ function alignOptions(
     };
   }
 
-  const normalize = (text: string) => {
-    return text.toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/đ/g, 'd')
-      .replace(/[^a-z0-9]/g, '')
-      .trim();
-  };
-
-  const dbOptsNorm = dbOptions.map(opt => normalize(opt));
-
-  const extNorm: Record<number, string> = {};
-  if (extracted.optionA) extNorm[0] = normalize(extracted.optionA);
-  if (extracted.optionB) extNorm[1] = normalize(extracted.optionB);
-  if (extracted.optionC) extNorm[2] = normalize(extracted.optionC);
-  if (extracted.optionD) extNorm[3] = normalize(extracted.optionD);
-
-  const slotToDbIndex = [-1, -1, -1, -1];
-  const dbIndexUsed = new Set<number>();
-
+  // Calculate all pairwise similarity scores between image slots and DB options
+  const pairs: Array<{ slot: number; dbIdx: number; score: number }> = [];
   for (let slot = 0; slot < 4; slot++) {
-    const extVal = extNorm[slot];
-    if (!extVal) continue;
-
-    let bestDbIdx = -1;
-    let bestScore = 0;
-
+    const extText = extList[slot];
+    if (!cleanOptionText(extText)) continue;
     for (let dbIdx = 0; dbIdx < dbOptions.length; dbIdx++) {
-      if (dbIndexUsed.has(dbIdx)) continue;
-      const dbVal = dbOptsNorm[dbIdx];
-      if (!dbVal) continue;
-
-      let score = 0;
-      if (dbVal === extVal) {
-        score = 1.0;
-      } else if (dbVal.includes(extVal) || extVal.includes(dbVal)) {
-        score = Math.min(dbVal.length, extVal.length) / Math.max(dbVal.length, extVal.length) * 0.9;
-      } else {
-        const normalizeWithSpaces = (t: string) => {
-          return t.toLowerCase()
-            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-            .replace(/đ/g, 'd')
-            .replace(/[^a-z0-9\s]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-        };
-        const dbTokens = normalizeWithSpaces(dbOptions[dbIdx]).split(' ').filter(w => w.length > 0);
-        
-        let extString = '';
-        if (slot === 0 && extracted.optionA) extString = extracted.optionA;
-        else if (slot === 1 && extracted.optionB) extString = extracted.optionB;
-        else if (slot === 2 && extracted.optionC) extString = extracted.optionC;
-        else if (slot === 3 && extracted.optionD) extString = extracted.optionD;
-
-        const extTokens = normalizeWithSpaces(extString).split(' ').filter(w => w.length > 0);
-
-        if (dbTokens.length > 0 && extTokens.length > 0) {
-          const common = dbTokens.filter(t => extTokens.includes(t));
-          score = common.length / Math.max(dbTokens.length, extTokens.length) * 0.8;
-        }
+      const score = computeTextSimilarity(extText, dbOptions[dbIdx]);
+      if (score >= 0.45) {
+        pairs.push({ slot, dbIdx, score });
       }
-
-      if (score > bestScore && score > 0.3) {
-        bestScore = score;
-        bestDbIdx = dbIdx;
-      }
-    }
-
-    if (bestDbIdx !== -1) {
-      slotToDbIndex[slot] = bestDbIdx;
-      dbIndexUsed.add(bestDbIdx);
     }
   }
 
+  // Global Best-Match First (sort descending by similarity score)
+  pairs.sort((a, b) => b.score - a.score);
+
+  const slotToDbIndex: number[] = [-1, -1, -1, -1];
+  const dbIndexToSlot = new Map<number, number>();
+  const usedSlots = new Set<number>();
+  const usedDbIndices = new Set<number>();
+
+  for (const p of pairs) {
+    if (!usedSlots.has(p.slot) && !usedDbIndices.has(p.dbIdx)) {
+      slotToDbIndex[p.slot] = p.dbIdx;
+      dbIndexToSlot.set(p.dbIdx, p.slot);
+      usedSlots.add(p.slot);
+      usedDbIndices.add(p.dbIdx);
+    }
+  }
+
+  // If fewer than 2 slots were reliably matched, fallback to DB order to prevent incorrect answer assignment
+  if (usedSlots.size < 2) {
+    const fallbackImageOptions: ImageOptionItem[] = dbOptions.map((opt, i) => {
+      const slot = slots[i] || 'A';
+      const isCorrect = correctAnswerIdx < 0
+        ? ((Math.abs(correctAnswerIdx) & (1 << i)) !== 0)
+        : (i === correctAnswerIdx);
+      return {
+        slot,
+        text: opt,
+        dbText: opt,
+        isCorrect,
+        matchScore: 1.0,
+        slotIndex: i
+      };
+    });
+    return {
+      alignedOptions: dbOptions,
+      alignedCorrectAnswerIdx: correctAnswerIdx,
+      imageOptions: fallbackImageOptions,
+      imageCorrectAnswerSlots: fallbackImageOptions.filter(o => o.isCorrect).map(o => o.slot)
+    };
+  }
+
+  // Fill in any unused DB indices for empty/unassigned image slots
   const unusedDbIndices: number[] = [];
   for (let dbIdx = 0; dbIdx < dbOptions.length; dbIdx++) {
-    if (!dbIndexUsed.has(dbIdx)) {
+    if (!usedDbIndices.has(dbIdx)) {
       unusedDbIndices.push(dbIdx);
     }
   }
-
   let unusedPtr = 0;
-  for (let slot = 0; slot < Math.max(4, dbOptions.length); slot++) {
-    if (slotToDbIndex[slot] === undefined || slotToDbIndex[slot] === -1) {
-      if (unusedPtr < unusedDbIndices.length) {
-        slotToDbIndex[slot] = unusedDbIndices[unusedPtr++];
-      }
+  for (let slot = 0; slot < 4; slot++) {
+    if (slotToDbIndex[slot] === -1 && unusedPtr < unusedDbIndices.length) {
+      slotToDbIndex[slot] = unusedDbIndices[unusedPtr++];
     }
   }
 
-  const rawExtStrings = [
-    extracted.optionA || '',
-    extracted.optionB || '',
-    extracted.optionC || '',
-    extracted.optionD || ''
-  ];
-
+  // Build imageOptions preserving visual order (A, B, C, D)
   const imageOptions: ImageOptionItem[] = [];
   const imageCorrectAnswerSlots: string[] = [];
-  const totalSlots = Math.min(4, Math.max(dbOptions.length, 4));
 
-  for (let slot = 0; slot < totalSlots; slot++) {
-    const slotLetter = slots[slot] || 'A';
-    const extVal = rawExtStrings[slot]?.trim() || '';
+  for (let slot = 0; slot < 4; slot++) {
+    const slotLetter = slots[slot];
+    const rawExt = extList[slot]?.trim() || '';
     const dbIdx = slotToDbIndex[slot];
     let dbText = '';
     let isCorrect = false;
@@ -4116,32 +4146,51 @@ function alignOptions(
       }
     }
 
-    const text = extVal || dbText;
+    const text = rawExt || dbText;
 
     if (isCorrect) {
       imageCorrectAnswerSlots.push(slotLetter);
     }
 
-    let optMatchScore = 1.0;
-    if (extVal && dbText) {
-      const nExt = normalize(extVal);
-      const nDb = normalize(dbText);
-      if (nExt === nDb) {
-        optMatchScore = 1.0;
-      } else {
-        const maxLen = Math.max(nExt.length, nDb.length);
-        optMatchScore = maxLen > 0 ? Math.max(0, 1 - computeLevenshtein(nExt, nDb) / maxLen) : 1.0;
-      }
-    }
+    const score = rawExt && dbText ? computeTextSimilarity(rawExt, dbText) : 1.0;
 
     imageOptions.push({
       slot: slotLetter,
       text,
       dbText,
       isCorrect,
-      matchScore: optMatchScore,
+      matchScore: score,
       slotIndex: slot
     });
+  }
+
+  // Safety Verification: Ensure the correct answer is accurately identified
+  if (correctAnswerIdx >= 0) {
+    const hasCorrectSlot = imageOptions.some(o => o.isCorrect);
+    if (!hasCorrectSlot) {
+      // If correct DB answer wasn't mapped, check which image slot is most similar to the DB correct answer
+      const correctDbText = dbOptions[correctAnswerIdx];
+      let bestSlot = -1;
+      let bestSim = 0;
+      for (let s = 0; s < 4; s++) {
+        const sim = computeTextSimilarity(extList[s], correctDbText);
+        if (sim > bestSim && sim >= 0.45) {
+          bestSim = sim;
+          bestSlot = s;
+        }
+      }
+      if (bestSlot !== -1) {
+        imageOptions[bestSlot].isCorrect = true;
+        imageCorrectAnswerSlots.push(slots[bestSlot]);
+      } else {
+        // Fallback safely to DB index if no slot matches
+        const fallbackIdx = Math.min(correctAnswerIdx, imageOptions.length - 1);
+        if (imageOptions[fallbackIdx]) {
+          imageOptions[fallbackIdx].isCorrect = true;
+          imageCorrectAnswerSlots.push(slots[fallbackIdx]);
+        }
+      }
+    }
   }
 
   const alignedOptions = imageOptions.map(o => o.text);
@@ -4165,12 +4214,7 @@ function alignOptions(
 
 // Helper to normalize text for search comparison
 function normalizeSearchText(text: string): string {
-  return text.toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Remove Vietnamese accents
-    .replace(/đ/g, 'd')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return normalizeForComparison(text);
 }
 
 // Helper to calculate question and options match score accurately between [0, 1.0]
@@ -4180,59 +4224,61 @@ function calculateQuestionMatchScore(
   recognizedQuestion: string,
   extractedOptionsList: string[]
 ): { matchScore: number; matchType: string; questionMatchScore: number; optionsMatchScore: number } {
-  const questionNormalized = normalizeSearchText(dbQuestionText);
-  const recognizedNormalized = normalizeSearchText(recognizedQuestion);
-  const questionOptionsNormalized = dbOptions.map(opt => normalizeSearchText(opt));
+  const qNorm = normalizeForComparison(dbQuestionText);
+  const rNorm = normalizeForComparison(recognizedQuestion);
 
-  // 1. Question matching (range [0, 1.0])
+  // 1. Question matching with Levenshtein + Number validation
   let questionMatchScore = 0;
-  if (questionNormalized === recognizedNormalized) {
+  if (qNorm === rNorm) {
     questionMatchScore = 1.0;
-  } else if (questionNormalized.includes(recognizedNormalized) || recognizedNormalized.includes(questionNormalized)) {
-    const minLen = Math.min(questionNormalized.length, recognizedNormalized.length);
-    const maxLen = Math.max(questionNormalized.length, recognizedNormalized.length);
-    const lengthRatio = maxLen > 0 ? minLen / maxLen : 1;
-    // High overlap substring match: between 0.85 and 0.98
-    questionMatchScore = 0.85 + 0.13 * lengthRatio;
   } else {
-    const recognizedWords = recognizedNormalized.split(' ').filter(w => w.length > 2);
-    const questionWords = questionNormalized.split(' ').filter(w => w.length > 2);
-
-    if (recognizedWords.length > 0 && questionWords.length > 0) {
-      const matchingWords = recognizedWords.filter(word => questionWords.includes(word));
-      questionMatchScore = matchingWords.length / Math.max(recognizedWords.length, questionWords.length);
+    // Check numbers in questions
+    const qNums = qNorm.match(/\b\d+\b/g) || [];
+    const rNums = rNorm.match(/\b\d+\b/g) || [];
+    let numberPenalty = 1.0;
+    if (qNums.length > 0 || rNums.length > 0) {
+      if (qNums.sort().join(',') !== rNums.sort().join(',')) {
+        numberPenalty = 0.35; // Heavy penalty if question numbers differ (e.g. "lần 1" vs "lần 2", "Điều 10" vs "Điều 20")
+      }
     }
+
+    const maxLen = Math.max(qNorm.length, rNorm.length);
+    const dist = computeLevenshtein(qNorm, rNorm);
+    const levSim = maxLen > 0 ? Math.max(0, 1 - dist / maxLen) : 0;
+
+    const qWords = qNorm.split(' ').filter(w => w.length > 1);
+    const rWords = rNorm.split(' ').filter(w => w.length > 1);
+    const commonWords = qWords.filter(w => rWords.includes(w));
+    const jaccard = maxLen > 0 ? commonWords.length / Math.max(qWords.length, rWords.length) : 0;
+
+    questionMatchScore = (levSim * 0.65 + jaccard * 0.35) * numberPenalty;
   }
 
-  // 2. Answer options matching (range [0, 1.0])
+  // 2. Options matching
   let optionsMatchScore = 0;
   let matchedOptionsCount = 0;
   let matchType = '';
 
-  const validExtractedOptions = extractedOptionsList.map(opt => normalizeSearchText(opt)).filter(opt => opt.length > 0);
+  const validExtractedOptions = extractedOptionsList
+    .map(opt => cleanOptionText(opt))
+    .filter(opt => opt.length > 0);
 
   if (validExtractedOptions.length > 0) {
     let totalOptionScore = 0;
-    for (const extractedOption of validExtractedOptions) {
+    for (const extOpt of validExtractedOptions) {
       let bestOptMatch = 0;
-      for (const dbOption of questionOptionsNormalized) {
-        if (extractedOption === dbOption) {
-          bestOptMatch = 1.0;
-          break;
-        } else if (extractedOption.includes(dbOption) || dbOption.includes(extractedOption)) {
-          const optMin = Math.min(extractedOption.length, dbOption.length);
-          const optMax = Math.max(extractedOption.length, dbOption.length);
-          const optRatio = optMax > 0 ? optMin / optMax : 0.8;
-          bestOptMatch = Math.max(bestOptMatch, 0.75 + 0.25 * optRatio);
+      for (const dbOpt of dbOptions) {
+        const sim = computeTextSimilarity(extOpt, dbOpt);
+        if (sim > bestOptMatch) {
+          bestOptMatch = sim;
         }
       }
-      if (bestOptMatch > 0) {
+      if (bestOptMatch >= 0.5) {
         matchedOptionsCount++;
-        totalOptionScore += bestOptMatch;
       }
+      totalOptionScore += bestOptMatch;
     }
 
-    // Average matching score of extracted options (strictly <= 1.0)
     optionsMatchScore = Math.min(1.0, totalOptionScore / validExtractedOptions.length);
 
     if (matchedOptionsCount >= 2) {
@@ -4248,15 +4294,14 @@ function calculateQuestionMatchScore(
 
   // 3. Combined score calculation (strictly in [0, 1.0])
   let matchScore = 0;
-  if (validExtractedOptions.length > 0) {
-    // If options were recognized in the image: 75% question + 25% options
-    matchScore = (questionMatchScore * 0.75) + (optionsMatchScore * 0.25);
+  if (validExtractedOptions.length >= 2) {
+    // If multiple options were extracted: 60% question + 40% options
+    matchScore = (questionMatchScore * 0.6) + (optionsMatchScore * 0.4);
   } else {
-    // If only question was recognized without options: 100% question weight
+    // If only question was extracted: 100% question weight
     matchScore = questionMatchScore;
   }
 
-  // Strictly clamp between 0 and 1.0
   matchScore = Math.min(1.0, Math.max(0, matchScore));
 
   return {

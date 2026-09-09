@@ -63,9 +63,16 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
 ### 2.5. AI Camera & Image Search (`/api/premium/search-by-image`, `/api/premium/search-by-image-stream`)
 - `POST /api/premium/search-by-image` & `POST /api/premium/search-by-image-stream`:
   - Trich xuat cau hoi va cac phuong an tu anh chup (OCR/Gemini Vision), tim kiem cau hoi tuong dong trong ngan hang trac nghiem hoac truy van RAG.
+  - Thuat toan so khop cau hoi: Ket hop Levenshtein distance tren toan bo chuoi, Jaccard word token overlap, va Strict Number Check (phat nang neu sai lech so/dieu khoan/lan quy dinh de tranh chon nham cau hoi).
+  - Thuat toan can chinh dap an `alignOptions`:
+    - Clean prefix loai bo ky tu dau dong (A., B., 1., a)...).
+    - Strict Number Check (neu so khac nhau thi similarity = 0).
+    - Global Best-Pair Matching: Sap xep cac cap do tuong dong giam dan truoc khi ghep, tranh loi tham lam theo slot gay cuop slot dung.
+    - Safety Verification: Dam bao dap an dung trong DB luon duoc anh xa chinh xac 100% vao dung slot phuong an tuong ung tren anh.
+    - Fallback an toan ve thu tu goc trong DB neu so luong options trich xuat duoi 2 hoac do tin cay khop kem.
   - Payload contract khi tim thay cau hoi trac nghiem (`matchedQuestion` & `alternativeMatches`):
     - `question`: Cau hoi trich xuat tu anh (`recognizedText`) de hien thi truc quan cho nguoi dung.
-    - `dbQuestion`: Cau hoi goc luu trong ngan hang de trac nghiem (dung de doi chieu diff).
+    - `dbQuestion`: Cau hoi goc luu trong ngan hang de trac nghiem.
     - `options`: Danh sach noi dung phuong an da can chinh theo thu tu A, B, C, D tren anh chup.
     - `dbOptions`: Danh sach phuong an goc trong ngan hang de.
     - `imageOptions`: Mang doi tuong `{ slot: 'A'|'B'|'C'|'D', text: string, dbText?: string, isCorrect: boolean, matchScore: number, slotIndex: number }`.
@@ -75,13 +82,9 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
 ## 3. Frontend Navigation & User Flows
 - `LiveCameraSearch.tsx` & `ImageSearchScreen.tsx`:
   - Khi camera / anh chup khop voi cau hoi trac nghiem trong DB:
-    - Hien thi cau hoi trich xuat tu anh lam tam diem, kem cong cu so sanh Text Diff (`DiffHighlighter`) so voi cau hoi goc trong DB.
-    - Hien thi cac lua chon tra loi theo dung thu tu A, B, C, D tren anh chup nguoi dung (`imageOptions`), dau tich (✓) duoc anh xa chinh xac vao dung vi tri dap an tren anh.
-    - Text Diff Highlighting tu dong to mau:
-      - Khop: Mau chu mac dinh.
-      - Khac biet nhe / viet tat / dau cau / typo: Mau VANG (Amber).
-      - Khac biet lon / sai lech so lieu: Mau DO (Red font-bold).
-    - Cung cap `DiffLegend` chu thich truc quan va nut toggle *"▶ Doi chieu voi cau hoi goc trong ngan hang de"* de xem lai nguyen van noi dung va thu tu dap an goc trong he thong.
+    - Hien thi cau hoi va cac phuong an dang van ban chuan (plain text), bo hoan toan mau sac highlight diff vang/do de tranh roi mat.
+    - Phuong an dung duoc lam noi bat voi mau xanh la (border xanh, badge checkmark ✓ "Dap an dung"), phuong an sai hien thi nhe nhang.
+    - Dam bao vi tri dau tich ✓ dap an dung phan anh chinh xac 100% dap an dung cua cau hoi trong ngan hang de.
 - `AdminDashboard.tsx`:
   - `tests`: Quan ly bai thi (`components/admin/TestManagement.tsx`) - Ho tro tao de don / bo de batch gan chu de, loc theo chu de, badge chu de tren tung bai thi. Ho tro checkbox chon nhieu bai thi va gan chu de hang loat (`POST /api/admin/tests/batch-topic`).
   - `knowledge`: Quan ly co so kien thuc (`components/admin/KnowledgeManagement.tsx`) - Ho tro tai len Excel gan chu de hoac tao chu de moi, loc theo chu de, badge chu de. Ho tro checkbox chon nhieu co so kien thuc va gan chu de hang loat (`POST /api/admin/knowledge-bases/batch-topic`).

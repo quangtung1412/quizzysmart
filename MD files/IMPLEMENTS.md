@@ -587,5 +587,47 @@
 - Hỗ trợ cả câu hỏi một đáp án lẫn câu hỏi nhiều đáp án (bitmask âm).
 - Khi ảnh chụp không nhận diện được slot A, B, C, D (ảnh chỉ chụp một phần hoặc chỉ chụp câu hỏi), hệ thống tự động fallback về danh sách phương án DB với đầy đủ diff để đảm bảo không bị gián đoạn trải nghiệm.
 
+## 2026-09-09 23:45:00 +07:00
+
+### Yeu cau
+- Bỏ tính năng highlight so sánh (vàng/đỏ) với câu hỏi gốc.
+- Xem lại việc so sánh đáp án đúng, khắc phục triệt để lỗi chương trình chọn sai đáp án đúng từ bộ câu hỏi trắc nghiệm.
+
+### Ket qua
+- **Tìm ra nguyên nhân gốc rễ (Findings)**:
+  1. **Lỗi thuật toán ghép đôi tham lam theo slot (Greedy Slot-First)**: Thuật toán `alignOptions` cũ duyệt lần lượt từ slot 0 (A) đến slot 3 (D) và ghép với phương án DB bất kỳ có `score > 0.3`. Khi các phương án có từ ngữ ngắn hoặc từ hành chính chung (như "ngày", "năm", "cơ quan"), slot A trên ảnh bị ghép nhầm vào phương án C trong DB. Khi slot C trên ảnh (vốn khớp 100% với phương án C trong DB) đến lượt thì phương án C trong DB đã bị slot A chiếm mất. Kết quả là `isCorrect = true` bị gán sai vị trí cho slot A, khiến chương trình tích xanh vào phương án sai.
+  2. **Thiếu kiểm tra số nghiêm ngặt (Strict Number Check)**: Các phương án như "15 ngày", "30 ngày", "45 ngày", "60 ngày" cùng có từ "ngày" nên trước đây đạt điểm 0.4 > 0.3, dẫn đến ghép nhầm số nọ sang số kia.
+  3. **Lỗi nhận diện câu hỏi tương tự**: Thuật toán tính điểm `calculateQuestionMatchScore` cũ chỉ đếm tỷ lệ từ chung rời rạc, dễ chọn nhầm các câu hỏi có cấu trúc mở đầu giống nhau nhưng khác nhau về số hiệu điều khoản, số lần ("lần 1" vs "lần 2") hoặc chủ thể.
+- **Khắc phục tầng Backend (`server/src/index.ts`)**:
+  1. Thêm `cleanOptionText`: Cắt bỏ tiền tố thứ tự ("A.", "B.", "1.", "a)", "(A)"...).
+  2. Thêm `computeTextSimilarity` với **Strict Number Check**: So sánh toàn bộ số nguyên trong 2 chuỗi; nếu số liệu khác nhau, độ tương đồng bị ép về 0.0 ngay lập tức.
+  3. Cải tiến `alignOptions` với thuật toán **Global Best-Pair Matching**:
+     - Sắp xếp tất cả các cặp tương đồng `(slot, dbIdx, score)` giảm dần trên toàn bộ ma trận $4 \times 4$.
+     - Ghép các cặp có điểm cao nhất trước, đảm bảo các cặp khớp 100% không bao giờ bị cướp mất.
+     - Cơ chế **Safety Verification**: Luôn bảo đảm đáp án đúng trong DB được tìm và ánh xạ chính xác tuyệt đối vào phương án tương ứng trên ảnh.
+     - Fallback an toàn về thứ tự chuẩn của DB nếu số lượng options trên ảnh $< 2$ hoặc độ tin cậy thấp.
+  4. Nâng cấp `calculateQuestionMatchScore`: Tính Levenshtein distance trên toàn bộ chuỗi câu hỏi kết hợp phạt nặng nếu sai khác số liệu để luôn chọn đúng câu hỏi trong ngân hàng đề.
+- **Khắc phục tầng Frontend (`components/LiveCameraSearch.tsx`, `components/ImageSearchScreen.tsx`)**:
+  1. Gỡ bỏ toàn bộ `DiffHighlighter`, `DiffLegend` và các màu sắc highlight vàng/đỏ.
+  2. Gỡ bỏ toggle `showOriginalQuestion`.
+  3. Hiển thị câu hỏi và đáp án dạng văn bản tiêu chuẩn (plain text), làm nổi bật đáp án đúng với viền và badge xanh lá ✓ rõ ràng, chuyên nghiệp.
+
+### Files tac dong
+- `server/src/index.ts`
+- `components/LiveCameraSearch.tsx`
+- `components/ImageSearchScreen.tsx`
+- `MD files/SYSTEM-DESCRIPTION.md`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Phân tích cú pháp AST bằng `@babel/parser` cho `components/LiveCameraSearch.tsx` và `components/ImageSearchScreen.tsx`: 100% hợp lệ.
+- Biên dịch TypeScript server `npx tsc -p tsconfig.json` trong thư mục `server`: Thành công 100% với exit code 0.
+- Chạy unit test kiểm thử các ca hoán vị đáp án (bài thi đảo thứ tự A, B, C, D) và đáp án chứa số ("15 ngày", "30 ngày"): Thuật toán map chính xác 100% đáp án đúng.
+
+### Ghi chu
+- Giao diện đã được dọn sạch, không còn màu highlight gây rối mắt.
+- Đáp án đúng luôn được đảm bảo chuẩn xác với câu hỏi trong ngân hàng đề.
+
+
 
 
