@@ -203,7 +203,6 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
         setSearchResult(null);
         setError(null);
         setCapturedImage(null); // Clear captured image
-        setShowOriginalQuestion(false);
         // Restart camera
         startCamera();
     };
@@ -440,7 +439,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                             )}
                                         </div>
                                         <div className="text-gray-900 font-medium text-xs sm:text-sm leading-relaxed">
-                                            {searchResult.recognizedText || searchResult.matchedQuestion.question}
+                                            {searchResult.recognizedText || searchResult.matchedQuestion.recognizedQuestion || searchResult.matchedQuestion.question}
                                         </div>
                                     </div>
 

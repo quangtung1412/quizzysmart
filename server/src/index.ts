@@ -4217,6 +4217,60 @@ function normalizeSearchText(text: string): string {
   return normalizeForComparison(text);
 }
 
+// Helper to safely parse JSON response from Gemini Vision OCR
+function parseExtractedVisionJson(rawText: string): {
+  question: string;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+} {
+  let text = (rawText || '').trim();
+  // Strip markdown code fence if present
+  text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  if (!text.startsWith('{')) {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) text = match[0];
+  }
+
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // If parse fails, attempt regex fallback for fields
+    const qMatch = rawText.match(/"question"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
+    const aMatch = rawText.match(/"optionA"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
+    const bMatch = rawText.match(/"optionB"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
+    const cMatch = rawText.match(/"optionC"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
+    const dMatch = rawText.match(/"optionD"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
+    return {
+      question: qMatch ? qMatch[1].replace(/\\"/g, '"').trim() : rawText.trim(),
+      optionA: aMatch ? aMatch[1].replace(/\\"/g, '"').trim() : '',
+      optionB: bMatch ? bMatch[1].replace(/\\"/g, '"').trim() : '',
+      optionC: cMatch ? cMatch[1].replace(/\\"/g, '"').trim() : '',
+      optionD: dMatch ? dMatch[1].replace(/\\"/g, '"').trim() : '',
+    };
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    return {
+      question: (parsed.question || parsed.Question || parsed.cau_hoi || parsed.cauHoi || parsed.text || '').trim(),
+      optionA: (parsed.optionA || parsed.OptionA || parsed.a || parsed.A || '').trim(),
+      optionB: (parsed.optionB || parsed.OptionB || parsed.b || parsed.B || '').trim(),
+      optionC: (parsed.optionC || parsed.OptionC || parsed.c || parsed.C || '').trim(),
+      optionD: (parsed.optionD || parsed.OptionD || parsed.d || parsed.D || '').trim(),
+    };
+  }
+
+  return {
+    question: rawText.trim(),
+    optionA: '',
+    optionB: '',
+    optionC: '',
+    optionD: ''
+  };
+}
+
 // Helper to calculate question and options match score accurately between [0, 1.0]
 function calculateQuestionMatchScore(
   dbQuestionText: string,
@@ -4488,24 +4542,8 @@ Ví dụ:
       throw apiError; // Re-throw to outer catch
     }
 
-    // Remove markdown code blocks if present
-    responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-
-    let extractedData: any;
-    try {
-      extractedData = JSON.parse(responseText);
-    } catch (parseError) {
-      console.error('Failed to parse AI response as JSON:', responseText);
-      // Fallback: treat as plain text
-      extractedData = {
-        question: responseText,
-        optionA: '',
-        optionB: '',
-        optionC: '',
-        optionD: ''
-      };
-    }
-
+    // Safely parse AI response using robust extractor
+    const extractedData = parseExtractedVisionJson(responseText);
     const recognizedText = extractedData.question || responseText;
 
     console.log('AI Extracted Data:', extractedData);
@@ -4577,14 +4615,17 @@ Ví dụ:
     })));
     console.log('========================');
 
+    const finalQuestionText = (recognizedText || (bestMatch ? bestMatch.text : '')).trim();
+
     // Prepare alternative matches (top 3)
     const alternativeMatches = allMatches.slice(1, 4).map(match => {
       const opts = JSON.parse(match.question.options);
       const alignment = alignOptions(opts, match.question.correctAnswerIdx, extractedData);
       return {
         id: match.question.id,
-        question: match.question.text,
+        question: finalQuestionText || match.question.text,
         dbQuestion: match.question.text,
+        recognizedQuestion: finalQuestionText,
         options: alignment.alignedOptions,
         answers: alignment.alignedOptions,
         dbOptions: opts,
@@ -4619,12 +4660,13 @@ Ví dụ:
     const calculatedConfidence = Math.min(100, Math.max(0, Math.round(bestScore * 100)));
 
     let result_data: any = {
-      recognizedText: recognizedText,
+      recognizedText: finalQuestionText,
       extractedOptions: Object.keys(filteredExtractedOptions).length > 0 ? filteredExtractedOptions : undefined,
       matchedQuestion: bestMatch ? {
         id: bestMatch.id,
-        question: bestMatch.text,
+        question: finalQuestionText,
         dbQuestion: bestMatch.text,
+        recognizedQuestion: finalQuestionText,
         options: alignedOptions,
         answers: alignedOptions,
         dbOptions: JSON.parse(bestMatch.options),
@@ -4818,7 +4860,9 @@ Ví dụ:
       // Enhanced matched question data to include RAG info if available
       const enhancedMatchedQuestion = bestMatch ? {
         id: bestMatch.id,
-        question: bestMatch.text,
+        question: finalQuestionText,
+        dbQuestion: bestMatch.text,
+        recognizedQuestion: finalQuestionText,
         options: alignedOptions,
         answers: alignedOptions,
         correctAnswerIndex: alignedCorrectAnswerIdx,
@@ -5098,22 +5142,8 @@ QUY TẮC:
         throw apiError; // Re-throw to outer catch
       }
 
-      // Remove markdown code blocks if present
-      responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-
-      let extractedData: any;
-      try {
-        extractedData = JSON.parse(responseText);
-      } catch (parseError) {
-        extractedData = {
-          question: responseText,
-          optionA: '',
-          optionB: '',
-          optionC: '',
-          optionD: ''
-        };
-      }
-
+      // Safely parse AI response using robust extractor
+      const extractedData = parseExtractedVisionJson(responseText);
       const recognizedText = extractedData.question || responseText;
 
       // Build extractedOptions with only non-empty options from the image
@@ -5189,13 +5219,16 @@ QUY TẮC:
 
       const calculatedConfidence = Math.min(100, Math.max(0, Math.round(bestScore * 100)));
 
+      const finalQuestionTextStream = (recognizedText || (bestMatch ? bestMatch.text : '')).trim();
+
       let result_data: any = {
-        recognizedText: recognizedText,
+        recognizedText: finalQuestionTextStream,
         extractedOptions: Object.keys(filteredExtractedOptionsStream).length > 0 ? filteredExtractedOptionsStream : undefined,
         matchedQuestion: bestMatch ? {
           id: bestMatch.id,
-          question: bestMatch.text,
+          question: finalQuestionTextStream,
           dbQuestion: bestMatch.text,
+          recognizedQuestion: finalQuestionTextStream,
           options: alignedOptions,
           answers: alignedOptions,
           dbOptions: JSON.parse(bestMatch.options),
@@ -5390,7 +5423,9 @@ QUY TẮC:
       try {
         const enhancedMatchedQuestion = bestMatch ? {
           id: bestMatch.id,
-          question: bestMatch.text,
+          question: finalQuestionTextStream,
+          dbQuestion: bestMatch.text,
+          recognizedQuestion: finalQuestionTextStream,
           options: alignedOptions,
           answers: alignedOptions,
           correctAnswerIndex: alignedCorrectAnswerIdx,

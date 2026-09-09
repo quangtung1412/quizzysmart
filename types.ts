@@ -28,6 +28,8 @@ export interface Question {
   /** Correct answer slots on the image (e.g. ['A'] or ['A', 'C']) */
   imageCorrectAnswerSlots?: string[];
   accuracy?: number;
+  /** Recognized question text extracted from user image */
+  recognizedQuestion?: string;
 }
 
 export interface KnowledgeBase {

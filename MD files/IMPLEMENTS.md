@@ -628,6 +628,46 @@
 - Giao diện đã được dọn sạch, không còn màu highlight gây rối mắt.
 - Đáp án đúng luôn được đảm bảo chuẩn xác với câu hỏi trong ngân hàng đề.
 
+## 2026-09-10 00:16:30 +07:00
+
+### Yeu cau
+- Khắc phục lỗi: Khi hệ thống tìm thấy câu hỏi trắc nghiệm trong DB, giao diện vẫn hiển thị câu hỏi lấy từ DB mà không hiện câu hỏi được trích xuất từ ảnh chụp của người dùng.
+
+### Ket qua
+- **Tìm ra nguyên nhân gốc rễ (Findings)**:
+  1. **Tầng Backend (`server/src/index.ts`)**: Tại cả 2 endpoint `POST /api/premium/search-by-image` và `POST /api/premium/search-by-image-stream`, khi tìm thấy câu hỏi tương tự (`bestMatch`), mã nguồn gán trực tiếp `matchedQuestion.question = bestMatch.text` (câu hỏi trong DB) thay vì ưu tiên `recognizedText` (câu hỏi trích xuất từ ảnh). Tương tự cho `alternativeMatches` và dữ liệu lưu lịch sử tìm kiếm `enhancedMatchedQuestion`.
+  2. **Bóc tách JSON Vision mong manh**: Logic phân tích chuỗi JSON trả về từ Gemini Vision chỉ xử lý `replace(/```json\n?/g, '')`, dễ bị lỗi parse khi gặp ký tự xuống dòng Windows (`\r\n`), code block viết hoa hoặc text kèm ngoài JSON.
+  3. **Tầng Frontend (`components/LiveCameraSearch.tsx`)**: Còn sót lệnh gọi `setShowOriginalQuestion(false)` khi đóng popup dẫn đến nguy cơ lỗi runtime. Thứ tự ưu tiên hiển thị câu hỏi chưa bao quát trường hợp `recognizedQuestion`.
+- **Khắc phục tầng Backend (`server/src/index.ts`)**:
+  1. Thêm hàm `parseExtractedVisionJson`: Chuẩn hóa làm sạch markdown fence, tự động regex trích xuất các trường `question`, `optionA` - `optionD` nếu parse JSON bị lỗi, bóc tách an toàn không phân biệt hoa thường.
+  2. Tính `finalQuestionText = (recognizedText || (bestMatch ? bestMatch.text : '')).trim()`:
+     - Gán `matchedQuestion.question = finalQuestionText` (ưu tiên tuyệt đối câu hỏi trích xuất từ ảnh).
+     - Gán `matchedQuestion.dbQuestion = bestMatch.text` (lưu câu hỏi gốc trong DB để đối chiếu).
+     - Bổ sung trường `matchedQuestion.recognizedQuestion = finalQuestionText`.
+     - Áp dụng đồng bộ cho `alternativeMatches` và `enhancedMatchedQuestion` ở cả endpoint thường và endpoint SSE stream.
+- **Khắc phục tầng Type & Frontend (`types.ts`, `components/LiveCameraSearch.tsx`, `components/ImageSearchScreen.tsx`)**:
+  1. `types.ts`: Bổ sung trường `recognizedQuestion?: string;` trong interface `Question`.
+  2. `components/LiveCameraSearch.tsx`: Dọn bỏ lệnh gọi `setShowOriginalQuestion(false)`; cập nhật render câu hỏi: `{searchResult.recognizedText || searchResult.matchedQuestion.recognizedQuestion || searchResult.matchedQuestion.question}`.
+  3. `components/ImageSearchScreen.tsx`: Cập nhật render đồng bộ cho cả chế độ thường và chế độ camera popup.
+
+### Files tac dong
+- `types.ts`
+- `server/src/index.ts`
+- `components/LiveCameraSearch.tsx`
+- `components/ImageSearchScreen.tsx`
+- `MD files/SYSTEM-DESCRIPTION.md`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Phân tích cú pháp AST bằng `@babel/parser` cho: `types.ts`, `components/LiveCameraSearch.tsx`, `components/ImageSearchScreen.tsx`: 100% hợp lệ.
+- Biên dịch TypeScript server `npx tsc -p tsconfig.json` trong `server`: Thành công 100% với exit code 0.
+- Kiểm tra toàn bộ git diff: Không có lỗi cú pháp hoặc logic thừa thãi.
+
+### Ghi chu
+- Câu hỏi hiển thị trên màn hình kết quả sau khi tìm thấy trong DB hiện luôn là câu hỏi trích xuất từ ảnh của người dùng.
+- Vẫn bảo toàn câu hỏi trong DB tại trường `dbQuestion` phục vụ lưu trữ hoặc đối chiếu khi cần.
+
+
 
 
 

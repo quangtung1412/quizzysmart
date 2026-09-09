@@ -71,8 +71,9 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
     - Safety Verification: Dam bao dap an dung trong DB luon duoc anh xa chinh xac 100% vao dung slot phuong an tuong ung tren anh.
     - Fallback an toan ve thu tu goc trong DB neu so luong options trich xuat duoi 2 hoac do tin cay khop kem.
   - Payload contract khi tim thay cau hoi trac nghiem (`matchedQuestion` & `alternativeMatches`):
-    - `question`: Cau hoi trich xuat tu anh (`recognizedText`) de hien thi truc quan cho nguoi dung.
-    - `dbQuestion`: Cau hoi goc luu trong ngan hang de trac nghiem.
+    - `question`: Luon uu tien cau hoi trich xuat tu anh chup nguoi dung (`recognizedText`), fallback sang cau hoi trong DB neu anh khong co text cau hoi.
+    - `dbQuestion`: Cau hoi goc luu trong ngan hang de trac nghiem de luu tru doi chieu khi can.
+    - `recognizedQuestion`: Cau hoi trich xuat tu anh chup cua nguoi dung.
     - `options`: Danh sach noi dung phuong an da can chinh theo thu tu A, B, C, D tren anh chup.
     - `dbOptions`: Danh sach phuong an goc trong ngan hang de.
     - `imageOptions`: Mang doi tuong `{ slot: 'A'|'B'|'C'|'D', text: string, dbText?: string, isCorrect: boolean, matchScore: number, slotIndex: number }`.

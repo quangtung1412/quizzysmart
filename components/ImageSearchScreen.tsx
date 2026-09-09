@@ -443,7 +443,7 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                                 )}
                                             </div>
                                             <div className="text-slate-900 font-medium text-sm sm:text-base leading-relaxed">
-                                                {searchResult.recognizedText || searchResult.matchedQuestion.question}
+                                                {searchResult.recognizedText || searchResult.matchedQuestion.recognizedQuestion || searchResult.matchedQuestion.question}
                                             </div>
                                         </div>
 
@@ -645,7 +645,7 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                             )}
                                         </div>
                                         <div className="text-slate-900 font-medium text-xs sm:text-sm leading-relaxed">
-                                            {searchResult.recognizedText || searchResult.matchedQuestion.question}
+                                            {searchResult.recognizedText || searchResult.matchedQuestion.recognizedQuestion || searchResult.matchedQuestion.question}
                                         </div>
                                     </div>
 
