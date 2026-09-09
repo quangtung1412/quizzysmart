@@ -426,7 +426,7 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                             ✅ Đã tìm thấy!
                                         </h4>
                                         <span className="bg-green-200 text-green-900 px-3 py-1.5 rounded-full text-xs font-bold shadow-sm">
-                                            {Math.round(searchResult.confidence)}% khớp
+                                            {Math.min(100, Math.max(0, Math.round(searchResult.confidence)))}% khớp
                                         </span>
                                     </div>
 
@@ -486,7 +486,7 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                             🤖 Câu trả lời từ AI
                                         </h4>
                                         <span className="bg-purple-200 text-purple-900 px-3 py-1.5 rounded-full text-xs font-bold shadow-sm">
-                                            {Math.round(searchResult.ragResult.confidence)}% độ tin cậy
+                                            {Math.min(100, Math.max(0, Math.round(searchResult.ragResult.confidence)))}% độ tin cậy
                                         </span>
                                     </div>
 
@@ -610,7 +610,7 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                         <div className="flex-1">
                                             <h4 className="font-bold text-green-900 text-sm sm:text-base">Tìm thấy câu hỏi tương tự!</h4>
                                             <p className="text-green-700 text-xs mt-1">
-                                                Độ chính xác: <span className="font-bold">{searchResult.matchedQuestion.accuracy}%</span>
+                                                Độ chính xác: <span className="font-bold">{Math.min(100, Math.max(0, searchResult.matchedQuestion.accuracy))}%</span>
                                             </p>
                                         </div>
                                     </div>
@@ -668,7 +668,7 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                             🤖 Câu trả lời từ AI
                                         </h4>
                                         <span className="bg-purple-200 text-purple-900 px-3 py-1.5 rounded-full text-xs font-bold">
-                                            {Math.round(searchResult.ragResult.confidence)}% độ tin cậy
+                                            {Math.min(100, Math.max(0, Math.round(searchResult.ragResult.confidence)))}% độ tin cậy
                                         </span>
                                     </div>
 

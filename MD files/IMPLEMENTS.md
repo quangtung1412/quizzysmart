@@ -491,4 +491,37 @@
 - Đã giải quyết tận gốc nguyên nhân gây tồn đọng vector trong Qdrant.
 - Để xóa sạch các vector rác của các văn bản đã xóa từ trước, người dùng chỉ cần nhấn nút "🧹 Dọn dẹp vector rác" trên giao diện Quản lý văn bản RAG hoặc Quản lý Collections.
 
+## 2026-09-09 12:15:00 +07:00
+
+### Yeu cau
+- Sửa lỗi tính độ chính xác (%) ở tính năng live-camera khi tìm thấy đáp án trong ngân hàng câu hỏi trắc nghiệm (hiển thị vượt quá 100%, ví dụ 104%).
+
+### Ket qua
+- **Tìm ra nguyên nhân gốc rễ (Findings)**:
+  1. Trong `server/src/index.ts` (ở cả `POST /api/premium/search-by-image` và `POST /api/premium/search-by-image-stream`): Điểm khớp đáp án `optionsMatchScore` được gán tối đa là 1.0, nhưng khi nhận diện khớp từ 2 đáp án trở lên (`matchedOptionsCount >= 2`), code cộng thêm điểm thưởng `optionsMatchScore += 0.2` khiến `optionsMatchScore` tăng vọt lên `1.2`.
+  2. Công thức tổng hợp `matchScore = (questionMatchScore * 0.8) + (optionsMatchScore * 0.2)` khi câu hỏi khớp 100% (1.0) và có 2+ đáp án khớp (1.2) cho ra: `1.0 * 0.8 + 1.2 * 0.2 = 0.8 + 0.24 = 1.04` (tức 104%). Điểm này không được chặn ngưỡng trên bằng 1.0 hay 100%.
+  3. Ngoài ra, khi người dùng chỉ chụp câu hỏi (không chụp đáp án), `optionsMatchScore = 0` khiến câu hỏi khớp 100% chỉ đạt 80%, gây bất hợp lý.
+- **Khắc phục tầng Backend (`server/src/index.ts`)**:
+  1. Tách hàm chuẩn hóa chung `normalizeSearchText(text: string)`.
+  2. Tạo hàm tính điểm chuẩn xác `calculateQuestionMatchScore(dbQuestionText, dbOptions, recognizedQuestion, extractedOptionsList)` dùng chung cho cả 2 luồng streaming và non-streaming:
+     - Câu hỏi khớp tuyệt đối: 1.0; khớp một phần theo tỷ lệ độ dài (0.85 - 0.98); khớp từ theo Jaccard/overlap.
+     - Các lựa chọn đáp án được tính trung bình điểm khớp trên từng phương án nhận diện được (`totalOptionScore / validExtractedOptions.length`), đảm bảo luôn $\le 1.0$.
+     - Trọng số linh hoạt: Nếu có nhận diện đáp án trong ảnh -> 75% câu hỏi + 25% đáp án; nếu ảnh chỉ chứa câu hỏi -> 100% điểm câu hỏi.
+     - Đảm bảo điểm số luôn được clamp nghiêm ngặt trong khoảng $[0, 1.0]$ và phần trăm confidence trong khoảng $[0, 100]\%$.
+- **Khắc phục phòng thủ tầng Frontend (`components/LiveCameraSearch.tsx`, `components/ImageSearchScreen.tsx`)**:
+  1. Sử dụng `Math.min(100, Math.max(0, Math.round(...)))` cho toàn bộ các vị trí hiển thị phần trăm độ chính xác / độ tin cậy / độ khớp.
+
+### Files tac dong
+- `server/src/index.ts`
+- `components/LiveCameraSearch.tsx`
+- `components/ImageSearchScreen.tsx`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Chạy kiểm tra cú pháp AST bằng `@babel/parser` cho `components/LiveCameraSearch.tsx` và `components/ImageSearchScreen.tsx`: 100% hợp lệ.
+- Chạy `npx tsc -p tsconfig.json` trong thư mục `server`: Thành công 100% với exit code 0.
+
+### Ghi chu
+- Độ chính xác hiển thị giờ đây phản ánh chính xác tỷ lệ tương đồng thực tế và không bao giờ vượt quá 100%.
+
 

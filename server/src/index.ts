@@ -4083,6 +4083,110 @@ function alignOptions(
   return { alignedOptions, alignedCorrectAnswerIdx };
 }
 
+// Helper to normalize text for search comparison
+function normalizeSearchText(text: string): string {
+  return text.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Remove Vietnamese accents
+    .replace(/đ/g, 'd')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Helper to calculate question and options match score accurately between [0, 1.0]
+function calculateQuestionMatchScore(
+  dbQuestionText: string,
+  dbOptions: string[],
+  recognizedQuestion: string,
+  extractedOptionsList: string[]
+): { matchScore: number; matchType: string; questionMatchScore: number; optionsMatchScore: number } {
+  const questionNormalized = normalizeSearchText(dbQuestionText);
+  const recognizedNormalized = normalizeSearchText(recognizedQuestion);
+  const questionOptionsNormalized = dbOptions.map(opt => normalizeSearchText(opt));
+
+  // 1. Question matching (range [0, 1.0])
+  let questionMatchScore = 0;
+  if (questionNormalized === recognizedNormalized) {
+    questionMatchScore = 1.0;
+  } else if (questionNormalized.includes(recognizedNormalized) || recognizedNormalized.includes(questionNormalized)) {
+    const minLen = Math.min(questionNormalized.length, recognizedNormalized.length);
+    const maxLen = Math.max(questionNormalized.length, recognizedNormalized.length);
+    const lengthRatio = maxLen > 0 ? minLen / maxLen : 1;
+    // High overlap substring match: between 0.85 and 0.98
+    questionMatchScore = 0.85 + 0.13 * lengthRatio;
+  } else {
+    const recognizedWords = recognizedNormalized.split(' ').filter(w => w.length > 2);
+    const questionWords = questionNormalized.split(' ').filter(w => w.length > 2);
+
+    if (recognizedWords.length > 0 && questionWords.length > 0) {
+      const matchingWords = recognizedWords.filter(word => questionWords.includes(word));
+      questionMatchScore = matchingWords.length / Math.max(recognizedWords.length, questionWords.length);
+    }
+  }
+
+  // 2. Answer options matching (range [0, 1.0])
+  let optionsMatchScore = 0;
+  let matchedOptionsCount = 0;
+  let matchType = '';
+
+  const validExtractedOptions = extractedOptionsList.map(opt => normalizeSearchText(opt)).filter(opt => opt.length > 0);
+
+  if (validExtractedOptions.length > 0) {
+    let totalOptionScore = 0;
+    for (const extractedOption of validExtractedOptions) {
+      let bestOptMatch = 0;
+      for (const dbOption of questionOptionsNormalized) {
+        if (extractedOption === dbOption) {
+          bestOptMatch = 1.0;
+          break;
+        } else if (extractedOption.includes(dbOption) || dbOption.includes(extractedOption)) {
+          const optMin = Math.min(extractedOption.length, dbOption.length);
+          const optMax = Math.max(extractedOption.length, dbOption.length);
+          const optRatio = optMax > 0 ? optMin / optMax : 0.8;
+          bestOptMatch = Math.max(bestOptMatch, 0.75 + 0.25 * optRatio);
+        }
+      }
+      if (bestOptMatch > 0) {
+        matchedOptionsCount++;
+        totalOptionScore += bestOptMatch;
+      }
+    }
+
+    // Average matching score of extracted options (strictly <= 1.0)
+    optionsMatchScore = Math.min(1.0, totalOptionScore / validExtractedOptions.length);
+
+    if (matchedOptionsCount >= 2) {
+      matchType = 'question+options';
+    } else if (matchedOptionsCount >= 1) {
+      matchType = 'question+option';
+    }
+  }
+
+  if (matchType === '') {
+    matchType = questionMatchScore >= 0.85 ? 'question-exact' : 'question-partial';
+  }
+
+  // 3. Combined score calculation (strictly in [0, 1.0])
+  let matchScore = 0;
+  if (validExtractedOptions.length > 0) {
+    // If options were recognized in the image: 75% question + 25% options
+    matchScore = (questionMatchScore * 0.75) + (optionsMatchScore * 0.25);
+  } else {
+    // If only question was recognized without options: 100% question weight
+    matchScore = questionMatchScore;
+  }
+
+  // Strictly clamp between 0 and 1.0
+  matchScore = Math.min(1.0, Math.max(0, matchScore));
+
+  return {
+    matchScore,
+    matchType,
+    questionMatchScore,
+    optionsMatchScore
+  };
+}
+
 // Premium API - Image Search with Gemini
 app.post('/api/premium/search-by-image', async (req: Request, res: Response) => {
   // Variables for error logging
@@ -4301,91 +4405,26 @@ Ví dụ:
     let bestMatch: any = null;
     let bestScore = 0;
 
-    // Simple normalization
-    const normalizeText = (text: string) => {
-      return text.toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Remove Vietnamese accents
-        .replace(/đ/g, 'd')
-        .replace(/[^a-z0-9\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-    };
-
-    const recognizedNormalized = normalizeText(recognizedText);
-    const extractedOptionsNormalized = {
-      A: extractedData.optionA ? normalizeText(extractedData.optionA) : '',
-      B: extractedData.optionB ? normalizeText(extractedData.optionB) : '',
-      C: extractedData.optionC ? normalizeText(extractedData.optionC) : '',
-      D: extractedData.optionD ? normalizeText(extractedData.optionD) : ''
-    };
-
-    // Get list of extracted options (non-empty ones)
-    const extractedOptionsList = Object.values(extractedOptionsNormalized).filter(opt => opt.length > 0);
+    const extractedOptionsList = [
+      extractedData.optionA,
+      extractedData.optionB,
+      extractedData.optionC,
+      extractedData.optionD
+    ].filter(Boolean) as string[];
 
     // Store all matches with scores
     const allMatches: Array<{ question: any; score: number; matchType: string }> = [];
 
     for (const question of questions) {
-      const questionNormalized = normalizeText(question.text);
       const questionOptions = JSON.parse(question.options);
-      const questionOptionsNormalized = questionOptions.map((opt: string) => normalizeText(opt));
+      const { matchScore, matchType, questionMatchScore, optionsMatchScore } = calculateQuestionMatchScore(
+        question.text,
+        questionOptions,
+        recognizedText,
+        extractedOptionsList
+      );
 
-      let matchScore = 0;
-      let matchType = '';
-
-      // Strategy 1: Question exact match (80% weight)
-      let questionMatchScore = 0;
-      if (questionNormalized === recognizedNormalized) {
-        questionMatchScore = 1.0;
-      } else if (questionNormalized.includes(recognizedNormalized) || recognizedNormalized.includes(questionNormalized)) {
-        questionMatchScore = 0.9;
-      } else {
-        // Word-based matching for question
-        const recognizedWords = recognizedNormalized.split(' ').filter(w => w.length > 2);
-        const questionWords = questionNormalized.split(' ').filter(w => w.length > 2);
-
-        if (recognizedWords.length > 0 && questionWords.length > 0) {
-          const matchingWords = recognizedWords.filter(word => questionWords.includes(word));
-          questionMatchScore = matchingWords.length / Math.max(recognizedWords.length, questionWords.length);
-        }
-      }
-
-      // Strategy 2: Answer options matching (20% weight + bonus for multiple matches)
-      let optionsMatchScore = 0;
-      let matchedOptionsCount = 0;
-
-      if (extractedOptionsList.length > 0) {
-        for (const extractedOption of extractedOptionsList) {
-          for (const dbOption of questionOptionsNormalized) {
-            if (extractedOption === dbOption) {
-              matchedOptionsCount++;
-              optionsMatchScore = Math.max(optionsMatchScore, 1.0);
-              break;
-            } else if (extractedOption.includes(dbOption) || dbOption.includes(extractedOption)) {
-              matchedOptionsCount++;
-              optionsMatchScore = Math.max(optionsMatchScore, 0.8);
-              break;
-            }
-          }
-        }
-
-        // Bonus for matching multiple options (indicates correct question even if options are scrambled)
-        if (matchedOptionsCount >= 2) {
-          optionsMatchScore += 0.2; // Bonus for multiple option matches
-          matchType = 'question+options';
-        } else if (matchedOptionsCount >= 1) {
-          matchType = 'question+option';
-        }
-      }
-
-      // Combined score: 80% question + 20% options
-      if (questionMatchScore > 0.4 || optionsMatchScore > 0.6) { // Minimum threshold
-        matchScore = (questionMatchScore * 0.8) + (optionsMatchScore * 0.2);
-
-        if (matchType === '') {
-          matchType = questionMatchScore > 0.8 ? 'question-exact' : 'question-partial';
-        }
-
+      if (questionMatchScore > 0.4 || optionsMatchScore > 0.6) {
         allMatches.push({ question, score: matchScore, matchType });
       }
     }
@@ -4407,7 +4446,7 @@ Ví dụ:
     console.log('Total questions in DB:', questions.length);
     console.log('Matches found:', allMatches.length);
     console.log('Top 3 matches:', allMatches.slice(0, 3).map(m => ({
-      score: Math.round(m.score * 100) + '%',
+      score: Math.min(100, Math.max(0, Math.round(m.score * 100))) + '%',
       matchType: m.matchType,
       questionPreview: m.question.text.substring(0, 80) + '...'
     })));
@@ -4426,8 +4465,8 @@ Ví dụ:
         source: match.question.source || '',
         category: match.question.category || '',
         knowledgeBaseName: match.question.base.name,
-        confidence: Math.round(match.score * 100),
-        accuracy: Math.round(match.score * 100),
+        confidence: Math.min(100, Math.max(0, Math.round(match.score * 100))),
+        accuracy: Math.min(100, Math.max(0, Math.round(match.score * 100))),
         matchType: match.matchType
       };
     });
@@ -4447,6 +4486,8 @@ Ví dụ:
       alignedCorrectAnswerIdx = alignment.alignedCorrectAnswerIdx;
     }
 
+    const calculatedConfidence = Math.min(100, Math.max(0, Math.round(bestScore * 100)));
+
     let result_data: any = {
       recognizedText: recognizedText,
       extractedOptions: Object.keys(filteredExtractedOptions).length > 0 ? filteredExtractedOptions : undefined,
@@ -4456,12 +4497,12 @@ Ví dụ:
         options: alignedOptions,
         answers: alignedOptions,
         correctAnswerIndex: alignedCorrectAnswerIdx,
-        accuracy: Math.round(bestScore * 100),
+        accuracy: calculatedConfidence,
         source: bestMatch.source || '',
         category: bestMatch.category || '',
         knowledgeBaseName: bestMatch.base.name
       } : null,
-      confidence: Math.round(bestScore * 100),
+      confidence: calculatedConfidence,
       alternativeMatches: alternativeMatches.length > 0 ? alternativeMatches : undefined,
       modelUsed: selectedModel.name,
       modelPriority: selectedModel.priority,
@@ -4975,83 +5016,26 @@ QUY TẮC:
       });
 
       // Enhanced matching logic (same as before)
-      const normalizeText = (text: string) => {
-        return text.toLowerCase()
-          .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-          .replace(/đ/g, 'd')
-          .replace(/[^a-z0-9\s]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-      };
+      const extractedOptionsList = [
+        extractedData.optionA,
+        extractedData.optionB,
+        extractedData.optionC,
+        extractedData.optionD
+      ].filter(Boolean) as string[];
 
-      const recognizedNormalized = normalizeText(recognizedText);
-      const extractedOptionsNormalized = {
-        A: extractedData.optionA ? normalizeText(extractedData.optionA) : '',
-        B: extractedData.optionB ? normalizeText(extractedData.optionB) : '',
-        C: extractedData.optionC ? normalizeText(extractedData.optionC) : '',
-        D: extractedData.optionD ? normalizeText(extractedData.optionD) : ''
-      };
-
-      const extractedOptionsList = Object.values(extractedOptionsNormalized).filter(opt => opt.length > 0);
       const allMatches: Array<{ question: any; score: number; matchType: string }> = [];
 
       // Same matching logic as non-streaming version
       for (const question of questions) {
-        const questionNormalized = normalizeText(question.text);
         const questionOptions = JSON.parse(question.options);
-        const questionOptionsNormalized = questionOptions.map((opt: string) => normalizeText(opt));
-
-        let matchScore = 0;
-        let matchType = '';
-        let questionMatchScore = 0;
-
-        if (questionNormalized === recognizedNormalized) {
-          questionMatchScore = 1.0;
-        } else if (questionNormalized.includes(recognizedNormalized) || recognizedNormalized.includes(questionNormalized)) {
-          questionMatchScore = 0.9;
-        } else {
-          const recognizedWords = recognizedNormalized.split(' ').filter(w => w.length > 2);
-          const questionWords = questionNormalized.split(' ').filter(w => w.length > 2);
-
-          if (recognizedWords.length > 0 && questionWords.length > 0) {
-            const matchingWords = recognizedWords.filter(word => questionWords.includes(word));
-            questionMatchScore = matchingWords.length / Math.max(recognizedWords.length, questionWords.length);
-          }
-        }
-
-        let optionsMatchScore = 0;
-        let matchedOptionsCount = 0;
-
-        if (extractedOptionsList.length > 0) {
-          for (const extractedOption of extractedOptionsList) {
-            for (const dbOption of questionOptionsNormalized) {
-              if (extractedOption === dbOption) {
-                matchedOptionsCount++;
-                optionsMatchScore = Math.max(optionsMatchScore, 1.0);
-                break;
-              } else if (extractedOption.includes(dbOption) || dbOption.includes(extractedOption)) {
-                matchedOptionsCount++;
-                optionsMatchScore = Math.max(optionsMatchScore, 0.8);
-                break;
-              }
-            }
-          }
-
-          if (matchedOptionsCount >= 2) {
-            optionsMatchScore += 0.2;
-            matchType = 'question+options';
-          } else if (matchedOptionsCount >= 1) {
-            matchType = 'question+option';
-          }
-        }
+        const { matchScore, matchType, questionMatchScore, optionsMatchScore } = calculateQuestionMatchScore(
+          question.text,
+          questionOptions,
+          recognizedText,
+          extractedOptionsList
+        );
 
         if (questionMatchScore > 0.4 || optionsMatchScore > 0.6) {
-          matchScore = (questionMatchScore * 0.8) + (optionsMatchScore * 0.2);
-
-          if (matchType === '') {
-            matchType = questionMatchScore > 0.8 ? 'question-exact' : 'question-partial';
-          }
-
           allMatches.push({ question, score: matchScore, matchType });
         }
       }
@@ -5068,6 +5052,8 @@ QUY TẮC:
         alignedCorrectAnswerIdx = alignment.alignedCorrectAnswerIdx;
       }
 
+      const calculatedConfidence = Math.min(100, Math.max(0, Math.round(bestScore * 100)));
+
       let result_data: any = {
         recognizedText: recognizedText,
         extractedOptions: Object.keys(filteredExtractedOptionsStream).length > 0 ? filteredExtractedOptionsStream : undefined,
@@ -5077,12 +5063,12 @@ QUY TẮC:
           options: alignedOptions,
           answers: alignedOptions,
           correctAnswerIndex: alignedCorrectAnswerIdx,
-          accuracy: Math.round(bestScore * 100),
+          accuracy: calculatedConfidence,
           source: bestMatch.source || '',
           category: bestMatch.category || '',
           knowledgeBaseName: bestMatch.base.name
         } : null,
-        confidence: Math.round(bestScore * 100),
+        confidence: calculatedConfidence,
         modelUsed: selectedModel.name,
         modelPriority: selectedModel.priority,
         searchType: 'database'

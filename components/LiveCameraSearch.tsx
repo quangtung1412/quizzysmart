@@ -415,7 +415,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                         <div className="flex-1">
                                             <h4 className="font-bold text-green-900 text-sm sm:text-base">Tìm thấy câu hỏi!</h4>
                                             <p className="text-green-700 text-xs mt-1">
-                                                Độ chính xác: <span className="font-bold">{Math.round(searchResult.confidence)}%</span>
+                                                Độ chính xác: <span className="font-bold">{Math.min(100, Math.max(0, Math.round(searchResult.confidence)))}%</span>
                                                 {searchResult.searchType === 'database+rag' && (
                                                     <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
                                                         + RAG hỗ trợ
@@ -473,7 +473,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                 </div>
                             ) : searchResult.ragResult ? (
                                 (() => {
-                                    const confidence = Math.round(searchResult.ragResult.confidence);
+                                    const confidence = Math.min(100, Math.max(0, Math.round(searchResult.ragResult.confidence)));
                                     const colorScheme = getConfidenceColor(confidence);
                                     const structuredAnswer = typeof searchResult.ragResult.answer === 'object' ? searchResult.ragResult.answer : null;
                                     const correctAnswerLetter = structuredAnswer?.correctAnswer;
