@@ -3938,15 +3938,65 @@ app.post('/api/subscriptions/activate', async (req: Request, res: Response) => {
   }
 });
 
+export interface ImageOptionItem {
+  slot: 'A' | 'B' | 'C' | 'D';
+  text: string;
+  dbText: string;
+  isCorrect: boolean;
+  matchScore: number;
+  slotIndex: number;
+}
+
+function computeLevenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const d = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) d[i][0] = i;
+  for (let j = 0; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+    }
+  }
+  return d[m][n];
+}
+
 // Helper to align database options to extracted visual options from image
 function alignOptions(
   dbOptions: string[],
   correctAnswerIdx: number,
   extracted: { optionA?: string; optionB?: string; optionC?: string; optionD?: string }
-): { alignedOptions: string[]; alignedCorrectAnswerIdx: number } {
-  const hasExtracted = extracted.optionA || extracted.optionB || extracted.optionC || extracted.optionD;
+): {
+  alignedOptions: string[];
+  alignedCorrectAnswerIdx: number;
+  imageOptions: ImageOptionItem[];
+  imageCorrectAnswerSlots: string[];
+} {
+  const slots: Array<'A' | 'B' | 'C' | 'D'> = ['A', 'B', 'C', 'D'];
+  const hasExtracted = !!(extracted.optionA || extracted.optionB || extracted.optionC || extracted.optionD);
+
   if (!hasExtracted) {
-    return { alignedOptions: dbOptions, alignedCorrectAnswerIdx: correctAnswerIdx };
+    const defaultImageOptions: ImageOptionItem[] = dbOptions.map((opt, i) => {
+      const slot = slots[i] || 'A';
+      const isCorrect = correctAnswerIdx < 0
+        ? ((Math.abs(correctAnswerIdx) & (1 << i)) !== 0)
+        : (i === correctAnswerIdx);
+      return {
+        slot,
+        text: opt,
+        dbText: opt,
+        isCorrect,
+        matchScore: 1.0,
+        slotIndex: i
+      };
+    });
+    const defaultCorrectSlots = defaultImageOptions.filter(o => o.isCorrect).map(o => o.slot);
+    return {
+      alignedOptions: dbOptions,
+      alignedCorrectAnswerIdx: correctAnswerIdx,
+      imageOptions: defaultImageOptions,
+      imageCorrectAnswerSlots: defaultCorrectSlots
+    };
   }
 
   const normalize = (text: string) => {
@@ -4029,58 +4079,88 @@ function alignOptions(
     }
   }
 
-  const alignedOptions: string[] = [];
-  const dbIdxToNewIdx = new Map<number, number>();
-
   let unusedPtr = 0;
   for (let slot = 0; slot < Math.max(4, dbOptions.length); slot++) {
-    const dbIdx = slotToDbIndex[slot];
-    if (dbIdx !== undefined && dbIdx !== -1) {
-      const newIdx = alignedOptions.length;
-      alignedOptions.push(dbOptions[dbIdx]);
-      dbIdxToNewIdx.set(dbIdx, newIdx);
-    } else {
+    if (slotToDbIndex[slot] === undefined || slotToDbIndex[slot] === -1) {
       if (unusedPtr < unusedDbIndices.length) {
-        const unusedDbIdx = unusedDbIndices[unusedPtr++];
-        const newIdx = alignedOptions.length;
-        alignedOptions.push(dbOptions[unusedDbIdx]);
-        dbIdxToNewIdx.set(unusedDbIdx, newIdx);
+        slotToDbIndex[slot] = unusedDbIndices[unusedPtr++];
       }
     }
   }
 
-  while (unusedPtr < unusedDbIndices.length) {
-    const unusedDbIdx = unusedDbIndices[unusedPtr++];
-    const newIdx = alignedOptions.length;
-    alignedOptions.push(dbOptions[unusedDbIdx]);
-    dbIdxToNewIdx.set(unusedDbIdx, newIdx);
+  const rawExtStrings = [
+    extracted.optionA || '',
+    extracted.optionB || '',
+    extracted.optionC || '',
+    extracted.optionD || ''
+  ];
+
+  const imageOptions: ImageOptionItem[] = [];
+  const imageCorrectAnswerSlots: string[] = [];
+  const totalSlots = Math.min(4, Math.max(dbOptions.length, 4));
+
+  for (let slot = 0; slot < totalSlots; slot++) {
+    const slotLetter = slots[slot] || 'A';
+    const extVal = rawExtStrings[slot]?.trim() || '';
+    const dbIdx = slotToDbIndex[slot];
+    let dbText = '';
+    let isCorrect = false;
+
+    if (dbIdx !== undefined && dbIdx !== -1 && dbIdx < dbOptions.length) {
+      dbText = dbOptions[dbIdx];
+      if (correctAnswerIdx < 0) {
+        const origMask = Math.abs(correctAnswerIdx);
+        isCorrect = ((origMask & (1 << dbIdx)) !== 0);
+      } else {
+        isCorrect = (dbIdx === correctAnswerIdx);
+      }
+    }
+
+    const text = extVal || dbText;
+
+    if (isCorrect) {
+      imageCorrectAnswerSlots.push(slotLetter);
+    }
+
+    let optMatchScore = 1.0;
+    if (extVal && dbText) {
+      const nExt = normalize(extVal);
+      const nDb = normalize(dbText);
+      if (nExt === nDb) {
+        optMatchScore = 1.0;
+      } else {
+        const maxLen = Math.max(nExt.length, nDb.length);
+        optMatchScore = maxLen > 0 ? Math.max(0, 1 - computeLevenshtein(nExt, nDb) / maxLen) : 1.0;
+      }
+    }
+
+    imageOptions.push({
+      slot: slotLetter,
+      text,
+      dbText,
+      isCorrect,
+      matchScore: optMatchScore,
+      slotIndex: slot
+    });
   }
 
-  if (alignedOptions.length > dbOptions.length) {
-    alignedOptions.splice(dbOptions.length);
-  }
+  const alignedOptions = imageOptions.map(o => o.text);
 
-  let alignedCorrectAnswerIdx = correctAnswerIdx;
+  let alignedCorrectAnswerIdx = 0;
   if (correctAnswerIdx < 0) {
-    const origMask = Math.abs(correctAnswerIdx);
     let newMask = 0;
-    for (let i = 0; i < dbOptions.length; i++) {
-      if ((origMask & (1 << i)) !== 0) {
-        const newIdx = dbIdxToNewIdx.get(i);
-        if (newIdx !== undefined) {
-          newMask |= (1 << newIdx);
-        }
+    for (let i = 0; i < imageOptions.length; i++) {
+      if (imageOptions[i].isCorrect) {
+        newMask |= (1 << i);
       }
     }
     alignedCorrectAnswerIdx = -newMask;
   } else {
-    const newIdx = dbIdxToNewIdx.get(correctAnswerIdx);
-    if (newIdx !== undefined) {
-      alignedCorrectAnswerIdx = newIdx;
-    }
+    const foundIdx = imageOptions.findIndex(o => o.isCorrect);
+    alignedCorrectAnswerIdx = foundIdx !== -1 ? foundIdx : correctAnswerIdx;
   }
 
-  return { alignedOptions, alignedCorrectAnswerIdx };
+  return { alignedOptions, alignedCorrectAnswerIdx, imageOptions, imageCorrectAnswerSlots };
 }
 
 // Helper to normalize text for search comparison
@@ -4455,13 +4535,17 @@ Ví dụ:
     // Prepare alternative matches (top 3)
     const alternativeMatches = allMatches.slice(1, 4).map(match => {
       const opts = JSON.parse(match.question.options);
-      const { alignedOptions, alignedCorrectAnswerIdx } = alignOptions(opts, match.question.correctAnswerIdx, extractedData);
+      const alignment = alignOptions(opts, match.question.correctAnswerIdx, extractedData);
       return {
         id: match.question.id,
         question: match.question.text,
-        options: alignedOptions,
-        answers: alignedOptions,
-        correctAnswerIndex: alignedCorrectAnswerIdx,
+        dbQuestion: match.question.text,
+        options: alignment.alignedOptions,
+        answers: alignment.alignedOptions,
+        dbOptions: opts,
+        imageOptions: alignment.imageOptions,
+        imageCorrectAnswerSlots: alignment.imageCorrectAnswerSlots,
+        correctAnswerIndex: alignment.alignedCorrectAnswerIdx,
         source: match.question.source || '',
         category: match.question.category || '',
         knowledgeBaseName: match.question.base.name,
@@ -4480,8 +4564,9 @@ Ví dụ:
 
     let alignedOptions = bestMatch ? JSON.parse(bestMatch.options) : [];
     let alignedCorrectAnswerIdx = bestMatch ? bestMatch.correctAnswerIdx : -1;
+    let alignment: any = { alignedOptions, alignedCorrectAnswerIdx, imageOptions: [], imageCorrectAnswerSlots: [] };
     if (bestMatch) {
-      const alignment = alignOptions(alignedOptions, bestMatch.correctAnswerIdx, extractedData);
+      alignment = alignOptions(alignedOptions, bestMatch.correctAnswerIdx, extractedData);
       alignedOptions = alignment.alignedOptions;
       alignedCorrectAnswerIdx = alignment.alignedCorrectAnswerIdx;
     }
@@ -4494,8 +4579,12 @@ Ví dụ:
       matchedQuestion: bestMatch ? {
         id: bestMatch.id,
         question: bestMatch.text,
+        dbQuestion: bestMatch.text,
         options: alignedOptions,
         answers: alignedOptions,
+        dbOptions: JSON.parse(bestMatch.options),
+        imageOptions: alignment.imageOptions,
+        imageCorrectAnswerSlots: alignment.imageCorrectAnswerSlots,
         correctAnswerIndex: alignedCorrectAnswerIdx,
         accuracy: calculatedConfidence,
         source: bestMatch.source || '',
@@ -5046,10 +5135,11 @@ QUY TẮC:
 
       let alignedOptions = bestMatch ? JSON.parse(bestMatch.options) : [];
       let alignedCorrectAnswerIdx = bestMatch ? bestMatch.correctAnswerIdx : -1;
+      let streamAlignment: any = { alignedOptions, alignedCorrectAnswerIdx, imageOptions: [], imageCorrectAnswerSlots: [] };
       if (bestMatch) {
-        const alignment = alignOptions(alignedOptions, bestMatch.correctAnswerIdx, extractedData);
-        alignedOptions = alignment.alignedOptions;
-        alignedCorrectAnswerIdx = alignment.alignedCorrectAnswerIdx;
+        streamAlignment = alignOptions(alignedOptions, bestMatch.correctAnswerIdx, extractedData);
+        alignedOptions = streamAlignment.alignedOptions;
+        alignedCorrectAnswerIdx = streamAlignment.alignedCorrectAnswerIdx;
       }
 
       const calculatedConfidence = Math.min(100, Math.max(0, Math.round(bestScore * 100)));
@@ -5060,8 +5150,12 @@ QUY TẮC:
         matchedQuestion: bestMatch ? {
           id: bestMatch.id,
           question: bestMatch.text,
+          dbQuestion: bestMatch.text,
           options: alignedOptions,
           answers: alignedOptions,
+          dbOptions: JSON.parse(bestMatch.options),
+          imageOptions: streamAlignment.imageOptions,
+          imageCorrectAnswerSlots: streamAlignment.imageCorrectAnswerSlots,
           correctAnswerIndex: alignedCorrectAnswerIdx,
           accuracy: calculatedConfidence,
           source: bestMatch.source || '',

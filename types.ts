@@ -1,3 +1,12 @@
+export interface ImageOptionItem {
+  slot: 'A' | 'B' | 'C' | 'D';
+  text: string;
+  dbText?: string;
+  isCorrect: boolean;
+  matchScore?: number;
+  slotIndex: number;
+}
+
 export interface Question {
   id: string; // use string (uuid) to avoid collisions
   question: string;
@@ -10,6 +19,15 @@ export interface Question {
   isMultiSelect?: boolean;
   source: string;
   category: string;
+  /** Original question text in DB for diff comparison */
+  dbQuestion?: string;
+  /** Original options in DB */
+  dbOptions?: string[];
+  /** Visual options mapped to image order (A, B, C, D) */
+  imageOptions?: ImageOptionItem[];
+  /** Correct answer slots on the image (e.g. ['A'] or ['A', 'C']) */
+  imageCorrectAnswerSlots?: string[];
+  accuracy?: number;
 }
 
 export interface KnowledgeBase {

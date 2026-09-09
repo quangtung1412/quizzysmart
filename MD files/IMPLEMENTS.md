@@ -524,4 +524,68 @@
 ### Ghi chu
 - Độ chính xác hiển thị giờ đây phản ánh chính xác tỷ lệ tương đồng thực tế và không bao giờ vượt quá 100%.
 
+## 2026-09-09 23:25:00 +07:00
+
+### Yeu cau
+- Khi trích xuất được câu hỏi từ ảnh chụp của người dùng và hệ thống tìm được câu hỏi từ bộ đề trắc nghiệm:
+  1. Hiển thị câu hỏi được trích xuất từ ảnh thay vì câu hỏi lưu trong DB.
+  2. Thứ tự các phương án trả lời hiển thị theo đúng thứ tự A, B, C, D giống như trên ảnh chụp để người dùng dễ dàng quan sát và chọn đáp án.
+  3. Ánh xạ chính xác vị trí đáp án đúng (✓) vào đúng slot phương án trên ảnh chụp.
+  4. So khớp Text Diff giữa nội dung trên ảnh và câu hỏi / đáp án gốc trong DB:
+     - Từ giống nhau: Màu chữ mặc định.
+     - Khác biệt nhẹ / viết tắt / typo / dấu câu: Màu VÀNG (Amber).
+     - Khác biệt lớn / sai lệch số liệu: Màu ĐỎ (Red font-bold).
+  5. Cung cấp chú thích trực quan và nút toggle đối chiếu với câu hỏi gốc trong ngân hàng đề.
+
+### Ket qua
+- **Mở rộng Type Models (`types.ts`)**:
+  - Định nghĩa `ImageOptionItem` gồm `{ slot: 'A'|'B'|'C'|'D', text, dbText, isCorrect, matchScore, slotIndex }`.
+  - Mở rộng `Question` với các trường: `dbQuestion`, `dbOptions`, `imageOptions`, `imageCorrectAnswerSlots`.
+- **Backend căn chỉnh & giữ nguyên thứ tự đáp án trên ảnh (`server/src/index.ts`)**:
+  - Cài đặt thuật toán `computeLevenshtein(a, b)` và nâng cấp helper `alignOptions`:
+    - Bảo toàn thứ tự slot A, B, C, D theo đúng ảnh chụp của người dùng (`extractedOptions`).
+    - Ghép đôi từng slot với lựa chọn tương ứng trong DB để lấy `dbText` tham chiếu.
+    - Xác định chính xác `isCorrect` cho từng slot trên ảnh dựa trên bitmask / index đáp án đúng gốc của DB.
+    - Cung cấp fallback an toàn nếu ảnh không trích xuất được các lựa chọn.
+  - Cập nhật payload trả về ở cả 2 endpoint `POST /api/premium/search-by-image` và `POST /api/premium/search-by-image-stream` cho cả `matchedQuestion` và `alternativeMatches`.
+- **Thuật toán Text Diff Highlighting (`src/utils/textDiff.ts`)**:
+  - Sử dụng Needleman-Wunsch Global Sequence Alignment trên danh sách từ (words).
+  - Tính độ tương đồng từ (Levenshtein + độ dài từ).
+  - Quy tắc so sánh số nguyên nghiêm ngặt: Nếu là số và khác giá trị (ví dụ `15` vs `30`, `1995` vs `2020`), similarity trả về `0.0` và phân loại ngay thành `'mismatch'` (ĐỎ).
+  - Phân loại token:
+    - `'match'`: Trùng khớp / độ tương đồng $\ge 85\%$ -> màu bình thường.
+    - `'partial'`: Tương đồng $50\% - 84\%$ (typo, viết tắt) -> `text-amber-800 bg-amber-100` (VÀNG).
+    - `'mismatch'`: Khác biệt lớn hoặc sai số -> `text-red-800 bg-red-100 font-bold` (ĐỎ).
+- **Thành phần UI hiển thị trực quan (`components/common/DiffHighlighter.tsx`)**:
+  - Tạo component `DiffHighlighter` hiển thị chữ có highlight màu sắc theo độ lệch kèm tooltip hiển thị từ gốc tham chiếu.
+  - Tạo component `DiffLegend` giải thích ý nghĩa màu sắc (Khớp, Khác biệt nhẹ, Khác biệt lớn / Số liệu).
+- **Tích hợp vào màn hình Camera & Tìm kiếm ảnh (`components/LiveCameraSearch.tsx`, `components/ImageSearchScreen.tsx`)**:
+  - Hiển thị câu hỏi trích xuất từ ảnh kèm `DiffHighlighter` đối chiếu với `dbQuestion`.
+  - Hiển thị danh sách phương án theo đúng slot A, B, C, D trên ảnh (`imageOptions`), mỗi phương án được tô màu diff và đánh dấu tích ✓ vào đúng đáp án đúng.
+  - Bổ sung bảng chú thích `DiffLegend`.
+  - Cung cấp nút toggle xem lại toàn bộ nguyên văn câu hỏi và đáp án gốc trong ngân hàng đề.
+
+### Files tac dong
+- `types.ts`
+- `server/src/index.ts`
+- `src/utils/textDiff.ts` (tạo mới)
+- `components/common/DiffHighlighter.tsx` (tạo mới)
+- `components/LiveCameraSearch.tsx`
+- `components/ImageSearchScreen.tsx`
+- `MD files/SYSTEM-DESCRIPTION.md`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Kiểm tra phân tích cú pháp AST bằng `@babel/parser` cho: `types.ts`, `src/utils/textDiff.ts`, `components/common/DiffHighlighter.tsx`, `components/LiveCameraSearch.tsx`, `components/ImageSearchScreen.tsx`: 100% hợp lệ, không có lỗi cú pháp JSX/TypeScript.
+- Biên dịch TypeScript server `npx tsc -p tsconfig.json` trong `server`: Thành công với exit code 0.
+- Unit test kiểm thử thuật toán `computeDiffTokens`:
+  - Khớp tuyệt đối: Tất cả token 'match'.
+  - Typo / partial ('Nôi' vs 'Nội'): Phân loại 'partial' (Vàng).
+  - Số liệu khác nhau ('15 ngày' vs '30 ngày'): Số '15' phân loại 'mismatch' (Đỏ) kèm `refText: '30'`.
+
+### Ghi chu
+- Hỗ trợ cả câu hỏi một đáp án lẫn câu hỏi nhiều đáp án (bitmask âm).
+- Khi ảnh chụp không nhận diện được slot A, B, C, D (ảnh chỉ chụp một phần hoặc chỉ chụp câu hỏi), hệ thống tự động fallback về danh sách phương án DB với đầy đủ diff để đảm bảo không bị gián đoạn trải nghiệm.
+
+
 
