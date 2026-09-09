@@ -310,6 +310,69 @@ router.get('/:id', requireAdmin, async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/documents/batch-delete
+ * Delete multiple documents and their chunks/vectors
+ */
+router.post('/batch-delete', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { ids } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'ids phải là một mảng ID văn bản không rỗng',
+      });
+    }
+
+    const documents = await prisma.document.findMany({
+      where: { id: { in: ids } },
+    });
+
+    if (documents.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Không tìm thấy văn bản nào để xóa',
+      });
+    }
+
+    // Delete points from Qdrant for each document
+    for (const doc of documents) {
+      try {
+        await qdrantService.deleteDocumentPoints(doc.id);
+      } catch (error) {
+        console.warn(`[Documents] Failed to delete document ${doc.id} from Qdrant:`, error);
+      }
+
+      // Delete file from disk if exists
+      if (doc.filePath && fs.existsSync(doc.filePath)) {
+        try {
+          fs.unlinkSync(doc.filePath);
+        } catch (error) {
+          console.warn(`[Documents] Failed to delete file ${doc.filePath}:`, error);
+        }
+      }
+    }
+
+    // Delete from database (will cascade to chunks)
+    const deleteResult = await prisma.document.deleteMany({
+      where: { id: { in: ids } },
+    });
+
+    res.json({
+      success: true,
+      count: deleteResult.count,
+      message: `Đã xóa ${deleteResult.count} văn bản thành công`,
+    });
+  } catch (error) {
+    console.error('[Documents] Batch delete error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Lỗi server khi xóa văn bản hàng loạt',
+    });
+  }
+});
+
+/**
  * DELETE /api/documents/:id
  * Delete a document and its chunks
  */

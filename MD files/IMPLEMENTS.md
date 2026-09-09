@@ -409,4 +409,41 @@
 ### Ghi chu
 - Không có rủi ro phát sinh.
 
+## 2026-09-09 08:25:00 +07:00
+
+### Yeu cau
+- Ở màn hình văn bản RAG cho phép xóa cùng lúc nhiều văn bản (Batch delete RAG documents).
+
+### Ket qua
+- **Backend (`server/src/routes/document.routes.ts`)**:
+  - Thêm endpoint `POST /api/documents/batch-delete` (Admin only).
+  - Tiếp nhận danh sách `ids: string[]`, truy vấn các văn bản tương ứng.
+  - Tự động xóa vector embeddings trên Qdrant thông qua `qdrantService.deleteDocumentPoints(doc.id)`.
+  - Tự động xóa file vật lý trên disk lưu trữ nếu tồn tại.
+  - Xóa đồng thời trong database thông qua `prisma.document.deleteMany({ where: { id: { in: ids } } })` (tự động cascade các chunks liên quan).
+  - Trả về kết quả số lượng văn bản đã xóa thành công.
+- **Frontend (`components/admin/DocumentManagement.tsx`)**:
+  - Thêm state `selectedDocIds: string[]` và `isDeletingBatch: boolean`.
+  - Thêm checkbox chọn tất cả và toggle chọn từng văn bản trong danh sách.
+  - Thêm thanh công cụ thao tác hàng loạt (Batch Action Toolbar): hiển thị số lượng văn bản đã chọn, nút `🗑️ Xóa đã chọn ({count})` kèm hiệu ứng đang xử lý, và nút `Bỏ chọn`.
+  - Hộp thoại cảnh báo an toàn trước khi xóa hàng loạt vector points và file lưu trữ.
+  - Thêm checkbox trên từng card văn bản cùng hiệu ứng viền/màu nền xanh khi văn bản được chọn.
+  - Tự động đồng bộ và tải lại danh sách văn bản + collections sau khi xóa thành công.
+- **Tài liệu hệ thống (`MD files/SYSTEM-DESCRIPTION.md`)**:
+  - Cập nhật mô tả endpoint `POST /api/documents/batch-delete` và cập nhật tính năng trên giao diện `DocumentManagement.tsx`.
+
+### Files tac dong
+- `server/src/routes/document.routes.ts`
+- `components/admin/DocumentManagement.tsx`
+- `MD files/SYSTEM-DESCRIPTION.md`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Kiểm tra AST `@babel/parser` cho `components/admin/DocumentManagement.tsx`: Hợp lệ 100% (`PARSE SUCCESS`).
+- Chạy `npx tsc -p tsconfig.json` trong thư mục `server`: Thành công 100% với exit code 0.
+- Chạy `npm run build` (Vite + React-Babel) ở thư mục gốc: Thành công 100% với exit code 0.
+
+### Ghi chu
+- Không có rủi ro phát sinh.
+
 

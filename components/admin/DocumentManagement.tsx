@@ -55,6 +55,10 @@ const DocumentManagement: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<'all' | 'completed' | 'processing' | 'failed'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
+  // Batch selection states
+  const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+  const [isDeletingBatch, setIsDeletingBatch] = useState<boolean>(false);
+
   // Fetch collections
   const fetchCollections = useCallback(async () => {
     try {
@@ -219,7 +223,9 @@ const DocumentManagement: React.FC = () => {
 
       if (response.ok) {
         alert('Đã xóa văn bản');
+        setSelectedDocIds(prev => prev.filter(id => id !== documentId));
         fetchDocuments();
+        fetchCollections();
       } else {
         alert('Lỗi khi xóa');
       }
@@ -227,6 +233,50 @@ const DocumentManagement: React.FC = () => {
       console.error('Delete error:', error);
       alert('Lỗi khi xóa văn bản');
     }
+  };
+
+  // Batch delete documents
+  const handleBatchDelete = async () => {
+    if (selectedDocIds.length === 0) return;
+
+    const confirmMessage = `Bạn có chắc chắn muốn xóa ${selectedDocIds.length} văn bản đã chọn không?\nThao tác này sẽ xóa toàn bộ vector embeddings trong Qdrant và file lưu trữ, không thể hoàn tác.`;
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
+    setIsDeletingBatch(true);
+    try {
+      const response = await fetch('/api/documents/batch-delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ ids: selectedDocIds }),
+      });
+
+      const result = await response.json();
+      if (response.ok && result.success) {
+        alert(`Đã xóa thành công ${result.count || selectedDocIds.length} văn bản`);
+        setSelectedDocIds([]);
+        fetchDocuments();
+        fetchCollections();
+      } else {
+        alert(result.error || 'Lỗi khi xóa văn bản hàng loạt');
+      }
+    } catch (error) {
+      console.error('Batch delete error:', error);
+      alert('Lỗi khi xóa văn bản hàng loạt');
+    } finally {
+      setIsDeletingBatch(false);
+    }
+  };
+
+  // Toggle select single document
+  const handleToggleSelectDoc = (id: string) => {
+    setSelectedDocIds(prev =>
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
   };
 
   // Format file size
@@ -310,6 +360,22 @@ const DocumentManagement: React.FC = () => {
     setFilterCollection('all');
     setFilterStatus('all');
     setSearchQuery('');
+  };
+
+  // Check if all currently filtered documents are selected
+  const isAllSelected = useMemo(() => {
+    return filteredDocuments.length > 0 && filteredDocuments.every(doc => selectedDocIds.includes(doc.id));
+  }, [filteredDocuments, selectedDocIds]);
+
+  // Handle select/unselect all currently filtered documents
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      const allFilteredIds = filteredDocuments.map(d => d.id);
+      setSelectedDocIds(Array.from(new Set([...selectedDocIds, ...allFilteredIds])));
+    } else {
+      const filteredIdSet = new Set(filteredDocuments.map(d => d.id));
+      setSelectedDocIds(selectedDocIds.filter(id => !filteredIdSet.has(id)));
+    }
   };
 
   // Get status badge
@@ -657,6 +723,57 @@ const DocumentManagement: React.FC = () => {
           </div>
         )}
 
+        {/* Batch Action Toolbar */}
+        {filteredDocuments.length > 0 && (
+          <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-lg flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={isAllSelected}
+                  onChange={handleSelectAll}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                />
+                <span>Chọn tất cả ({filteredDocuments.length} văn bản)</span>
+              </label>
+              {selectedDocIds.length > 0 && (
+                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                  Đã chọn: {selectedDocIds.length}
+                </span>
+              )}
+            </div>
+
+            {selectedDocIds.length > 0 && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleBatchDelete}
+                  disabled={isDeletingBatch}
+                  className="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg shadow-sm flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+                  title="Xóa tất cả các văn bản đã chọn"
+                >
+                  {isDeletingBatch ? (
+                    <>
+                      <div className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white border-t-transparent" />
+                      <span>Đang xóa...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>🗑️ Xóa đã chọn ({selectedDocIds.length})</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => setSelectedDocIds([])}
+                  disabled={isDeletingBatch}
+                  className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-sm font-medium rounded-lg transition-colors cursor-pointer"
+                >
+                  Bỏ chọn
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Documents Content */}
         {documents.length === 0 ? (
           <div className="text-center py-12 text-gray-500">
@@ -678,9 +795,27 @@ const DocumentManagement: React.FC = () => {
               const progress = processingProgress.get(doc.id);
               
               return (
-                <div key={doc.id} className="border border-slate-200 rounded-lg p-4 hover:bg-slate-50 transition-colors">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
+                <div
+                  key={doc.id}
+                  className={`border rounded-lg p-4 transition-all duration-200 ${
+                    selectedDocIds.includes(doc.id)
+                      ? 'border-blue-400 bg-blue-50/40 shadow-sm'
+                      : 'border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    {/* Checkbox chọn văn bản */}
+                    <div className="pt-1 flex-shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={selectedDocIds.includes(doc.id)}
+                        onChange={() => handleToggleSelectDoc(doc.id)}
+                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                        title="Chọn văn bản này"
+                      />
+                    </div>
+
+                    <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2 mb-2">
                         <h3 className="font-semibold text-lg text-slate-900">{doc.documentName}</h3>
                         {getStatusBadge(doc.processingStatus)}

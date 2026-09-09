@@ -30,6 +30,10 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
   - Response contract: Chi tiet van ban bao gom cac truong metadata, markdownContent, chunks, processingStatus va `qdrantCollectionName`.
 - `DELETE /api/documents/:id`: Xoa van ban va cac vector lien quan trong Qdrant.
   - Auth: Admin only (`requireAdmin`).
+- `POST /api/documents/batch-delete`: Xoa cung luc nhieu van ban RAG, toan bo vector points tuong ung trong Qdrant va file vat ly tren disk.
+  - Auth: Admin only (`requireAdmin`).
+  - Request: JSON `{ ids: string[] }`.
+  - Response: `{ success: true, count: number, message: string }`.
 - `POST /api/documents/:id/re-extract`: Yeu cau Gemini trich xuat lai noi dung van ban.
 - `POST /api/documents/:id/re-embed`: Yeu cau tinh toan va tao lai vector embeddings vao Qdrant.
 
@@ -55,7 +59,7 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
 - `AdminDashboard.tsx`:
   - `tests`: Quan ly bai thi (`components/admin/TestManagement.tsx`) - Ho tro tao de don / bo de batch gan chu de, loc theo chu de, badge chu de tren tung bai thi. Ho tro checkbox chon nhieu bai thi va gan chu de hang loat (`POST /api/admin/tests/batch-topic`).
   - `knowledge`: Quan ly co so kien thuc (`components/admin/KnowledgeManagement.tsx`) - Ho tro tai len Excel gan chu de hoac tao chu de moi, loc theo chu de, badge chu de. Ho tro checkbox chon nhieu co so kien thuc va gan chu de hang loat (`POST /api/admin/knowledge-bases/batch-topic`).
-  - `documents`: Quan ly van ban RAG (`components/admin/DocumentManagement.tsx`) - Ho tro bo loc theo Collection, trang thai xu ly, tim kiem va thong ke.
+  - `documents`: Quan ly van ban RAG (`components/admin/DocumentManagement.tsx`) - Ho tro bo loc theo Collection, trang thai xu ly, tim kiem va thong ke. Ho tro checkbox chon tung van ban / chon tat ca va xoa hang loat cung luc (`POST /api/documents/batch-delete`).
   - `collections`: Quan ly Vector Collections (`components/admin/CollectionManagement.tsx`).
 - `KnowledgeBaseScreen.tsx` (Man hinh on luyen cua nguoi dung):
   - Khi co so kien thuc co chu de: nguoi dung duoc chon Chu de o Cap 1 (The chu de voi so luong bai on tap con, tong so cau hoi) -> vao Cap 2 xem cac bai on tap con cua chu de do.
