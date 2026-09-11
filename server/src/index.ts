@@ -22,6 +22,7 @@ import { qdrantService } from './services/qdrant.service.js';
 import { modelSettingsService } from './services/model-settings.service.js';
 import { geminiTrackerService } from './services/gemini-tracker.service.js';
 import { requestLogger, errorLogger } from './middleware/logging.middleware.js';
+import { questionCacheService, CachedQuestion } from './services/question-cache.service.js';
 
 const prisma = new PrismaClient();
 // Temporary any-cast for newly added models if type generation not up-to-date
@@ -796,10 +797,15 @@ app.post('/api/bases', async (req: Request, res: Response) => {
       category: q.category || ''
     }))
   });
+  // Invalidate question cache for newly created base
+  questionCacheService.invalidateCache();
 });
 
 // Helper to cascade delete a KnowledgeBase and all its dependent records safely
 async function deleteKnowledgeBaseCascade(baseId: string) {
+  // Invalidate question cache for this base
+  questionCacheService.invalidateCache(baseId);
+
   // 1. Find all question IDs belonging to this base
   const questions = await prisma.question.findMany({
     where: { baseId },
@@ -3948,17 +3954,42 @@ export interface ImageOptionItem {
 }
 
 function computeLevenshtein(a: string, b: string): number {
-  const m = a.length, n = b.length;
-  const d = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  for (let i = 0; i <= m; i++) d[i][0] = i;
-  for (let j = 0; j <= n; j++) d[0][j] = j;
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
-    }
+  if (a === b) return 0;
+  let m = a.length;
+  let n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+
+  // Ensure b is the shorter string to minimize Int32Array size
+  if (m < n) {
+    const tmpStr = a; a = b; b = tmpStr;
+    const tmpLen = m; m = n; n = tmpLen;
   }
-  return d[m][n];
+
+  let prev = new Int32Array(n + 1);
+  let curr = new Int32Array(n + 1);
+
+  for (let j = 0; j <= n; j++) {
+    prev[j] = j;
+  }
+
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    const charA = a.charCodeAt(i - 1);
+    for (let j = 1; j <= n; j++) {
+      const cost = charA === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,        // deletion
+        curr[j - 1] + 1,    // insertion
+        prev[j - 1] + cost  // substitution
+      );
+    }
+    const tmp = prev;
+    prev = curr;
+    curr = tmp;
+  }
+
+  return prev[n];
 }
 
 // Helper to clean option text (strips leading prefixes like "A.", "B.", "1.", "(A)", etc.)
@@ -4262,9 +4293,11 @@ function calculateQuestionMatchScore(
   dbQuestionText: string,
   dbOptions: string[],
   recognizedQuestion: string,
-  extractedOptionsList: string[]
+  extractedOptionsList: string[],
+  preNormalizedDbText?: string,
+  preNormalizedNumbers?: string[]
 ): { matchScore: number; matchType: string; questionMatchScore: number; optionsMatchScore: number } {
-  const qNorm = normalizeForComparison(dbQuestionText);
+  const qNorm = preNormalizedDbText || normalizeForComparison(dbQuestionText);
   const rNorm = normalizeForComparison(recognizedQuestion);
 
   // 1. Question matching with Levenshtein + Number validation
@@ -4273,11 +4306,11 @@ function calculateQuestionMatchScore(
     questionMatchScore = 1.0;
   } else {
     // Check numbers in questions
-    const qNums = qNorm.match(/\b\d+\b/g) || [];
+    const qNums = preNormalizedNumbers || qNorm.match(/\b\d+\b/g) || [];
     const rNums = rNorm.match(/\b\d+\b/g) || [];
     let numberPenalty = 1.0;
     if (qNums.length > 0 || rNums.length > 0) {
-      if (qNums.sort().join(',') !== rNums.sort().join(',')) {
+      if (qNums.slice().sort().join(',') !== rNums.slice().sort().join(',')) {
         numberPenalty = 0.35; // Heavy penalty if question numbers differ (e.g. "lần 1" vs "lần 2", "Điều 10" vs "Điều 20")
       }
     }
@@ -4294,7 +4327,7 @@ function calculateQuestionMatchScore(
     questionMatchScore = (levSim * 0.65 + jaccard * 0.35) * numberPenalty;
   }
 
-  // 2. Options matching
+  // 2. Options matching (Only run if question has potential similarity >= 0.25)
   let optionsMatchScore = 0;
   let matchedOptionsCount = 0;
   let matchType = '';
@@ -4303,7 +4336,7 @@ function calculateQuestionMatchScore(
     .map(opt => cleanOptionText(opt))
     .filter(opt => opt.length > 0);
 
-  if (validExtractedOptions.length > 0) {
+  if (validExtractedOptions.length > 0 && questionMatchScore >= 0.25) {
     let totalOptionScore = 0;
     for (const extOpt of validExtractedOptions) {
       let bestOptMatch = 0;
@@ -4549,24 +4582,14 @@ Ví dụ:
     console.log('AI Extracted Data:', extractedData);
 
     const dbQueryStartTime = Date.now();
-    // Search for matching question in selected knowledge bases
-    const questions = await prisma.question.findMany({
-      where: {
-        baseId: {
-          in: knowledgeBaseIds
-        }
-      },
-      include: {
-        base: {
-          select: {
-            name: true
-          }
-        }
-      }
-    });
+    // Search for matching question in selected knowledge bases using In-Memory Cache
+    const questions = await questionCacheService.getCachedQuestions(knowledgeBaseIds, prisma);
     dbQueryMs = Date.now() - dbQueryStartTime;
 
     const dbMatchStartTime = Date.now();
+    // Stage 1: Fast candidate filtering (scales down from 11,000+ questions to top 60 candidates in ~1-2ms)
+    const candidateQuestions = questionCacheService.findCandidateQuestions(recognizedText, questions, 60);
+
     // Enhanced matching logic - compare both question and answer options
     let bestMatch: any = null;
     let bestScore = 0;
@@ -4581,13 +4604,16 @@ Ví dụ:
     // Store all matches with scores
     const allMatches: Array<{ question: any; score: number; matchType: string }> = [];
 
-    for (const question of questions) {
-      const questionOptions = JSON.parse(question.options);
+    // Stage 2: Fine-grained scoring on top candidates only
+    for (const question of candidateQuestions) {
+      const questionOptions = Array.isArray(question.options) ? question.options : JSON.parse(question.options);
       const { matchScore, matchType, questionMatchScore, optionsMatchScore } = calculateQuestionMatchScore(
         question.text,
         questionOptions,
         recognizedText,
-        extractedOptionsList
+        extractedOptionsList,
+        question.normText,
+        question.numbers
       );
 
       if (questionMatchScore > 0.4 || optionsMatchScore > 0.6) {
@@ -4601,7 +4627,7 @@ Ví dụ:
     bestScore = allMatches.length > 0 ? allMatches[0].score : 0;
 
     // Log for debugging
-    console.log('=== IMAGE SEARCH DEBUG ===');
+    console.log('=== IMAGE SEARCH DEBUG (Optimized Two-Stage) ===');
     console.log('Recognized Question:', recognizedText);
     console.log('Extracted Options:', {
       A: extractedData.optionA || 'N/A',
@@ -4609,20 +4635,21 @@ Ví dụ:
       C: extractedData.optionC || 'N/A',
       D: extractedData.optionD || 'N/A'
     });
-    console.log('Total questions in DB:', questions.length);
+    console.log('Total questions in cache:', questions.length);
+    console.log('Candidates evaluated in Stage 2:', candidateQuestions.length);
     console.log('Matches found:', allMatches.length);
     console.log('Top 3 matches:', allMatches.slice(0, 3).map(m => ({
       score: Math.min(100, Math.max(0, Math.round(m.score * 100))) + '%',
       matchType: m.matchType,
       questionPreview: m.question.text.substring(0, 80) + '...'
     })));
-    console.log('========================');
+    console.log('================================================');
 
     const finalQuestionText = (recognizedText || (bestMatch ? bestMatch.text : '')).trim();
 
     // Prepare alternative matches (top 3)
     const alternativeMatches = allMatches.slice(1, 4).map(match => {
-      const opts = JSON.parse(match.question.options);
+      const opts = Array.isArray(match.question.options) ? match.question.options : JSON.parse(match.question.options);
       const alignment = alignOptions(opts, match.question.correctAnswerIdx, extractedData);
       return {
         id: match.question.id,
@@ -4637,7 +4664,7 @@ Ví dụ:
         correctAnswerIndex: alignment.alignedCorrectAnswerIdx,
         source: match.question.source || '',
         category: match.question.category || '',
-        knowledgeBaseName: match.question.base.name,
+        knowledgeBaseName: match.question.baseName || match.question.base?.name || '',
         confidence: Math.min(100, Math.max(0, Math.round(match.score * 100))),
         accuracy: Math.min(100, Math.max(0, Math.round(match.score * 100))),
         matchType: match.matchType
@@ -4651,7 +4678,8 @@ Ví dụ:
     if (extractedData.optionC) filteredExtractedOptions.C = extractedData.optionC;
     if (extractedData.optionD) filteredExtractedOptions.D = extractedData.optionD;
 
-    let alignedOptions = bestMatch ? JSON.parse(bestMatch.options) : [];
+    const bestMatchRawOpts = bestMatch ? (Array.isArray(bestMatch.options) ? bestMatch.options : JSON.parse(bestMatch.options)) : [];
+    let alignedOptions = bestMatchRawOpts;
     let alignedCorrectAnswerIdx = bestMatch ? bestMatch.correctAnswerIdx : -1;
     let alignment: any = { alignedOptions, alignedCorrectAnswerIdx, imageOptions: [], imageCorrectAnswerSlots: [] };
     if (bestMatch) {
@@ -4672,14 +4700,14 @@ Ví dụ:
         recognizedQuestion: finalQuestionText,
         options: alignedOptions,
         answers: alignedOptions,
-        dbOptions: JSON.parse(bestMatch.options),
+        dbOptions: bestMatchRawOpts,
         imageOptions: alignment.imageOptions,
         imageCorrectAnswerSlots: alignment.imageCorrectAnswerSlots,
         correctAnswerIndex: alignedCorrectAnswerIdx,
         accuracy: calculatedConfidence,
         source: bestMatch.source || '',
         category: bestMatch.category || '',
-        knowledgeBaseName: bestMatch.base.name
+        knowledgeBaseName: bestMatch.baseName || bestMatch.base?.name || ''
       } : null,
       confidence: calculatedConfidence,
       alternativeMatches: alternativeMatches.length > 0 ? alternativeMatches : undefined,
@@ -5187,21 +5215,11 @@ QUY TẮC:
 
       sendEvent('status', { message: 'Đang tìm kiếm trong cơ sở dữ liệu...' });
 
-      // Search for matching question in selected knowledge bases (same logic as before)
-      const questions = await prisma.question.findMany({
-        where: {
-          baseId: {
-            in: knowledgeBaseIds
-          }
-        },
-        include: {
-          base: {
-            select: {
-              name: true
-            }
-          }
-        }
-      });
+      // Search for matching question in selected knowledge bases using In-Memory Cache
+      const questions = await questionCacheService.getCachedQuestions(knowledgeBaseIds, prisma);
+
+      // Stage 1: Fast candidate filtering (scales down from 11,000+ questions to top 60 candidates in ~1-2ms)
+      const candidateQuestions = questionCacheService.findCandidateQuestions(recognizedText, questions, 60);
 
       // Enhanced matching logic (same as before)
       const extractedOptionsList = [
@@ -5213,14 +5231,16 @@ QUY TẮC:
 
       const allMatches: Array<{ question: any; score: number; matchType: string }> = [];
 
-      // Same matching logic as non-streaming version
-      for (const question of questions) {
-        const questionOptions = JSON.parse(question.options);
+      // Stage 2: Fine-grained scoring on top candidates only
+      for (const question of candidateQuestions) {
+        const questionOptions = Array.isArray(question.options) ? question.options : JSON.parse(question.options);
         const { matchScore, matchType, questionMatchScore, optionsMatchScore } = calculateQuestionMatchScore(
           question.text,
           questionOptions,
           recognizedText,
-          extractedOptionsList
+          extractedOptionsList,
+          question.normText,
+          question.numbers
         );
 
         if (questionMatchScore > 0.4 || optionsMatchScore > 0.6) {
@@ -5232,7 +5252,8 @@ QUY TẮC:
       const bestMatch = allMatches.length > 0 ? allMatches[0].question : null;
       const bestScore = allMatches.length > 0 ? allMatches[0].score : 0;
 
-      let alignedOptions = bestMatch ? JSON.parse(bestMatch.options) : [];
+      const bestMatchRawOptsStream = bestMatch ? (Array.isArray(bestMatch.options) ? bestMatch.options : JSON.parse(bestMatch.options)) : [];
+      let alignedOptions = bestMatchRawOptsStream;
       let alignedCorrectAnswerIdx = bestMatch ? bestMatch.correctAnswerIdx : -1;
       let streamAlignment: any = { alignedOptions, alignedCorrectAnswerIdx, imageOptions: [], imageCorrectAnswerSlots: [] };
       if (bestMatch) {
@@ -5255,14 +5276,14 @@ QUY TẮC:
           recognizedQuestion: finalQuestionTextStream,
           options: alignedOptions,
           answers: alignedOptions,
-          dbOptions: JSON.parse(bestMatch.options),
+          dbOptions: bestMatchRawOptsStream,
           imageOptions: streamAlignment.imageOptions,
           imageCorrectAnswerSlots: streamAlignment.imageCorrectAnswerSlots,
           correctAnswerIndex: alignedCorrectAnswerIdx,
           accuracy: calculatedConfidence,
           source: bestMatch.source || '',
           category: bestMatch.category || '',
-          knowledgeBaseName: bestMatch.base.name
+          knowledgeBaseName: bestMatch.baseName || bestMatch.base?.name || ''
         } : null,
         confidence: calculatedConfidence,
         modelUsed: selectedModel.name,
