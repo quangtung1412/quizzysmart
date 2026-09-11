@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Question } from '../types';
+import { Question, SearchTimeline } from '../types';
 import { api } from '../src/api';
+import SearchTimelineView from './SearchTimelineView';
 
 interface ImageSearchScreenProps {
     onBack: () => void;
@@ -33,6 +34,8 @@ interface SearchResult {
         C?: string;
         D?: string;
     };
+    modelUsed?: string;
+    timeline?: SearchTimeline;
 }
 
 const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledgeBases, user }) => {
@@ -116,6 +119,7 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
 
         setIsProcessing(true);
         setError(null);
+        const clientStartTime = Date.now();
 
         try {
             const video = videoRef.current;
@@ -132,6 +136,7 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
 
                 // Convert canvas to base64
                 const imageDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                const clientCaptureMs = Date.now() - clientStartTime;
                 const base64Image = imageDataUrl.split(',')[1];
 
                 // Stop camera while searching
@@ -141,7 +146,21 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                 setSelectedImage(imageDataUrl);
 
                 // Search in all knowledge bases
-                const result: SearchResult = await api.searchByImage(base64Image, allKnowledgeBaseIds);
+                const result: any = await api.searchByImage(base64Image, allKnowledgeBaseIds);
+                const clientTotalMs = Date.now() - clientStartTime;
+
+                if (result) {
+                    const serverTotalMs = result.timeline?.serverTotalMs || 0;
+                    const networkTransferMs = Math.max(0, clientTotalMs - serverTotalMs - clientCaptureMs);
+
+                    result.timeline = {
+                        ...(result.timeline || {}),
+                        clientCaptureMs,
+                        clientTotalMs,
+                        networkTransferMs,
+                    };
+                }
+
                 setSearchResult(result);
             }
         } catch (err: any) {
@@ -187,13 +206,28 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
 
         setIsProcessing(true);
         setError(null);
+        const clientStartTime = Date.now();
 
         try {
             // Remove data:image prefix to get base64 string
             const base64Image = selectedImage.split(',')[1];
 
             // Search in all knowledge bases
-            const result: SearchResult = await api.searchByImage(base64Image, allKnowledgeBaseIds);
+            const result: any = await api.searchByImage(base64Image, allKnowledgeBaseIds);
+            const clientTotalMs = Date.now() - clientStartTime;
+
+            if (result) {
+                const serverTotalMs = result.timeline?.serverTotalMs || 0;
+                const networkTransferMs = Math.max(0, clientTotalMs - serverTotalMs);
+
+                result.timeline = {
+                    ...(result.timeline || {}),
+                    clientCaptureMs: 0,
+                    clientTotalMs,
+                    networkTransferMs,
+                };
+            }
+
             setSearchResult(result);
         } catch (err: any) {
             console.error('Search error:', err);
@@ -653,7 +687,7 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                     <div className="space-y-2 mb-3">
                                         {(searchResult.matchedQuestion.imageOptions && searchResult.matchedQuestion.imageOptions.length > 0
                                             ? searchResult.matchedQuestion.imageOptions
-                                            : (searchResult.matchedQuestion.answers || searchResult.matchedQuestion.options).map((opt, idx) => ({
+                                            : ((searchResult.matchedQuestion as any).answers || searchResult.matchedQuestion.options).map((opt: string, idx: number) => ({
                                                 slot: String.fromCharCode(65 + idx) as any,
                                                 text: opt,
                                                 dbText: opt,
@@ -785,6 +819,16 @@ const ImageSearchScreen: React.FC<ImageSearchScreenProps> = ({ onBack, knowledge
                                             </div>
                                         </div>
                                     </div>
+                                </div>
+                            )}
+
+                            {/* Admin Search Timeline */}
+                            {user?.role === 'admin' && searchResult.timeline && (
+                                <div className="mt-4">
+                                    <SearchTimelineView
+                                        timeline={searchResult.timeline}
+                                        modelUsed={searchResult.modelUsed}
+                                    />
                                 </div>
                             )}
 

@@ -714,6 +714,66 @@
 - Danh sách đáp án trên màn hình Live Camera và Image Search hiện phản ánh chính xác số lượng và nội dung phương án có trên ảnh chụp của người dùng.
 - Tuyệt đối không còn tình trạng tự ý chèn thêm đáp án từ DB vào giao diện khi ảnh chụp có ít hơn 4 đáp án.
 
+## 2026-09-11 10:12:00 +07:00
+
+### Yeu cau
+- Người dùng nhận thấy thời gian từ khi chụp ảnh đến khi nhận được kết quả trên màn hình tìm kiếm bị lâu hơn.
+- Thiết lập timeline chi tiết từng công đoạn trong quá trình tìm kiếm bằng camera (từ lúc nhấn chụp đến khi hiển thị popup kết quả).
+- Trên popup hiển thị kết quả, nếu là user Admin (`user?.role === 'admin'`) thì hiển thị chi tiết thời gian của từng công đoạn; người dùng thông thường giữ nguyên giao diện không hiển thị.
+
+### Ket qua
+- **Đo lường & Phân tích các công đoạn (Timeline Stages)**:
+  1. `clientCaptureMs`: Thời gian chụp khung hình từ camera stream và mã hóa sang ảnh Base64 JPEG.
+  2. `networkTransferMs`: Thời gian truyền tải dữ liệu ảnh hai chiều (Client -> Server -> Client).
+  3. `serverAuthMs`: Thời gian xác thực JWT token, kiểm tra hạn mức lượt tìm kiếm (quota) và chọn model Vision.
+  4. `visionOcrMs`: Thời gian gọi API Google Gemini Vision để OCR trích xuất câu hỏi và các phương án dạng JSON.
+  5. `dbQueryMs`: Thời gian truy vấn cơ sở dữ liệu (Prisma ORM) lấy toàn bộ câu hỏi trong ngân hàng đề thuộc các cơ sở kiến thức được chọn.
+  6. `dbMatchMs`: Thời gian chạy thuật toán so khớp nội dung (Levenshtein distance, Jaccard token overlap, Strict number check) và thuật toán `alignOptions` rút gọn đáp án.
+  7. `ragPipelineMs` (nếu kích hoạt khi không tìm thấy trong DB):
+     - `ragEmbeddingMs`: Thời gian tạo vector embedding cho câu hỏi bằng Gemini text-embedding-004.
+     - `ragVectorSearchMs`: Thời gian truy vấn tìm các đoạn văn bản tương đồng trong Qdrant Vector DB.
+     - `ragAnswerMs`: Thời gian gọi Gemini để sinh câu trả lời có trích dẫn từ tài liệu văn bản.
+  8. `serverTotalMs`: Tổng thời gian xử lý nội bộ tại server.
+  9. `clientTotalMs`: Tổng thời gian từ lúc bấm nút chụp đến khi render kết quả lên màn hình.
+- **Backend (`server/src/index.ts`)**:
+  - Bổ sung đo đạc chi tiết từng mốc thời gian bằng `Date.now()` trong handler `POST /api/premium/search-by-image`.
+  - Trả về đối tượng `timeline: SearchTimeline` trong response JSON của API.
+- **Frontend Types (`types.ts`)**:
+  - Khai báo export interface `SearchTimeline` hỗ trợ đầy đủ các trường đo lường server và client.
+- **Frontend Component (`components/SearchTimelineView.tsx`)**:
+  - Xây dựng component giao diện trực quan dành riêng cho Quản trị viên:
+    - Badge tổng thời gian kèm phân loại hiệu năng (< 2.5s: ⚡ Nhanh - Xanh lá, 2.5s - 5s: ⏱️ Trung bình - Vàng hổ phách, > 5s: ⚠️ Chậm - Đỏ/Cam).
+    - Hiển thị thông tin model Gemini Vision đã dùng (`searchResult.modelUsed`).
+    - Cảnh báo tự động điểm nghẽn chính (Bottleneck banner) chỉ ra khâu tốn thời gian nhất cùng gợi ý khắc phục.
+    - Thanh tiến trình trực quan phân bổ thời gian (stacked progress bar) hiển thị tỷ lệ % thời gian từng khâu.
+    - Bảng chi tiết từng bước: tên công đoạn, thời gian (ms) và % chiếm dụng thời gian tổng.
+- **Tích hợp giao diện màn hình (`components/LiveCameraSearch.tsx`, `components/ImageSearchScreen.tsx`)**:
+  - Ghi nhận `clientStartTime = Date.now()` khi nhấn chụp ảnh / tìm kiếm ảnh.
+  - Đo `clientCaptureMs` và tính toán `networkTransferMs = Math.max(0, clientTotalMs - serverTotalMs - clientCaptureMs)`.
+  - Render `<SearchTimelineView />` trong popup kết quả **chỉ khi `user?.role === 'admin' && searchResult.timeline`**.
+  - Người dùng thông thường không hiển thị bảng timeline này.
+- **Tài liệu hệ thống (`MD files/SYSTEM-DESCRIPTION.md`)**:
+  - Bổ sung đặc tả trường `timeline` trong API `POST /api/premium/search-by-image`.
+  - Bổ sung mô tả luồng hiển thị timeline cho Admin trong mục User Flows.
+
+### Files tac dong
+- `types.ts`
+- `server/src/index.ts`
+- `components/SearchTimelineView.tsx` (mới)
+- `components/LiveCameraSearch.tsx`
+- `components/ImageSearchScreen.tsx`
+- `MD files/SYSTEM-DESCRIPTION.md`
+- `MD files/IMPLEMENTS.md`
+
+### Validation
+- Biên dịch TypeScript Backend `server/src/index.ts` bằng `npx tsc -p tsconfig.json`: Thành công 100% với exit code 0.
+- Typecheck TypeScript Frontend cho các file đã sửa/tạo (`types.ts`, `components/SearchTimelineView.tsx`, `components/LiveCameraSearch.tsx`, `components/ImageSearchScreen.tsx`): 100% hợp lệ, không có lỗi type.
+- Kiểm tra điều kiện hiển thị: Chỉ render khi `user?.role === 'admin'`. Người dùng thông thường không bị ảnh hưởng giao diện.
+
+### Ghi chu
+- Khâu tốn thời gian nhất thường là Gemini Vision API (2.5s - 4.5s) và RAG generation (3s - 5s). Bảng timeline giúp Quản trị viên theo dõi chính xác từng khâu để có cơ sở tối ưu hạ tầng hoặc điều chỉnh model/timeout khi cần thiết.
+
+
 
 
 

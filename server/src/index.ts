@@ -4354,11 +4354,20 @@ function calculateQuestionMatchScore(
 
 // Premium API - Image Search with Gemini
 app.post('/api/premium/search-by-image', async (req: Request, res: Response) => {
-  // Variables for error logging
-  let startTime = 0;
+  // Variables for error logging & timeline tracking
+  const reqStartTime = Date.now();
+  let startTime = reqStartTime;
   let user: any = null;
   let knowledgeBaseIds: any[] = [];
   let selectedModel: any = null;
+
+  let authAndPrepMs = 0;
+  let visionOcrMs = 0;
+  let dbQueryMs = 0;
+  let dbMatchMs = 0;
+  let ragEmbeddingMs: number | undefined;
+  let ragVectorSearchMs: number | undefined;
+  let ragAnswerMs: number | undefined;
 
   try {
     user = req.user as any;
@@ -4467,6 +4476,10 @@ QUY TẮC:
 Ví dụ:
 {"question":"Agribank được thành lập năm nào?","optionA":"1988","optionB":"1990","optionC":"1995","optionD":"2000"}`;
 
+    // Record auth and initialization time
+    authAndPrepMs = Date.now() - reqStartTime;
+    const ocrStartTime = Date.now();
+
     // Start tracking API call
     const trackingId = await geminiTrackerService.startTracking({
       endpoint: 'vision/generateContent',
@@ -4531,9 +4544,11 @@ Ví dụ:
     // Safely parse AI response using robust extractor
     const extractedData = parseExtractedVisionJson(responseText);
     const recognizedText = extractedData.question || responseText;
+    visionOcrMs = Date.now() - ocrStartTime;
 
     console.log('AI Extracted Data:', extractedData);
 
+    const dbQueryStartTime = Date.now();
     // Search for matching question in selected knowledge bases
     const questions = await prisma.question.findMany({
       where: {
@@ -4549,7 +4564,9 @@ Ví dụ:
         }
       }
     });
+    dbQueryMs = Date.now() - dbQueryStartTime;
 
+    const dbMatchStartTime = Date.now();
     // Enhanced matching logic - compare both question and answer options
     let bestMatch: any = null;
     let bestScore = 0;
@@ -4670,6 +4687,7 @@ Ví dụ:
       modelPriority: selectedModel.priority,
       searchType: 'database'
     };
+    dbMatchMs = Date.now() - dbMatchStartTime;
 
     // Smart Search Strategy: If no good match found in database (confidence < 70%), try RAG search
     if (!bestMatch || bestScore < 0.7) {
@@ -4691,7 +4709,9 @@ Ví dụ:
           const { qdrantService } = await import('./services/qdrant.service.js');
 
           // Generate embedding for the recognized question
+          const tRagEmbed = Date.now();
           const questionEmbedding = await geminiRAGService.generateEmbedding(recognizedText, sessionId, user.id.toString());
+          ragEmbeddingMs = Date.now() - tRagEmbed;
 
           // Get all available collections for comprehensive search
           const availableCollections = await qdrantService.listCollections();
@@ -4704,6 +4724,7 @@ Ví dụ:
           const initialCollections = collectionNames.filter(c => c !== 'common');
           console.log(`[RAG Search] Initial business collections:`, initialCollections);
 
+          const tRagSearch = Date.now();
           let ragSearchResults = await qdrantService.searchWithFallback(
             questionEmbedding,
             initialCollections,
@@ -4726,7 +4747,10 @@ Ví dụ:
 
             // Take top 8 after reranking for focused answer
             ragSearchResults = ragSearchResults.slice(0, 8);
+          }
+          ragVectorSearchMs = Date.now() - tRagSearch;
 
+          if (ragSearchResults.length > 0) {
             // Prepare retrieved chunks for RAG
             const retrievedChunks = ragSearchResults.map((result) => ({
               chunkId: result.id,
@@ -4782,7 +4806,9 @@ Ví dụ:
               format: hasOptions ? 'json' as const : 'prose' as const
             };
 
+            const tRagAnswer = Date.now();
             const ragResponse = await geminiRAGService.generateRAGAnswer(ragQuery, retrievedChunks, sessionId, user.id.toString());
+            ragAnswerMs = Date.now() - tRagAnswer;
 
             // Add RAG result to response using structured format from service
             result_data.ragResult = {
@@ -4913,6 +4939,18 @@ Ví dụ:
       console.error('[AI Search History] Failed to save history:', historyError);
       // Don't fail the request if history save fails
     }
+
+    const serverTotalMs = Date.now() - reqStartTime;
+    result_data.timeline = {
+      serverAuthMs: authAndPrepMs,
+      visionOcrMs,
+      dbQueryMs,
+      dbMatchMs,
+      ragEmbeddingMs,
+      ragVectorSearchMs,
+      ragAnswerMs,
+      serverTotalMs
+    };
 
     res.json(result_data);
   } catch (error: any) {

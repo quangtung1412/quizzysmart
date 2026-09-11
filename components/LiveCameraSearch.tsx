@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Question } from '../types';
+import { Question, SearchTimeline } from '../types';
 import { api } from '../src/api';
+import SearchTimelineView from './SearchTimelineView';
 
 interface LiveCameraSearchProps {
     onBack: () => void;
@@ -46,6 +47,7 @@ interface SearchResult {
     modelPriority?: number;
     ragRestricted?: boolean;
     ragRestrictedMessage?: string;
+    timeline?: SearchTimeline;
 }
 
 const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremiumPlans, knowledgeBases, user }) => {
@@ -157,6 +159,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
 
         setIsProcessing(true);
         setError(null);
+        const clientStartTime = Date.now();
 
         try {
             const canvas = canvasRef.current;
@@ -173,6 +176,7 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
 
                 // Convert canvas to base64
                 const imageDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                const clientCaptureMs = Date.now() - clientStartTime;
                 const base64Image = imageDataUrl.split(',')[1];
 
                 // Save captured image for display
@@ -183,6 +187,20 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
 
                 // Send to API using the centralized api.ts with all questions from DB
                 const result: any = await api.searchByImage(base64Image, knowledgeBasesToSearch);
+                const clientTotalMs = Date.now() - clientStartTime;
+
+                if (result) {
+                    const serverTotalMs = result.timeline?.serverTotalMs || 0;
+                    const networkTransferMs = Math.max(0, clientTotalMs - serverTotalMs - clientCaptureMs);
+
+                    result.timeline = {
+                        ...(result.timeline || {}),
+                        clientCaptureMs,
+                        clientTotalMs,
+                        networkTransferMs,
+                    };
+                }
+
                 setSearchResult(result);
 
                 // Update remaining quota if provided
@@ -667,6 +685,16 @@ const LiveCameraSearch: React.FC<LiveCameraSearchProps> = ({ onBack, onGoToPremi
                                             </div>
                                         </div>
                                     </div>
+                                </div>
+                            )}
+
+                            {/* Admin Search Timeline */}
+                            {user?.role === 'admin' && searchResult.timeline && (
+                                <div className="mt-4">
+                                    <SearchTimelineView
+                                        timeline={searchResult.timeline}
+                                        modelUsed={searchResult.modelUsed}
+                                    />
                                 </div>
                             )}
 

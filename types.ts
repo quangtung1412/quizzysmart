@@ -192,3 +192,18 @@ export function isMultiSelectQuestion(q: {
   if (typeof q.isMultiSelect === 'boolean') return q.isMultiSelect;
   return typeof q.correctAnswerIndex === 'number' && q.correctAnswerIndex < 0;
 }
+
+export interface SearchTimeline {
+  serverAuthMs: number;
+  visionOcrMs: number;
+  dbQueryMs: number;
+  dbMatchMs: number;
+  ragEmbeddingMs?: number;
+  ragVectorSearchMs?: number;
+  ragAnswerMs?: number;
+  serverTotalMs: number;
+  clientCaptureMs?: number;
+  networkTransferMs?: number;
+  clientTotalMs?: number;
+}
+

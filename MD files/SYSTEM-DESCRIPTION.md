@@ -79,6 +79,18 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
     - `imageOptions`: Mang doi tuong rut gon theo cac slot co tren anh `{ slot: 'A'|'B'|'C'|'D', text: string, dbText?: string, isCorrect: boolean, matchScore: number, slotIndex: number }`.
     - `imageCorrectAnswerSlots`: Danh sach slot dap an dung tren anh chup (vi du: `['A']` hoac `['B']`).
     - `accuracy`: Ti le khop da duoc chuan hoa clamp ve doan [0, 100]%.
+    - `timeline`: Thong so thoi gian chi tiet cua tung cong doan:
+      - `serverAuthMs`: Thoi gian xac thuc token, kiem tra quota va chon model.
+      - `visionOcrMs`: Thoi gian goi API Gemini Vision OCR va parse JSON cau hoi/dap an.
+      - `dbQueryMs`: Thoi gian truy van lay toan bo cau hoi trong DB theo knowledge bases.
+      - `dbMatchMs`: Thoi gian chay thuat toan tinh toan so khop Levenshtein + Jaccard va can chinh dap an `alignOptions`.
+      - `ragEmbeddingMs`: Thoi gian tao embedding cho cau hoi (neu bat RAG).
+      - `ragVectorSearchMs`: Thoi gian tim kiem doan van ban trong Qdrant (neu bat RAG).
+      - `ragAnswerMs`: Thoi gian Gemini sinh cau tra loi tu van ban RAG (neu bat RAG).
+      - `serverTotalMs`: Tong thoi gian xu ly tai server backend.
+      - `clientCaptureMs`: Thoi gian client chup anh tu webcam/video sang canvas base64.
+      - `networkTransferMs`: Thoi gian truyen tai mang hai chieu (client -> server -> client).
+      - `clientTotalMs`: Tong thoi gian tinh tu luc bam chup den khi hien thi ket qua tren giao dien.
 
 ## 3. Frontend Navigation & User Flows
 - `LiveCameraSearch.tsx` & `ImageSearchScreen.tsx`:
@@ -86,6 +98,14 @@ Tai lieu nay mo ta kien truc va danh sach routes / endpoints hien huu cua he tho
     - Hien thi cau hoi va cac phuong an dang van ban chuan (plain text), bo hoan toan mau sac highlight diff vang/do de tranh roi mat.
     - Phuong an dung duoc lam noi bat voi mau xanh la (border xanh, badge checkmark ✓ "Dap an dung"), phuong an sai hien thi nhe nhang.
     - Dam bao vi tri dau tich ✓ dap an dung phan anh chinh xac 100% dap an dung cua cau hoi trong ngan hang de.
+  - Hiển thị Timeline chi tiết từng công đoạn cho Admin (`SearchTimelineView`):
+    - Khi người dùng là Quản trị viên (`user?.role === 'admin'`) và có `searchResult.timeline`, hiển thị bảng phân tích timeline chi tiết gồm:
+      - Badge đánh giá tốc độ: ⚡ Nhanh (< 2.5s), ⏱️ Trung bình (2.5s - 5s), ⚠️ Chậm (> 5s).
+      - Thanh phân bổ thời gian trực quan (stacked progress bar) thể hiện tỷ lệ % thời gian của từng khâu: Client Capture, Network Transfer, Server Auth & Prep, Gemini Vision OCR, DB Query, DB Matching, RAG.
+      - Cảnh báo điểm nghẽn chính (Bottleneck Banner) tự động phát hiện khâu chiếm nhiều thời gian nhất.
+      - Chi tiết từng bước đo được tính bằng ms và % trên tổng thời gian.
+      - Hiển thị model Gemini Vision thực tế đã sử dụng (`searchResult.modelUsed`).
+    - Đối với người dùng thông thường (`user?.role !== 'admin'`), timeline được ẩn hoàn toàn để đảm bảo giao diện gọn gàng, tập trung.
 - `AdminDashboard.tsx`:
   - `tests`: Quan ly bai thi (`components/admin/TestManagement.tsx`) - Ho tro tao de don / bo de batch gan chu de, loc theo chu de, badge chu de tren tung bai thi. Ho tro checkbox chon nhieu bai thi va gan chu de hang loat (`POST /api/admin/tests/batch-topic`).
   - `knowledge`: Quan ly co so kien thuc (`components/admin/KnowledgeManagement.tsx`) - Ho tro tai len Excel gan chu de hoac tao chu de moi, loc theo chu de, badge chu de. Ho tro checkbox chon nhieu co so kien thuc va gan chu de hang loat (`POST /api/admin/knowledge-bases/batch-topic`).
